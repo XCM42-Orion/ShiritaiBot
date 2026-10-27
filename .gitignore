@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+data/
+.env
+web/node_modules/
+web/dist/
+*.tsbuildinfo
+.local/
+
+# Concrete plugins are managed separately; retain only the plugin host core.
+src/shiritaibot/plugin/*
+!src/shiritaibot/plugin/core/
