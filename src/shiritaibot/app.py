@@ -56,6 +56,7 @@ class Application:
         self.adapters.runtime, self.adapters.permissions = self.runtime, self.permissions
         self.permissions.notify = self.adapters.notify_owner
         self.proactive.runtime = self.runtime
+        self.proactive.channels = self.plugins.notifiers
         await self.plugins.start()
         await self.adapters.start()
         self.tasks = [
@@ -80,7 +81,7 @@ class Application:
                 if not any(p.id == key for p in settings.plugins):
                     async with self.plugins.locks[key]:
                         await self.plugins.loaded.pop(key).close()
-                        self.registry.remove_plugin(key)
+                        self.plugins.unregister(key)
             for cfg in settings.plugins:
                 try:
                     await self.plugins.reload(cfg.id)

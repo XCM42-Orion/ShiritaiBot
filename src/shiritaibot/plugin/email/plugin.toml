@@ -1,0 +1,3 @@
+api = 1
+name = "Email"
+description = "通过 SMTP 将主动性引擎发给主人的通知同步发送到邮箱"

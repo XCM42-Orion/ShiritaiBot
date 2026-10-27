@@ -77,6 +77,7 @@ src/shiritaibot/
   learn/                 OneLearn 通用协议、接入、同步与工具
   plugin/
     core/                插件发现、加载和热重载（进入 Git）
+    email/               SMTP 邮件通知插件（进入 Git，默认未启用）
     feishu/              本地飞书 CLI 插件（Git 忽略）
     thu_learn/           本地清华网络学堂插件（Git 忽略）
   plugin_api/            插件公共 API

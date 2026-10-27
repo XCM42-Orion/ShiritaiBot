@@ -23,6 +23,12 @@ class PluginManager:
         )
         self.loaded: dict = {}
         self.locks: dict[str, asyncio.Lock] = {}
+        # Proactive notification channels per plugin; the engine reads this mapping directly.
+        self.notifiers: dict[str, list] = {}
+
+    def unregister(self, key: str) -> None:
+        self.registry.remove_plugin(key)
+        self.notifiers.pop(key, None)
 
     async def discover(self) -> list[dict]:
         def scan():
@@ -56,7 +62,7 @@ class PluginManager:
         async with lock:
             if not cfg.enabled:
                 old = self.loaded.pop(key, None)
-                self.registry.remove_plugin(key)
+                self.unregister(key)
                 if old:
                     await old.close()
                 return
@@ -103,18 +109,22 @@ class PluginManager:
             old = self.loaded.pop(key, None)
             if old:
                 await old.close()
-            self.registry.remove_plugin(key)
-            for tool in context.tools:
-                handler = tool.handler
+            self.unregister(key)
 
-                async def guarded(ctx, args, handler=handler, expected=plugin, lock=lock, key=key):
+            def guard(handler):
+                async def guarded(*args):
                     async with lock:
-                        if self.loaded.get(key) is not expected:
+                        if self.loaded.get(key) is not plugin:
                             raise PublicError("插件已重载，请重新调用")
-                        return await handler(ctx, args)
+                        return await handler(*args)
 
-                tool.handler = guarded
+                return guarded
+
+            for tool in context.tools:
+                tool.handler = guard(tool.handler)
                 self.registry.add(tool)
+            if context.notifiers:
+                self.notifiers[key] = [guard(handler) for handler in context.notifiers]
             self.loaded[key] = plugin
             await self.store.activity("plugin.loaded", key)
 
@@ -130,5 +140,5 @@ class PluginManager:
         for key, plugin in list(self.loaded.items()):
             async with self.locks[key]:
                 await plugin.close()
-                self.registry.remove_plugin(key)
+                self.unregister(key)
         self.loaded.clear()

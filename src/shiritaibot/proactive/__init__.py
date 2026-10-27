@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime
-from typing import Literal
+from typing import Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import Field
@@ -29,6 +29,8 @@ class ProactiveEngine:
     def __init__(self, config, store, llm, notify):
         self.config, self.store, self.llm, self.notify = config, store, llm, notify
         self.runtime: RuntimePort | None = None
+        # Extra plugin channels (e.g. email), keyed by plugin ID: handler(source, text).
+        self.channels: dict[str, list[Callable[[str, str], Awaitable[None]]]] = {}
 
     async def emit(self, event: ExternalEvent) -> str:
         key = fingerprint([event.source, event.dedup_key])
@@ -116,11 +118,24 @@ class ProactiveEngine:
                 and all(n["urgency"] != "critical" for n in notes)
             ):
                 continue
-            await self.notify("\n\n".join(n["message"] for n in reversed(notes)))
+            text = "\n\n".join(n["message"] for n in reversed(notes))
+            await self.notify(text)
             for note in notes:
                 note["status"] = "sent"
                 await self.store.put("notification", note["id"], note)
             await self.store.put("notify_last", source, {"at": now().timestamp()})
+            await self.broadcast(source, text)
+
+    async def broadcast(self, source: str, text: str) -> None:
+        """Best-effort copies after the owner notification is recorded; never resent."""
+        for plugin, handlers in list(self.channels.items()):
+            for handler in handlers:
+                try:
+                    await handler(source, text)
+                except Exception as exc:
+                    await self.store.activity(
+                        "notify.channel_failed", f"{plugin}: {type(exc).__name__}"
+                    )
 
     async def run(self) -> None:
         while True:

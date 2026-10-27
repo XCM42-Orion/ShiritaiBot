@@ -2,7 +2,7 @@
 
 ## 目录约定
 
-按本次确认的结构，`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下其余目录都被 `.gitignore` 忽略。飞书和网络学堂实现已留在本地对应目录。旧的 `integrations/`、`builtin_plugins/` 已撤销。
+按本次确认的结构，`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/` 和不含账号逻辑的通用插件 `email/` 外，其余目录都被 `.gitignore` 忽略。飞书和网络学堂实现已留在本地对应目录。旧的 `integrations/`、`builtin_plugins/` 已撤销。
 
 `src/shiritaibot/learn/` 属于核心代码：定义学校无关的请求/响应、stdio 接入、查询和下载工具、同步基线与变更事件；不包含清华 URL、SSO、SM2 或学校客户端。`plugin/thu_learn/` 则负责清华具体实现，包括客户端和单请求适配进程。
 
@@ -69,6 +69,34 @@ poll_seconds = 900
 
 `client.py` 由用户服务器的 AstrBot 网络学堂插件移植，保留学校相关登录、课程分页、附件归属检查和下载限额。该兼容客户端仍使用同步 requests，但运行在单独子进程中；主程序通过 asyncio 调用、设置时限并取消子进程，不会阻塞主事件循环。
 
+## 邮件通知（SMTP）
+
+目录：`src/shiritaibot/plugin/email/`（随主仓库提交）。插件 ID：`email`，默认未启用。
+
+启用后，主动性引擎每发出一条主人通知（显式提醒、分诊决定 `notify` / `digest` 的事件），在 QQ / WebUI 投递并记为已发送之后，再通过 SMTP 发一份到配置的邮箱。邮件是尽力而为的副本：SMTP 失败只记录活动 `notify.channel_failed`（插件 ID 和异常类型），不影响 QQ 通知，也不重发。审批请求、普通对话回复不发邮件。
+
+在“插件”页面添加 ID 为 `email` 的条目，点击“填入配置模板”，直接填写密码后保存（自动加密）：
+
+```toml
+[[plugins]]
+id = "email"
+enabled = true
+[plugins.settings]
+host = "smtp.example.com"
+port = 465                     # 465 + ssl；587 + starttls；none 仅用于本机中继
+security = "ssl"               # ssl / starttls / none
+username = "bot@example.com"   # 留空则不登录
+password = "secret:自动生成的凭据标识"
+sender = ""                    # 留空时使用 username
+to = ["you@example.com"]
+subject_prefix = "[ShiritaiBot]"
+timeout = 30
+```
+
+主题为前缀加通知首行，正文末尾附来源。配置缺少 `host` 或收件人时加载失败，错误只列字段名、不回显输入。实现使用标准库 `smtplib`，在线程中执行，不阻塞事件循环。
+
+插件可调用 `PluginContext.register_notifier(handler)` 接入同一通道，`handler(source, text)` 为异步函数；重载和停用时宿主自动撤销。
+
 ## OneLearn 子集
 
 当前约定定义在 `learn/protocol.py`：一个进程接收 stdin 上的 UTF-8 JSON 请求，处理一个操作，向 stdout 返回一个 JSON 对象后退出。凭据走 stdin，不放在 argv。
@@ -90,6 +118,6 @@ class Entry(Plugin):
         return {"answer": "hello"}
 ```
 
-`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出和工具注册。学校适配插件可继承公共 API 导出的 `OneLearnPlugin`，只补充自己的适配进程入口。插件退出时必须在 `close()` 中取消自建任务。
+`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册和主动通知通道注册。学校适配插件可继承公共 API 导出的 `OneLearnPlugin`，只补充自己的适配进程入口。插件退出时必须在 `close()` 中取消自建任务。
 
 手动热重载会先验证新入口和工具 schema，再替换旧实例；失败时保留原实例。正在执行的同插件工具通过锁与重载互斥。主程序重构不要求插件导入内部服务。

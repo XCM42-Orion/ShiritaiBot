@@ -13,3 +13,5 @@ web/dist/
 # Concrete plugins are managed separately; retain only the plugin host core.
 src/shiritaibot/plugin/*
 !src/shiritaibot/plugin/core/
+# Generic, account-free plugins shipped with the host.
+!src/shiritaibot/plugin/email/

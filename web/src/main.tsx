@@ -484,7 +484,17 @@ function Collection({
                                           poll: false,
                                           poll_seconds: 900,
                                         }
-                                      : row.settings,
+                                      : row.id === "email"
+                                        ? {
+                                            host: "",
+                                            port: 465,
+                                            security: "ssl",
+                                            username: "",
+                                            password: "",
+                                            sender: "",
+                                            to: [],
+                                          }
+                                        : row.settings,
                               })
                             }
                           >

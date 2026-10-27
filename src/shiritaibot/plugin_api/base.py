@@ -19,6 +19,7 @@ class PluginContext:
     resolve_secret: Callable[[str], Awaitable[str]]
     emit: Callable[[ExternalEvent], Awaitable[str]]
     tools: list[Tool] = field(default_factory=list)
+    notifiers: list[Callable[[str, str], Awaitable[None]]] = field(default_factory=list)
 
     def register_tool(
         self,
@@ -32,6 +33,10 @@ class PluginContext:
         self.tools.append(
             Tool(name, description, parameters, handler, risk=risk, timeout=timeout, plugin=self.id)
         )
+
+    def register_notifier(self, handler: Callable[[str, str], Awaitable[None]]) -> None:
+        """Receive (source, text) for every proactive notification already sent to the owner."""
+        self.notifiers.append(handler)
 
 
 class Plugin:
