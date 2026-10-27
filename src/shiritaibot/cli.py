@@ -9,11 +9,22 @@ cli = typer.Typer(help="ShiritaiBot · Personal agent runtime")
 
 
 @cli.command()
-def run(home: Path = Path("data"), port: int = 8765):
+def run(
+    home: Path = Path("data"),
+    port: int = 8765,
+    allowed_host: list[str] = typer.Option(
+        [], help="额外允许的 Host（内网穿透/反向代理域名），可重复；支持 *.example.com"
+    ),
+):
     """Run the local control plane and configured adapters."""
     ensure_token(home)
     typer.echo(f"WebUI: http://127.0.0.1:{port} · 管理令牌文件: {home.resolve() / 'web.token'}")
-    uvicorn.run(create_app(home.resolve()), host="127.0.0.1", port=port, access_log=False)
+    uvicorn.run(
+        create_app(home.resolve(), allowed_hosts=allowed_host),
+        host="127.0.0.1",
+        port=port,
+        access_log=False,
+    )
 
 
 @cli.command()

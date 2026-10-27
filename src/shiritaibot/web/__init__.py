@@ -58,7 +58,9 @@ def ensure_token(home: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def create_app(home: Path, token: str | None = None) -> FastAPI:
+def create_app(
+    home: Path, token: str | None = None, allowed_hosts: list[str] | None = None
+) -> FastAPI:
     runtime = Application(home)
 
     @asynccontextmanager
@@ -73,7 +75,8 @@ def create_app(home: Path, token: str | None = None) -> FastAPI:
     api = FastAPI(title="ShiritaiBot", version="0.1.0", lifespan=lifespan)
     api.state.runtime = runtime
     api.add_middleware(
-        TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]", "testserver"]
+        TrustedHostMiddleware,
+        allowed_hosts=["localhost", "127.0.0.1", "[::1]", "testserver", *(allowed_hosts or [])],
     )
 
     @api.middleware("http")
