@@ -10,12 +10,12 @@
 | OneBot | 多实例正向 Universal WS、Bearer、echo、登录身份校验、ping/pong、重连、CQ 数组/字符串、白名单、持久化 Outbox、分段、文件引用 | 反向 WS、HTTP、NapCat heartbeat 事件超时、全面平台扩展、撤回处理、图像渲染 |
 | LLM | 多 Provider / 模型 / 路由；四种 wire protocol；模型目录拉取及分页；不透明推理状态同模型回传；HTTP 限流重试和候选 fallback；usage 落库及跨协议统计 | SSE、原生联网搜索、完整多模态、细粒度计价、embedding |
 | Subagent | 多 Codex / Claude Code / Generic CLI 实例；stdin prompt、工作目录隔离、三并发、超时、取消、完成事件、CLI 版本检测 | 原生会话续接、实时事件解析、app-server/ACP、MCP 审批桥接、登录状态检测 |
-| 插件 | manifest 发现、启停、手动热重载、冲突检查、加载失败保留旧实例、公共 API、独立数据目录、主动通知通道注册；随仓库提供 SMTP 邮件通知插件 | 自动文件监视、依赖安装、MCP、完整 hook/command/source 装饰器 |
+| 插件 | manifest 发现、启停、手动热重载、冲突检查、加载失败保留旧实例、公共 API、独立数据目录、主动通知通道注册；随仓库提供邮件插件（IMAP 收件事件源，可选 SMTP 通知） | 自动文件监视、依赖安装、MCP、完整 hook/command/source 装饰器 |
 | 飞书 | 本地只读 CLI 插件，固定操作/参数白名单、独立 profile、结构化脱敏 | 写操作、真实账号联调 |
 | Learn | 通用 stdio 子集、查询/下载工具、持久化同步基线和变化事件；本地清华登录/短信验证工具、查询/附件适配 | 正式协议完整实现、多个学校实例聚合、作业提交、课表转换、真实账号联调 |
-| Memory | 显式记录、private/public 可见性、中文 jieba + FTS5/BM25、归档、私人上下文召回 | 自动反思、画像、向量/图谱融合、群备忘、衰减和合并 |
+| Memory | 主动事件短期记忆、显式记录、private/public 可见性、中文 jieba + FTS5/BM25、归档、私人上下文召回 | 自动反思、画像、向量/图谱融合、群备忘、衰减和合并 |
 | Routine | SQLite 待办/日程/提醒/cron；heapq 调度；UTC 持久化、时区 cron、重启后迟到提醒 | ICS 导入/订阅/导出、RRULE、free slots、snooze、过期提醒汇总策略 |
-| Proactive | 去重、持久化事件、light 模型 JSON 分诊/一次修正、显式提醒、后台 job、免打扰、同来源节流/合并、通知交接、插件通知通道（邮件，尽力而为） | Markdown Playbook、L2/L3 自动动作、反馈学习、关注群、课程日程感知 |
+| Proactive | 事件唤醒的循环；判断（light 模型 JSON 分诊/一次修正）→ 规则分级 → 行动（通知或只读先期准备后通知）；去重、持久化事件、显式提醒、后台 job、免打扰、同来源节流/合并、通知交接、插件通知通道；流程写入 7 天短期记忆，主会话用 `proactive_recall` 查询 | Markdown Playbook、L2/L3 自动动作、反馈学习、关注群、课程日程感知 |
 | WebUI | 登录、12 个管理视图、配置双侧栏、内联密钥填写、模型发现和加号添加、错误弹窗、作用域示例、24h/3d/7d 逐小时看板、斜杠菜单、工具审批、日程/记忆操作、子代理状态、当前表单模型测试、插件重载、WS 活动刷新 | 手机端实机验收、密码/QQ 验证码登录、生产级 Cookie session、完整 schema 自动表单、日历视图 |
 
 ## 关键运行语义

@@ -9,9 +9,9 @@ from shiritaibot.auth import Permissions, Vault
 from shiritaibot.config import ConfigService, Settings
 from shiritaibot.core import EventBus
 from shiritaibot.llm import ProviderManager
-from shiritaibot.memory import MemoryManager
+from shiritaibot.memory import MemoryManager, ShortTermMemory
 from shiritaibot.plugin.core import PluginManager
-from shiritaibot.proactive import ProactiveEngine
+from shiritaibot.proactive import PREPARE_SESSION, ProactiveEngine
 from shiritaibot.routine import RoutineManager
 from shiritaibot.store import Store
 from shiritaibot.subagent import SubagentManager
@@ -40,9 +40,10 @@ class Application:
         self.registry = ToolRegistry(self.permissions, self.store)
         self.llm = ProviderManager(self.config, self.vault, self.store)
         self.memory = MemoryManager(self.store)
+        self.short_term = ShortTermMemory(self.store)
         self.adapters = AdapterHub(self.config, self.vault, self.store)
         self.proactive = ProactiveEngine(
-            self.config, self.store, self.llm, self.adapters.notify_owner
+            self.config, self.store, self.llm, self.adapters.notify_owner, self.short_term
         )
         self.routine = RoutineManager(self.store, self.proactive.emit)
         self.subagents = SubagentManager(self.config, self.store, self.home, self.proactive.emit)
@@ -65,7 +66,10 @@ class Application:
         ]
 
     async def deliver(self, session: str, text: str) -> None:
-        if session.startswith("background:"):
+        if session.startswith(PREPARE_SESSION):
+            # Proactive groundwork returns to the loop, which owns notification policy.
+            await self.proactive.prepared(session, text)
+        elif session.startswith("background:"):
             await self.adapters.notify_owner(text)
         else:
             await self.adapters.enqueue(session, text)

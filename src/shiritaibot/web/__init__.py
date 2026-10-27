@@ -169,6 +169,7 @@ def create_app(
             "routine",
             "event",
             "notification",
+            "short_term",
             "subagent_run",
             "outbox",
             "reply",

@@ -51,6 +51,9 @@ async def register_builtin(app) -> None:
     async def memory_write(ctx, args):
         return await app.memory.add(ctx, args["content"], args.get("kind", "knowledge"))
 
+    async def proactive_recall(ctx, args):
+        return await app.short_term.recent(args.get("query", ""), args.get("limit", 10))
+
     async def routine_list(ctx, args):
         return await app.store.list("routine", scope="owner")
 
@@ -162,6 +165,18 @@ async def register_builtin(app) -> None:
             schema({"content": TEXT, "kind": TEXT}, ["content"]),
             memory_write,
             risk="normal",
+        ),
+        Tool(
+            "proactive_recall",
+            "查询短期记忆：最近 7 天主动性引擎处理过的事件（如收到的邮件、提醒），"
+            "包括判断结论、处理阶段和每一步经过；可按关键词过滤",
+            schema(
+                {
+                    "query": {"type": "string", "maxLength": 200},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                }
+            ),
+            proactive_recall,
         ),
         Tool("routine_list", "查看日程、待办、提醒和定时任务", schema({}), routine_list),
         Tool(

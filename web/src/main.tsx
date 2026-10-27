@@ -486,13 +486,16 @@ function Collection({
                                         }
                                       : row.id === "email"
                                         ? {
-                                            host: "",
-                                            port: 465,
-                                            security: "ssl",
+                                            imap_host: "",
+                                            imap_port: 993,
+                                            imap_security: "ssl",
                                             username: "",
                                             password: "",
-                                            sender: "",
-                                            to: [],
+                                            mailbox: "INBOX",
+                                            poll_seconds: 300,
+                                            smtp_host: "",
+                                            smtp_port: 465,
+                                            notify_to: [],
                                           }
                                         : row.settings,
                               })

@@ -4,7 +4,7 @@ import asyncio
 
 import jieba
 
-from shiritaibot.core import Context, PublicError, now, uid
+from shiritaibot.core import Context, PublicError, canonical, now, uid
 
 
 class MemoryManager:
@@ -54,3 +54,30 @@ class MemoryManager:
 
     async def archive(self, key: str) -> None:
         await self.store.execute("UPDATE memory SET status='archived' WHERE id=?", (key,))
+
+
+class ShortTermMemory:
+    """Recent proactive episodes: what happened, what was decided and how far it got.
+
+    Written by the proactive loop, read by the owner's main session; expires after `days`.
+    """
+
+    def __init__(self, store, days: int = 7):
+        self.store, self.days = store, days
+
+    async def record(self, key: str, stage: str, detail: str, **fields) -> dict:
+        stamp = now().isoformat()
+        row = await self.store.get("short_term", key) or {"steps": [], "created": stamp}
+        row.update(fields, stage=stage, updated=stamp)
+        row["steps"] = [*row["steps"], {"at": stamp, "stage": stage, "detail": detail[:1000]}]
+        await self.store.execute(
+            "DELETE FROM records WHERE kind='short_term' AND updated<?",
+            (now().timestamp() - self.days * 86400,),
+        )
+        return await self.store.put("short_term", key, row, "owner")
+
+    async def recent(self, query: str = "", limit: int = 20) -> list[dict]:
+        rows = await self.store.list("short_term", scope="owner", limit=200)
+        if query:
+            rows = [r for r in rows if query.lower() in canonical(r).lower()]
+        return rows[:limit]

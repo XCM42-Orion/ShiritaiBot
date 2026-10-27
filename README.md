@@ -72,12 +72,12 @@ src/shiritaibot/
   tools/                 工具执行器和内置工具
   memory/                私人原子记忆、中文全文搜索
   routine/               待办、日程、提醒、cron 调度
-  proactive/             持久化事件、模型分诊、免打扰、通知
+  proactive/             事件驱动循环：判断 → 分级 → 行动，免打扰、通知、短期记忆
   subagent/              外部 Agent CLI 生命周期
   learn/                 OneLearn 通用协议、接入、同步与工具
   plugin/
     core/                插件发现、加载和热重载（进入 Git）
-    email/               SMTP 邮件通知插件（进入 Git，默认未启用）
+    email/               邮件插件：IMAP 收件作为事件源，可选 SMTP 通知（进入 Git，默认未启用）
     feishu/              本地飞书 CLI 插件（Git 忽略）
     thu_learn/           本地清华网络学堂插件（Git 忽略）
   plugin_api/            插件公共 API

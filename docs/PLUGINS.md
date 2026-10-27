@@ -2,7 +2,7 @@
 
 ## 目录约定
 
-按本次确认的结构，`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/` 和不含账号逻辑的通用插件 `email/` 外，其余目录都被 `.gitignore` 忽略。飞书和网络学堂实现已留在本地对应目录。旧的 `integrations/`、`builtin_plugins/` 已撤销。
+按本次确认的结构，`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/` 和通用的邮件插件 `email/` 外，其余目录都被 `.gitignore` 忽略。飞书和网络学堂实现已留在本地对应目录。旧的 `integrations/`、`builtin_plugins/` 已撤销。
 
 `src/shiritaibot/learn/` 属于核心代码：定义学校无关的请求/响应、stdio 接入、查询和下载工具、同步基线与变更事件；不包含清华 URL、SSO、SM2 或学校客户端。`plugin/thu_learn/` 则负责清华具体实现，包括客户端和单请求适配进程。
 
@@ -69,11 +69,15 @@ poll_seconds = 900
 
 `client.py` 由用户服务器的 AstrBot 网络学堂插件移植，保留学校相关登录、课程分页、附件归属检查和下载限额。该兼容客户端仍使用同步 requests，但运行在单独子进程中；主程序通过 asyncio 调用、设置时限并取消子进程，不会阻塞主事件循环。
 
-## 邮件通知（SMTP）
+## 邮件（IMAP 收件事件源）
 
 目录：`src/shiritaibot/plugin/email/`（随主仓库提交）。插件 ID：`email`，默认未启用。
 
-启用后，主动性引擎每发出一条主人通知（显式提醒、分诊决定 `notify` / `digest` 的事件），在 QQ / WebUI 投递并记为已发送之后，再通过 SMTP 发一份到配置的邮箱。邮件是尽力而为的副本：SMTP 失败只记录活动 `notify.channel_failed`（插件 ID 和异常类型），不影响 QQ 通知，也不重发。审批请求、普通对话回复不发邮件。
+主线是 **收件 → 事件 → 判断 → 分级 → 行动 → 短期记忆**：
+
+1. 插件按 `poll_seconds` 轮询 IMAP 邮箱（只读 `EXAMINE` + `BODY.PEEK`，不改已读状态），每封新邮件产生一个 `email.received` 事件（发件人、主题、日期、正文摘要、附件名），交给主动性引擎。首次同步或 `UIDVALIDITY` 变化时只建立基线，不会把已有邮件当新事件；每封邮件按 Message-ID 去重。收件失败产生 `email.sync.failed` 事件（每种错误每天一次）。
+2. 事件立即唤醒主动性引擎（见下文“主动性引擎”），由模型判断是否通知主人、紧急程度、是否需要先期准备，再按规则分级并执行。
+3. 全流程写入短期记忆，主人在私聊 / WebUI 的主会话中可让模型调用 `proactive_recall` 回顾。
 
 在“插件”页面添加 ID 为 `email` 的条目，点击“填入配置模板”，直接填写密码后保存（自动加密）：
 
@@ -82,20 +86,37 @@ poll_seconds = 900
 id = "email"
 enabled = true
 [plugins.settings]
-host = "smtp.example.com"
-port = 465                     # 465 + ssl；587 + starttls；none 仅用于本机中继
-security = "ssl"               # ssl / starttls / none
-username = "bot@example.com"   # 留空则不登录
-password = "secret:自动生成的凭据标识"
-sender = ""                    # 留空时使用 username
-to = ["you@example.com"]
-subject_prefix = "[ShiritaiBot]"
-timeout = 30
+imap_host = "imap.example.com"
+imap_port = 993
+imap_security = "ssl"          # ssl / starttls / none（none 仅用于本机）
+username = "you@example.com"
+password = "secret:自动生成的凭据标识"   # IMAP 与可选 SMTP 共用
+mailbox = "INBOX"
+poll_seconds = 300             # 最短 60
+max_per_poll = 20
+max_body_chars = 2000
+# 可选：把主动通知同时发到邮箱（smtp_host 与 notify_to 都填写才启用）
+smtp_host = ""
+smtp_port = 465
+smtp_security = "ssl"
+notify_to = []
 ```
 
-主题为前缀加通知首行，正文末尾附来源。配置缺少 `host` 或收件人时加载失败，错误只列字段名、不回显输入。实现使用标准库 `smtplib`，在线程中执行，不阻塞事件循环。
+邮件内容视为不可信资料：分诊和先期准备的提示中都声明不执行其中的指令，后台准备只有只读工具。配置缺少 `imap_host` 或 `username` 时加载失败，错误只列字段名、不回显输入。IMAP / SMTP 使用标准库客户端，在线程中执行，不阻塞事件循环。
 
-插件可调用 `PluginContext.register_notifier(handler)` 接入同一通道，`handler(source, text)` 为异步函数；重载和停用时宿主自动撤销。
+SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之后再发邮件，失败只记录 `notify.channel_failed`，不影响 IM 通知、不重发。其他插件可调用 `PluginContext.register_notifier(handler)` 接入同一通道，`handler(source, text)` 为异步函数；重载和停用时宿主自动撤销。
+
+## 主动性引擎
+
+`proactive/` 中的循环由事件驱动：`emit` 落库后立即唤醒循环（另有 10 秒兜底检查，用于免打扰结束后补发）。每个事件分三层处理：
+
+| 层 | 做什么 |
+|---|---|
+| 判断 `judge` | `light` 路由模型输出 `decision`（notify / digest / log / ignore）、`urgency`、通知正文、原因和可选的 `prepare`（通知前要做的只读准备）。显式提醒直接通知；引擎未启用时只记录 |
+| 分级 `grade` | 确定性规则：ignore → 丢弃；log → 只记录；notify 且有 `prepare`、重要程度为 normal / high → 先期准备；其余 → 通知。critical 不做准备，避免延误 |
+| 行动 `act` | 通知交给打扰策略（免打扰、节流合并）；先期准备在 `background:proactive:<事件>` 会话中运行一次只读 Agent Turn，结果附在通知后发送；准备丢失或超时则照常通知并注明 |
+
+每一步写入短期记忆（`short_term` 记录，保留 7 天）：received → judged → queued / preparing → prepared → notified，或 ignored / logged。主会话通过内置工具 `proactive_recall(query?, limit?)` 查询；群聊和 Chat 模式不可用。WebUI 可在 `/api/records/short_term` 查看。
 
 ## OneLearn 子集
 
