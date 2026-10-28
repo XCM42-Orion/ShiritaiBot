@@ -41,8 +41,10 @@ def repair_history(messages: list[dict], max_chars: int) -> list[dict]:
         if index is None:
             break
         result = result[index:]
-    while result and result[0]["role"] != "user":
+    while result and result[0]["role"] != "user" and not result[0].get("_proactive"):
         result.pop(0)
+    if result and result[0].get("_proactive"):
+        result.insert(0, {"role": "user", "content": "[上下文：以下是已向用户发送的主动通知]"})
     return result
 
 
@@ -119,11 +121,21 @@ class SessionActor:
 
 
 class AgentRuntime:
-    def __init__(self, config, store, llm, registry, memory, deliver):
+    def __init__(self, config, store, llm, registry, memory, deliver, short_term=None):
         self.config, self.store, self.llm = config, store, llm
         self.registry, self.memory, self.deliver = registry, memory, deliver
+        self.short_term = short_term
         self.actors: dict[str, SessionActor] = {}
         self.submit_locks: dict[str, asyncio.Lock] = {}
+        self.context_locks: dict[str, asyncio.Lock] = {}
+
+    async def handoff(self, session: str, text: str, send) -> None:
+        # Append between turns, never between an assistant tool call and its result.
+        async with self.context_locks.setdefault(session, asyncio.Lock()):
+            await send(session, text)
+            await self.store.append(
+                session, "handoff", {"role": "assistant", "content": text, "_proactive": True}
+            )
 
     async def submit(self, ctx: Context, text: str) -> str:
         async with self.submit_locks.setdefault(ctx.session, asyncio.Lock()):
@@ -151,12 +163,25 @@ class AgentRuntime:
         await asyncio.gather(*(a.task for a in self.actors.values()), return_exceptions=True)
 
     async def turn(self, actor: SessionActor, ctx: Context, text: str) -> None:
+        async with self.context_locks.setdefault(ctx.session, asyncio.Lock()):
+            await self._turn(actor, ctx, text)
+
+    async def _turn(self, actor: SessionActor, ctx: Context, text: str) -> None:
         ctx = replace(ctx, turn=uid())
         cfg = self.config.value.model_copy(deep=True)
         selected = await self.store.get("session_model", ctx.session)
         if selected and selected.get("model"):
             cfg.routes["agent" if ctx.mode == "agent" else "chat"] = [selected["model"]]
-        body = {"status": "running", "actor": ctx.actor, "started": now().isoformat(), "steps": 0}
+        body = {
+            "status": "running",
+            "actor": ctx.actor,
+            "started": now().isoformat(),
+            "steps": 0,
+            "memory_scope": "owner"
+            if ctx.owner and ctx.mode == "agent" and not ctx.group
+            else ctx.session,
+            "loop": "proactive" if ctx.background else "main",
+        }
         await self.store.put("turn", ctx.turn, body, ctx.session)
         try:
             async with asyncio.timeout(cfg.policy.max_turn_seconds):
@@ -170,6 +195,8 @@ class AgentRuntime:
                     if ctx.owner and ctx.mode == "agent" and not ctx.group
                     else []
                 )
+                if self.short_term and ctx.owner and ctx.mode == "agent" and not ctx.group:
+                    memory += await self.short_term.recent(limit=5)
                 user = {
                     "role": "user",
                     "content": text
@@ -230,7 +257,12 @@ class AgentRuntime:
             error = (
                 str(exc) if isinstance(exc, PublicError) else f"本轮执行失败 ({type(exc).__name__})"
             )
+            await self.store.append(ctx.session, ctx.turn, {"role": "assistant", "content": error})
             await self.deliver(ctx.session, error)
         finally:
             body["finished"] = now().isoformat()
             await self.store.put("turn", ctx.turn, body, ctx.session)
+            if self.short_term:
+                await self.short_term.enqueue(ctx, body["status"])
+                body["summary_enqueued"] = True
+                await self.store.put("turn", ctx.turn, body, ctx.session)

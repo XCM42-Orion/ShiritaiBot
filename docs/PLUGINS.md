@@ -73,11 +73,11 @@ poll_seconds = 900
 
 目录：`src/shiritaibot/plugin/email/`（随主仓库提交）。插件 ID：`email`，默认未启用。
 
-主线是 **收件 → 事件 → 判断 → 分级 → 行动 → 短期记忆**：
+主线是 **收件 → 统一事件 API → 预处理 → 重要性 Filter → Proactive Loop → 通知与短期摘要**：
 
 1. 插件按 `poll_seconds` 轮询 IMAP 邮箱（只读 `EXAMINE` + `BODY.PEEK`，不改已读状态），每封新邮件产生一个 `email.received` 事件（发件人、主题、日期、正文摘要、附件名），交给主动性引擎。首次同步或 `UIDVALIDITY` 变化时只建立基线，不会把已有邮件当新事件；每封邮件按 Message-ID 去重。收件失败产生 `email.sync.failed` 事件（每种错误每天一次）。
-2. 事件立即唤醒主动性引擎（见下文“主动性引擎”），由模型判断是否通知主人、紧急程度、是否需要先期准备，再按规则分级并执行。
-3. 全流程写入短期记忆，主人在私聊 / WebUI 的主会话中可让模型调用 `proactive_recall` 回顾。
+2. 事件立即唤醒主动性引擎（见下文“主动性引擎”），由 light 模型分类重要程度（0–4），0 丢弃，其余进入可调用工具的 Proactive Loop；4 级必须通知。
+3. 事件流程写入 proactive_trace 审计；每个执行 Turn 由模型压缩到 Shortterm Memory，主人可通过 `proactive_recall` 回顾 Main / Proactive 的摘要。
 
 在“插件”页面添加 ID 为 `email` 的条目，点击“填入配置模板”，直接填写密码后保存（自动加密）：
 
@@ -108,15 +108,20 @@ SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之
 
 ## 主动性引擎
 
-`proactive/` 中的循环由事件驱动：`emit` 落库后立即唤醒循环（另有 10 秒兜底检查，用于免打扰结束后补发）。每个事件分三层处理：
+事件源统一调用 `PluginContext.emit(event)`、`emit_many(events)`、`get_event(receipt_id)`；宿主提供同名 API，HTTP 分别是认证后的 `POST /api/events`、`POST /api/events/batch`、`GET /api/events/{id}`。事件包含来源事件 `id`、事件名 `kind`、`source`、带时区的 `occurred_at`、标题 `title`、内容 `payload`、稳定的 `dedup_key` 和参考值 `urgency`。`id` 可由入口自动补齐。返回的接收记录 ID 按 `(source, dedup_key)` 稳定去重；提交不代表处理完成，状态查询可查看分类和执行结果。
 
-| 层 | 做什么 |
+| 阶段 | 行为 |
 |---|---|
-| 判断 `judge` | `light` 路由模型输出 `decision`（notify / digest / log / ignore）、`urgency`、通知正文、原因和可选的 `prepare`（通知前要做的只读准备）。显式提醒直接通知；引擎未启用时只记录 |
-| 分级 `grade` | 确定性规则：ignore → 丢弃；log → 只记录；notify 且有 `prepare`、重要程度为 normal / high → 先期准备；其余 → 通知。critical 不做准备，避免延误 |
-| 行动 `act` | 通知交给打扰策略（免打扰、节流合并）；先期准备在 `background:proactive:<事件>` 会话中运行一次只读 Agent Turn，结果附在通知后发送；准备丢失或超时则照常通知并注明 |
+| 入口 / 预处理 | 清理标识和标题空白、校验、去重、持久化后唤醒 PE |
+| Filter | light 模型输出 importance=0–4、reason 和可选通知/查证建议；失败修正一次，再失败交给普通级 Loop 核查 |
+| 分级 | 0 discard；1–4 按级别降序启动后台 Turn，同级 FIFO；不抢占运行中的任务 |
+| Proactive Loop | `background:proactive:<接收记录 ID>`，复用 Agent Runtime，在当前 L1 权限下调用只读工具；最终输出 `{notify, message, reason}` |
+| 通知与交接 | Loop 完成后才发送最终 message，追加到目标 Main context；4 级强制通知并穿透免打扰、摘要延迟和节流；失败/超时发兜底并注明未完成 |
+| 每轮记忆 | Main / Proactive 每个 Turn 成功、失败或取消后，持久化摘要任务，由 light 模型压缩输入、工具结果和最终消息；失败重试，不阻塞回复 |
 
-每一步写入短期记忆（`short_term` 记录，保留 7 天）：received → judged → queued / preparing → prepared → notified，或 ignored / logged。主会话通过内置工具 `proactive_recall(query?, limit?)` 查询；群聊和 Chat 模式不可用。WebUI 可在 `/api/records/short_term` 查看。
+显式 Routine 提醒/定时任务也经过 Filter，最低 3 级；显式提醒不允许静默。PE 停用时其他事件只留审计。事件源的 urgency 不能直接决定 importance。
+
+审计存放在 `proactive_trace`（`/api/records/proactive_trace`），模型摘要存放在 `short_term`（默认保留 7 天），待重试任务在 `memory_summary`。`proactive_recall(query?, limit?)` 查询主人私聊/后台的模型摘要，不返回其他 Chat/群会话的内容。旧版本阶段日志不会被当作新的模型摘要召回。0 级事件未进入 Loop，只有 discard 审计。
 
 ## OneLearn 子集
 

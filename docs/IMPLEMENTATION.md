@@ -13,9 +13,9 @@
 | 插件 | manifest 发现、启停、手动热重载、冲突检查、加载失败保留旧实例、公共 API、独立数据目录、主动通知通道注册；随仓库提供邮件插件（IMAP 收件事件源，可选 SMTP 通知） | 自动文件监视、依赖安装、MCP、完整 hook/command/source 装饰器 |
 | 飞书 | 本地只读 CLI 插件，固定操作/参数白名单、独立 profile、结构化脱敏 | 写操作、真实账号联调 |
 | Learn | 通用 stdio 子集、查询/下载工具、持久化同步基线和变化事件；本地清华登录/短信验证工具、查询/附件适配 | 正式协议完整实现、多个学校实例聚合、作业提交、课表转换、真实账号联调 |
-| Memory | 主动事件短期记忆、显式记录、private/public 可见性、中文 jieba + FTS5/BM25、归档、私人上下文召回 | 自动反思、画像、向量/图谱融合、群备忘、衰减和合并 |
+| Memory | Main/Proactive 每轮模型短期摘要（7 天）、持久化失败重试和会话隔离、显式记录、private/public 可见性、中文 jieba + FTS5/BM25、归档、私人上下文召回 | 自动反思、画像、向量/图谱融合、群备忘、衰减和合并 |
 | Routine | SQLite 待办/日程/提醒/cron；heapq 调度；UTC 持久化、时区 cron、重启后迟到提醒 | ICS 导入/订阅/导出、RRULE、free slots、snooze、过期提醒汇总策略 |
-| Proactive | 事件唤醒的循环；判断（light 模型 JSON 分诊/一次修正）→ 规则分级 → 行动（通知或只读先期准备后通知）；去重、持久化事件、显式提醒、后台 job、免打扰、同来源节流/合并、通知交接、插件通知通道；流程写入 7 天短期记忆，主会话用 `proactive_recall` 查询 | Markdown Playbook、L2/L3 自动动作、反馈学习、关注群、课程日程感知 |
+| Proactive | 统一单条/批量事件入口与状态 API；预处理、持久化去重、light 分类 Filter（0–4）；0 丢弃、其余按重要度启动可调用只读工具的 Proactive Loop；4 强制通知；Loop 最终消息经通知策略后回写 Main context；失败/超时兜底；审计与每轮模型摘要分开 | Markdown Playbook、L2/L3 自动动作、反馈学习、关注群、课程日程感知 |
 | WebUI | 登录、12 个管理视图、哈希路由（可深链和刷新）、类型化 API 客户端、按页面拆分的组件、配置草稿与底部保存条、内联密钥填写、模型发现和加号添加、错误弹窗、作用域工具白名单编辑、24h/3d/7d 逐小时看板、斜杠菜单、工具审批、日程/记忆操作、子代理状态、当前表单模型测试、插件重载、WS 指数退避重连与缓存失效 | 手机端实机验收、密码/QQ 验证码登录、生产级 Cookie session、完整 schema 自动表单、日历视图 |
 
 ## 关键运行语义
@@ -56,3 +56,10 @@
 - [Claude Code CLI](https://code.claude.com/docs/en/cli-reference)
 - [OpenAI 模型列表](https://developers.openai.com/api/reference/resources/models/methods/list)、[Anthropic 模型列表](https://platform.claude.com/docs/en/api/models/list)、[Gemini 模型列表](https://ai.google.dev/api/models)
 - 命令交互参考 [Codex 命令](https://learn.chatgpt.com/docs/developer-commands) 和 [Claude Code 命令速查](https://support.claude.com/en/articles/14553413-claude-code-cheatsheet)；实际支持范围以 README 为准。
+
+## 2026-10-28 双 Loop 状态机对齐
+
+- Main Agent 保持常规模型/工具循环；Proactive 事件统一经过预处理、Filter 和独立后台 Turn。分类批次按 importance 降序启动，同级 FIFO，不是全局 LLM 抢占调度。
+- `short_term` 只保存模型摘要；`proactive_trace` 保存事件阶段审计。摘要任务在 `memory_summary` 持久化，模型不可用时保留并重试，不以日志代替摘要。每轮摘要和尚未实现的 epoch 上下文压缩是不同机制。
+- 后台最终消息进入通知队列后，以 assistant 消息追加至目标 Main 会话；活动 Main Turn 结束后再交接，避免拆散工具调用/结果。审批提示仍即时发送。
+- 4 级必须尝试通知并进入持久化 Outbox；这不保证离线 QQ 平台已经实际送达，仍须检查 Outbox 状态。

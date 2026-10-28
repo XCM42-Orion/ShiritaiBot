@@ -170,6 +170,8 @@ def create_app(
             "event",
             "notification",
             "short_term",
+            "proactive_trace",
+            "memory_summary",
             "subagent_run",
             "outbox",
             "reply",
@@ -224,6 +226,17 @@ def create_app(
     @api.post("/api/events", dependencies=protected)
     async def event(body: ExternalEvent):
         return {"id": await runtime.proactive.emit(body)}
+
+    @api.post("/api/events/batch", dependencies=protected)
+    async def event_batch(body: list[ExternalEvent]):
+        return {"ids": await runtime.proactive.emit_many(body)}
+
+    @api.get("/api/events/{key}", dependencies=protected)
+    async def event_status(key: str):
+        row = await runtime.proactive.get_event(key)
+        if row is None:
+            raise HTTPException(404, "事件不存在")
+        return row
 
     @api.get("/api/plugins", dependencies=protected)
     async def plugins():

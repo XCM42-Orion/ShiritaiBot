@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable, Literal, Protocol
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 
 def now() -> datetime:
@@ -32,13 +32,19 @@ class Model(BaseModel):
 
 
 class ExternalEvent(Model):
-    source: str
-    kind: str
-    dedup_key: str
-    title: str = Field(max_length=1000)
+    id: str = Field(default_factory=uid, min_length=1, max_length=200)
+    source: str = Field(min_length=1, max_length=200)
+    kind: str = Field(min_length=1, max_length=200)
+    dedup_key: str = Field(min_length=1, max_length=500)
+    title: str = Field(min_length=1, max_length=1000)
     payload: dict[str, Any] = Field(default_factory=dict)
     urgency: Literal["low", "normal", "high", "critical"] = "normal"
     occurred_at: AwareDatetime = Field(default_factory=now)
+
+    @field_validator("id", "source", "kind", "dedup_key", "title", mode="before")
+    @classmethod
+    def strip_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +97,8 @@ class Provider(Protocol):
 
 class RuntimePort(Protocol):
     async def submit(self, ctx: Context, text: str) -> str: ...
+
+    async def handoff(self, session: str, text: str, send) -> None: ...
 
 
 class ApprovalPort(Protocol):

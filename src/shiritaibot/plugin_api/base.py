@@ -20,6 +20,11 @@ class PluginContext:
     emit: Callable[[ExternalEvent], Awaitable[str]]
     tools: list[Tool] = field(default_factory=list)
     notifiers: list[Callable[[str, str], Awaitable[None]]] = field(default_factory=list)
+    get_event: Callable[[str], Awaitable[dict | None]] | None = None
+
+    async def emit_many(self, events: list[ExternalEvent]) -> list[str]:
+        """Submit a batch through the same ingress and deduplication as emit."""
+        return [await self.emit(event) for event in events]
 
     def register_tool(
         self,

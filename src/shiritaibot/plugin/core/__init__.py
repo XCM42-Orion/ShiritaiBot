@@ -6,6 +6,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from shiritaibot.core import PublicError, uid
 from shiritaibot.plugin_api import PluginContext
@@ -25,6 +26,7 @@ class PluginManager:
         self.locks: dict[str, asyncio.Lock] = {}
         # Proactive notification channels per plugin; the engine reads this mapping directly.
         self.notifiers: dict[str, list] = {}
+        self.get_event: Callable[[str], Awaitable[dict | None]] | None = None
 
     def unregister(self, key: str) -> None:
         self.registry.remove_plugin(key)
@@ -90,6 +92,7 @@ class PluginManager:
             context = PluginContext(
                 key, cfg.settings.copy(), data_dir, self.vault.resolve, self.emit
             )
+            context.get_event = self.get_event
             plugin = module.Entry(context)
             try:
                 await plugin.start()
