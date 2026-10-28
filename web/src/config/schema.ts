@@ -1,6 +1,7 @@
 import type {
   AdapterConfig,
   PluginConfig,
+  PersonaConfig,
   ProviderConfig,
   SubagentConfig,
 } from "../api/types";
@@ -243,10 +244,10 @@ export const PROACTIVE_FIELDS: FieldSpec[] = [
 export const BASIC_SETTINGS_FIELDS: FieldSpec[] = [
   {
     key: "persona",
-    label: "助手人设",
+    label: "基础人设",
     kind: "textarea",
     full: true,
-    help: "作为系统提示词使用。工具结果会被标记为资料而不是指令。",
+    help: "未选择命名人格时使用。完整提示词仅在管理界面编辑，斜杠命令只显示人格标识和名称。",
   },
   {
     key: "tavily_key",
@@ -263,6 +264,74 @@ export const BASIC_SETTINGS_FIELDS: FieldSpec[] = [
     help: "修改后需要重启进程生效。",
   },
 ];
+
+export const IDENTITY_FIELDS: FieldSpec[] = [
+  {
+    key: "assistant_name",
+    label: "助手称呼",
+    kind: "text",
+    help: "用于对话、记忆摘要和上下文管理。",
+  },
+  { key: "owner_name", label: "对主人的称呼", kind: "text" },
+  {
+    key: "wake_keywords",
+    label: "唤起关键词",
+    kind: "list",
+    help: "每行一个，消息中包含任意关键词即可唤起。群聊也可通过 @ 唤起，白名单仍有效。",
+  },
+  {
+    key: "private_require_keyword",
+    label: "主人私聊 Agent 需要关键词",
+    kind: "boolean",
+    help: "默认关闭；开启时至少配置一个关键词。斜杠命令、停止和审批指令始终可用。WebUI 不受影响。",
+  },
+];
+
+export const PERSONA_FIELDS: FieldSpec[] = [
+  {
+    key: "id",
+    label: "人格标识",
+    kind: "text",
+    help: "用于 /persona 标识 切换。只允许字母、数字、下划线和短横线，不能使用 default。",
+  },
+  { key: "name", label: "人格名称", kind: "text" },
+  { key: "enabled", label: "启用人格", kind: "boolean" },
+  {
+    key: "prompt",
+    label: "人格提示词",
+    kind: "textarea",
+    full: true,
+    help: "仅在管理界面编辑；命令列表和切换回复不会展示完整提示词。",
+  },
+];
+
+export const CONTEXT_FIELDS: FieldSpec[] = [
+  {
+    key: "max_turns",
+    label: "最大保留上下文轮数",
+    kind: "number",
+    min: 1,
+    max: 10000,
+    help: "包含即将开始的一轮；一轮中的工具调用和插话作为整体处理。",
+  },
+  {
+    key: "keep_recent_turns",
+    label: "压缩时保留最近轮数",
+    kind: "number",
+    min: 0,
+    max: 9999,
+    help: "小于最大轮数。字符空间不足时可能压缩更多旧轮次。",
+  },
+];
+
+export function createPersona(rows: PersonaConfig[]): PersonaConfig {
+  return {
+    id: uniqueId("persona-new", rows),
+    enabled: true,
+    name: "新人格",
+    prompt: "你是一个可靠的私人助手。用中文回答。",
+  };
+}
 
 export const PLUGIN_FIELDS: FieldSpec[] = [
   { key: "id", label: "插件标识", kind: "text" },

@@ -166,10 +166,31 @@ class AdapterHub:
         text = "".join(
             str(s.get("data", {}).get("text", "")) for s in parts if s.get("type") == "text"
         ).strip()
-        if group and not any(
+        mentioned = any(
             s.get("type") == "at" and str(s.get("data", {}).get("qq")) == bot.self_id for s in parts
+        )
+        settings = self.config.value
+        keyword = any(word in text for word in settings.wake_keywords)
+        if group and not (mentioned or keyword):
+            return
+        # Explicit controls and approvals must remain reachable while keyword gating is on.
+        control = (
+            text.startswith("/")
+            or text in {"停", "取消"}
+            or re.fullmatch(r"(同意|拒绝)\s+([a-f0-9]{10})", text)
+        )
+        if (
+            not group
+            and user == cfg.owner_id
+            and settings.private_require_keyword
+            and not keyword
+            and not control
         ):
             return
+        for word in sorted(settings.wake_keywords, key=len, reverse=True):
+            if text.startswith(word):
+                text = text[len(word) :].lstrip(" ，,：:！!、")
+                break
         message_id = f"{cfg.id}:{event.get('message_id')}"
         if not await self.store.execute(
             "INSERT OR IGNORE INTO seen_messages VALUES(?,?)", (message_id, now().timestamp())

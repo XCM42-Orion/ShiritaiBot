@@ -9,6 +9,8 @@ COMMANDS = {
     "status": "查看当前会话、模型和运行状态",
     "models": "列出可用模型",
     "model": "查看当前模型；/model 模型标识 切换；/model default 恢复路由",
+    "personas": "列出可用人格的标识和名称",
+    "persona": "查看当前人格；/persona 人格标识 切换；/persona default 恢复默认（切换仅主人）",
     "new": "开始新上下文，保留历史与长期记忆（仅主人）",
     "clear": "同 /new",
     "stop": "停止当前任务及自己的排队消息",
@@ -35,11 +37,11 @@ async def command(runtime, ctx, text):
         capability = {"memory": "memory_search", "tasks": "subagent_list"}.get(name)
         if capability:
             await runtime.registry.permissions.check(ctx, runtime.registry.tools[capability], {})
-        if name in {"new", "clear"} or (name == "model" and argument):
+        if name in {"new", "clear"} or (name in {"model", "persona"} and argument):
             if not ctx.owner or ctx.background:
-                raise PublicError("只有主人可以重置会话或切换模型。")
+                raise PublicError("只有主人可以重置会话、切换模型或人格。")
         if name == "help":
-            answer = "ShiritaiBot 命令（直接执行，不消耗模型 tokens）\n" + "\n".join(
+            answer = f"{cfg.assistant_name} 命令（直接执行，不消耗模型 tokens）\n" + "\n".join(
                 f"/{key} — {value}"
                 for key, value in COMMANDS.items()
                 if private or key not in {"tasks", "memory", "approve", "deny"}
@@ -66,6 +68,30 @@ async def command(runtime, ctx, text):
                 )
                 or "尚未配置，请在 WebUI 添加提供商和模型。"
             )
+        elif name == "personas":
+            answer = "可用人格（标识 · 名称）：\n" + (
+                "\n".join(f"{p.id} · {p.name}" for p in cfg.personas if p.enabled)
+                or "尚未添加人格，使用基础人设。"
+            )
+        elif name == "persona":
+            if argument:
+                if argument != "default" and not any(
+                    p.id == argument and p.enabled for p in cfg.personas
+                ):
+                    raise PublicError("人格不存在或未启用。使用 /personas 查看可用标识。")
+                await runtime.store.put(
+                    "session_persona",
+                    ctx.session,
+                    {"persona": "" if argument == "default" else argument},
+                )
+            selected = await runtime.store.get("session_persona", ctx.session)
+            persona = (
+                cfg.selected_persona(selected.get("persona", "") if selected else "")
+                or cfg.selected_persona()
+            )
+            answer = f"当前人格：{persona.id + ' · ' + persona.name if persona else '基础人设'}"
+            if argument:
+                answer += "\n人格设置从下一轮开始生效。"
         elif name in {"model", "status"}:
             if name == "model" and argument:
                 providers = {p.id for p in cfg.providers if p.enabled}
@@ -85,6 +111,12 @@ async def command(runtime, ctx, text):
             if argument:
                 answer += "\n模型设置从下一轮开始生效。"
             if name == "status":
+                selected = await runtime.store.get("session_persona", ctx.session)
+                persona = (
+                    cfg.selected_persona(selected.get("persona", "") if selected else "")
+                    or cfg.selected_persona()
+                )
+                answer += f"\n人格：{persona.name if persona else '基础人设'}"
                 answer += f"\n状态：{'执行中' if actor and actor.current else '空闲'}\n排队：{actor.queue.qsize() if actor else 0}"
         elif name in {"tools", "permissions"}:
             permissions = runtime.registry.permissions

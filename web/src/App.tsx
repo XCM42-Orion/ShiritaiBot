@@ -159,7 +159,13 @@ function ConsoleApp() {
       case "overview":
         return <OverviewPage client={api} act={act} onNavigate={navigate} />;
       case "chat":
-        return <ChatPage client={api} act={act} />;
+        return (
+          <ChatPage
+            client={api}
+            act={act}
+            assistantName={draft.config.assistant_name}
+          />
+        );
       case "events":
         return <EventsPage client={api} act={act} />;
       case "routine":

@@ -41,7 +41,7 @@ class Application:
         self.registry = ToolRegistry(self.permissions, self.store)
         self.llm = ProviderManager(self.config, self.vault, self.store)
         self.memory = MemoryManager(self.store)
-        self.short_term = ShortTermMemory(self.store, self.llm)
+        self.short_term = ShortTermMemory(self.store, self.llm, config=self.config)
         await self.short_term.recover()
         self.adapters = AdapterHub(self.config, self.vault, self.store)
         self.proactive = ProactiveEngine(

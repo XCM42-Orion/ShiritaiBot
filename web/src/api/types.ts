@@ -54,6 +54,18 @@ export interface PluginConfig extends Instance {
   settings: Record<string, unknown>;
 }
 
+export interface PersonaConfig extends Instance {
+  name: string;
+  prompt: string;
+}
+
+export interface ContextConfig {
+  strategy: "compress" | "discard";
+  max_turns: number;
+  compression_model: string;
+  keep_recent_turns: number;
+}
+
 export interface Policy {
   denied_tools: string[];
   scope_tools: Record<string, string[]>;
@@ -85,6 +97,13 @@ export interface Settings {
   tavily_key: string;
   concurrency: number;
   persona: string;
+  personas: PersonaConfig[];
+  default_persona: string;
+  assistant_name: string;
+  owner_name: string;
+  wake_keywords: string[];
+  private_require_keyword: boolean;
+  context: ContextConfig;
 }
 
 export interface Health {
@@ -235,6 +254,7 @@ export interface HistoryMessage {
   content?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  _speaker?: string;
 }
 
 export interface MemoryRecord {

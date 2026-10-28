@@ -6,7 +6,11 @@ import { Details } from "../components/Details";
 import { EmptyState } from "../components/EmptyState";
 import type { PageProps } from "./common";
 
-export function ChatPage({ client, act }: PageProps) {
+export function ChatPage({
+  client,
+  act,
+  assistantName = "ShiritaiBot",
+}: PageProps & { assistantName?: string }) {
   const [session, setSession] = useState("web:owner");
   const [text, setText] = useState("");
   const sessions = useQuery({
@@ -89,7 +93,7 @@ export function ChatPage({ client, act }: PageProps) {
               {message.role === "user"
                 ? "你"
                 : message.role === "assistant"
-                  ? "ShiritaiBot"
+                  ? message._speaker || assistantName
                   : "工具结果"}
             </small>
             {message.role === "tool" || message.tool_calls ? (
@@ -126,7 +130,7 @@ export function ChatPage({ client, act }: PageProps) {
             aria-label="消息"
             value={text}
             onChange={(event) => setText(event.target.value)}
-            placeholder="告诉 ShiritaiBot 你想做什么，或输入 / 查看命令…"
+            placeholder={`告诉 ${assistantName} 你想做什么，或输入 / 查看命令…`}
             rows={2}
           />
           <button
