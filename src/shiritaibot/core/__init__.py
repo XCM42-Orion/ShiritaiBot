@@ -57,6 +57,8 @@ class Context:
     background: bool = False
     turn: str = ""
     allowed_tools: tuple[str, ...] | None = None
+    # Proactive loops carry a creation-time snapshot, independent of Main sessions.
+    tool_policy: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -65,10 +67,14 @@ class Tool:
     description: str
     schema: dict[str, Any]
     handler: Callable[[Context, dict[str, Any]], Awaitable[Any]]
-    risk: str = "safe"
+    risk: str
     chat: bool = False
     timeout: float = 60
     plugin: str = "builtin"
+
+    @property
+    def safe(self) -> bool:
+        return self.risk == "safe"
 
     def spec(self) -> dict[str, Any]:
         return {

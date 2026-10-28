@@ -29,7 +29,7 @@ export function OverviewPage({
     refetchInterval: 4000,
   });
   const pending = (approvals.data ?? []).filter(
-    (row) => row.status === "pending",
+    (row) => row.status === "pending" && row.reviewer !== "model",
   );
   const adapters = Object.entries(health.data?.adapters ?? {});
 

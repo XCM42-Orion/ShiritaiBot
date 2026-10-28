@@ -143,7 +143,19 @@ class AgentRuntime:
             return await self._submit(ctx, text)
 
     async def _submit(self, ctx: Context, text: str) -> str:
-        await self.store.put("session", ctx.session, {"mode": ctx.mode, "actor": ctx.actor})
+        ctx = self.registry.permissions.context(ctx)
+        await self.store.put(
+            "session",
+            ctx.session,
+            {
+                "mode": ctx.mode,
+                "actor": ctx.actor,
+                "owner": ctx.owner,
+                "group": ctx.group,
+                "background": ctx.background,
+                "tool_policy": ctx.tool_policy,
+            },
+        )
         if text.strip().startswith("/"):
             return await command(self, ctx, text)
         if ctx.session not in self.actors or self.actors[ctx.session].task.done():
@@ -155,7 +167,6 @@ class AgentRuntime:
                     self.actors.pop(ctx.session, None)
 
             actor.task.add_done_callback(cleanup)
-        await self.store.put("session", ctx.session, {"mode": ctx.mode, "actor": ctx.actor})
         return await self.actors[ctx.session].submit(ctx, text)
 
     async def close(self) -> None:
@@ -168,7 +179,7 @@ class AgentRuntime:
             await self._turn(actor, ctx, text)
 
     async def _turn(self, actor: SessionActor, ctx: Context, text: str) -> None:
-        ctx = replace(ctx, turn=uid())
+        ctx = replace(self.registry.permissions.context(ctx), turn=uid())
         cfg = self.config.value.model_copy(deep=True)
         selected_persona = await self.store.get("session_persona", ctx.session)
         system = cfg.system_prompt(
@@ -225,7 +236,7 @@ class AgentRuntime:
                 history.append(user)
                 tools = self.registry.specs(ctx)
                 repetitions: Counter = Counter()
-                for step in range(cfg.policy.max_steps if ctx.mode == "agent" else 3):
+                for step in range(cfg.policy.max_steps if ctx.mode == "agent" else 1):
                     while actor.steering:
                         steering = actor.steering.popleft()
                         item = {

@@ -131,7 +131,14 @@ class PluginManager:
             status = "loaded" if key in self.loaded else "disabled"
             if error:
                 status = "error"
-            result.append({**meta, "status": status, "error": error, "enabled": cfg.enabled})
+            tools = [
+                {"name": tool.name, "risk": tool.risk, "safe": tool.safe}
+                for tool in self.registry.tools.values()
+                if tool.plugin == key
+            ]
+            result.append(
+                {**meta, "status": status, "error": error, "enabled": cfg.enabled, "tools": tools}
+            )
         return result
 
     async def reload_all(self) -> list[dict]:
@@ -287,7 +294,7 @@ class PluginManager:
                 ):
                     raise PublicError("插件工具名称冲突")
                 for tool in context.tools:
-                    Draft202012Validator.check_schema(tool.schema)
+                    self.registry.validate(tool)
             except BaseException:
                 try:
                     if plugin is not None:

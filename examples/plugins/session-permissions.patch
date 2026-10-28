@@ -1,0 +1,18 @@
+--- a/src/shiritaibot/plugin/feishu/main.py
++++ b/src/shiritaibot/plugin/feishu/main.py
+@@ -29,2 +29,3 @@
+             self.query,
++            risk="safe",
+         )
+--- a/src/shiritaibot/plugin/thu_learn/main.py
++++ b/src/shiritaibot/plugin/thu_learn/main.py
+@@ -23,3 +23,3 @@
+             self.login,
+-            risk="normal",
++            risk="sensitive",
+             timeout=240,
+@@ -32,3 +32,3 @@
+             self.verify_sms,
+-            risk="normal",
++            risk="sensitive",
+             timeout=240,

@@ -90,7 +90,7 @@ function ConsoleApp() {
   useRealtime(token, onRealtime);
 
   const pending = (approvals.data ?? []).filter(
-    (row) => row.status === "pending",
+    (row) => row.status === "pending" && row.reviewer !== "model",
   ).length;
 
   const act: Action = useCallback(

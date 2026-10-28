@@ -258,3 +258,39 @@ async def test_commands_respect_scope_tool_restrictions(app):
     for text in ["/memory", "/tasks"]:
         await app.runtime.submit(ctx, text)
         assert "权限策略拒绝" in (await app.store.list("reply"))[0]["text"]
+
+
+async def test_tools_command_edits_permissions_modes_and_presets(app):
+    ctx = Context("web:owner", "owner", "agent", True)
+    await app.runtime.submit(ctx, "/tools shell deny")
+    assert app.config.value.policy.sessions[ctx.session].tools["shell"] == "deny"
+    assert "shell · 禁止使用" in (await app.store.list("reply"))[0]["text"]
+    await app.runtime.submit(ctx, "/tools shell inherit")
+    assert "shell" not in app.config.value.policy.sessions[ctx.session].tools
+    await app.runtime.submit(ctx, "/tools preset full_access")
+    assert app.permissions.decision(ctx, app.registry.tools["shell"]) == "allow"
+    await app.runtime.submit(ctx, "/mode chat")
+    assert app.registry.specs(ctx) == []
+    await app.runtime.submit(ctx, "/tools")
+    answer = (await app.store.list("reply"))[0]["text"]
+    assert "shell" in answer and "Chat 模式仅对话" in answer
+    await app.runtime.submit(ctx, "/tools mode agent")
+    assert app.permissions.decision(ctx, app.registry.tools["shell"]) == "allow"
+    await app.runtime.submit(ctx, "/tools shell invalid")
+    assert "无效" in (await app.store.list("reply"))[0]["text"]
+    await app.runtime.submit(ctx, "/tools reset")
+    assert ctx.session not in app.config.value.policy.sessions
+    assert app.permissions.decision(ctx, app.registry.tools["shell"]) == "approve"
+    assert not await app.store.list("usage")
+
+
+async def test_nonowner_cannot_escalate_tools_but_owner_can_configure_group(app):
+    group = Context("group:qq:1", "friend", group=True)
+    await app.runtime.submit(group, "/tools preset full_access")
+    assert group.session not in app.config.value.policy.sessions
+    owner = Context(group.session, "owner", owner=True, group=True)
+    await app.runtime.submit(owner, "/tools mode agent")
+    await app.runtime.submit(owner, "/tools shell allow")
+    assert app.permissions.decision(group, app.registry.tools["shell"]) == "allow"
+    await app.runtime.submit(group, "/mode chat")
+    assert app.config.value.policy.sessions[group.session].mode == "agent"

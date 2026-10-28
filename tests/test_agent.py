@@ -171,3 +171,22 @@ async def test_private_memory_does_not_enter_chat_prompt(app):
     await app.runtime.submit(group, "银河")
     await eventually(lambda: app.store.list("outbox"))
     assert "密码提示" not in str(llm.inputs)
+
+
+@pytest.mark.parametrize("mode,route", [("chat", "chat"), ("agent", "agent")])
+async def test_session_mode_overrides_transport_and_controls_tool_exposure(app, mode, route):
+    from shiritaibot.config import SessionPolicy
+
+    app.config.value.policy.sessions["group:qq:mode"] = SessionPolicy(mode=mode)
+    done = asyncio.Event()
+
+    class LLM:
+        async def complete(self, selected_route, system, messages, tools, settings):
+            assert selected_route == route
+            assert bool(tools) is (mode == "agent")
+            done.set()
+            return Reply(text="ok")
+
+    app.runtime.llm = LLM()
+    await app.runtime.submit(Context("group:qq:mode", "member", "chat", group=True), "hello")
+    await asyncio.wait_for(done.wait(), 3)

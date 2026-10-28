@@ -32,9 +32,11 @@ class PluginContext:
         description: str,
         parameters: dict,
         handler: Callable[[Context, dict], Awaitable[Any]],
-        risk: str = "safe",
+        risk: str,
         timeout: int = 60,
     ) -> None:
+        if risk not in {"safe", "normal", "sensitive", "dangerous"}:
+            raise ValueError("tool risk must be safe, normal, sensitive or dangerous")
         self.tools.append(
             Tool(name, description, parameters, handler, risk=risk, timeout=timeout, plugin=self.id)
         )

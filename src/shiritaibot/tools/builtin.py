@@ -201,11 +201,12 @@ async def register_builtin(app) -> None:
                 }
             ),
             history_query,
+            risk="safe",
         ),
-        Tool("current_time", "查询当前时间与时区", schema({}), current_time, chat=True),
+        Tool("current_time", "查询当前时间与时区", schema({}), current_time, risk="safe"),
         Tool(
             "shell",
-            "在会话工作目录执行 bash。需要主人批准；这不是操作系统沙箱。",
+            "在会话工作目录执行 bash，调用受当前工具权限配置约束。",
             schema(
                 {"command": TEXT, "timeout": {"type": "integer", "minimum": 1, "maximum": 120}},
                 ["command"],
@@ -215,7 +216,11 @@ async def register_builtin(app) -> None:
             timeout=130,
         ),
         Tool(
-            "memory_search", "检索主人的长期记忆", schema({"query": TEXT}, ["query"]), memory_search
+            "memory_search",
+            "检索主人的长期记忆",
+            schema({"query": TEXT}, ["query"]),
+            memory_search,
+            risk="safe",
         ),
         Tool(
             "memory_write",
@@ -235,8 +240,11 @@ async def register_builtin(app) -> None:
                 }
             ),
             proactive_recall,
+            risk="safe",
         ),
-        Tool("routine_list", "查看日程、待办、提醒和定时任务", schema({}), routine_list),
+        Tool(
+            "routine_list", "查看日程、待办、提醒和定时任务", schema({}), routine_list, risk="safe"
+        ),
         Tool(
             "routine_create",
             "创建待办、日程、显式提醒或定时任务。时间必须带时区。",
@@ -246,12 +254,14 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "subagent_start",
-            "启动已配置的外部 Agent 实例，返回任务 ID；需要批准",
+            "启动已配置的外部 Agent 实例，返回任务 ID",
             schema({"instance": TEXT, "prompt": TEXT}, ["instance", "prompt"]),
             subagent_start,
             risk="dangerous",
         ),
-        Tool("subagent_list", "查看当前会话的子代理任务结果", schema({}), subagent_list),
+        Tool(
+            "subagent_list", "查看当前会话的子代理任务结果", schema({}), subagent_list, risk="safe"
+        ),
         Tool(
             "subagent_cancel",
             "取消当前会话的子代理任务",
@@ -264,6 +274,7 @@ async def register_builtin(app) -> None:
             "读取当前会话的大段工具输出",
             schema({"id": TEXT, "offset": {"type": "integer", "minimum": 0}}, ["id"]),
             artifact_read,
+            risk="safe",
         ),
         Tool(
             "qq_file_download",
@@ -287,7 +298,7 @@ async def register_builtin(app) -> None:
                     ["query"],
                 ),
                 search,
-                chat=True,
+                risk="safe",
             )
         )
     for tool in entries:

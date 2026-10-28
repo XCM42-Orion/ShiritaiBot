@@ -269,3 +269,39 @@
     min-width: 70px;
   }
 }
+
+.tool-permission-list {
+  margin-top: 20px;
+}
+.tool-permission-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tool-permission-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tool-permission-row .badge {
+  margin-left: 10px;
+}
+.tool-permission-row > .field {
+  flex: 0 0 250px;
+}
+.tool-permission-row pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .tool-permission-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .tool-permission-row > .field {
+    flex-basis: auto;
+    width: 100%;
+  }
+}

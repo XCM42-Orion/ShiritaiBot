@@ -51,6 +51,15 @@ export function ModelsPage({
           ? { ...model, provider: patch.id }
           : model,
       ),
+      policy:
+        patch.enabled === false &&
+        config.models.some(
+          (model) =>
+            model.provider === provider.id &&
+            model.id === config.policy.approval_model,
+        )
+          ? { ...config.policy, approval_model: "" }
+          : config.policy,
     });
   }
 
@@ -100,6 +109,14 @@ export function ModelsPage({
       models: config.models.map((model, itemIndex) =>
         itemIndex === position ? { ...model, ...patch } : model,
       ),
+      policy:
+        config.policy.approval_model === old.id
+          ? {
+              ...config.policy,
+              approval_model:
+                patch.enabled === false ? "" : String(patch.id ?? old.id),
+            }
+          : config.policy,
     });
   }
 
@@ -261,6 +278,9 @@ export function ModelsPage({
                       (model) => !ids.includes(model.id),
                     ),
                     routes: routesWithout(ids),
+                    policy: ids.includes(config.policy.approval_model)
+                      ? { ...config.policy, approval_model: "" }
+                      : config.policy,
                   });
                 }}
               >
@@ -381,6 +401,10 @@ export function ModelsPage({
                               (_, itemIndex) => itemIndex !== position,
                             ),
                             routes: routesWithout([model.id]),
+                            policy:
+                              config.policy.approval_model === model.id
+                                ? { ...config.policy, approval_model: "" }
+                                : config.policy,
                           })
                         }
                       >

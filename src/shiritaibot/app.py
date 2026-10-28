@@ -40,6 +40,7 @@ class Application:
         self.permissions = Permissions(self.config, self.store)
         self.registry = ToolRegistry(self.permissions, self.store)
         self.llm = ProviderManager(self.config, self.vault, self.store)
+        self.permissions.llm = self.llm
         self.memory = MemoryManager(self.store)
         self.short_term = ShortTermMemory(self.store, self.llm, config=self.config)
         await self.short_term.recover()

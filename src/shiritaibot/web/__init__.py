@@ -155,6 +155,39 @@ def create_app(
     async def config_schema():
         return Settings.model_json_schema()
 
+    @api.get("/api/tools", dependencies=protected)
+    async def tools(session: str = "web:owner"):
+        if not session.startswith(("web:", "private:", "group:")):
+            raise HTTPException(422, "仅支持 Main 会话，Proactive Loop 请修改默认权限")
+        row = await runtime.store.get("session", session) or {}
+        owner = row.get("owner", session.startswith("web:"))
+        if session.startswith("private:"):
+            owner = owner or any(
+                session == f"private:{adapter.id}:{adapter.owner_id}"
+                for adapter in runtime.config.value.adapters
+            )
+        ctx = Context(
+            session, row.get("actor", ""), owner=owner, group=session.startswith("group:")
+        )
+        ctx = runtime.permissions.context(ctx)
+        return {
+            "session": session,
+            "policy": runtime.permissions.session_policy(ctx).model_dump(),
+            "source": "session" if session in runtime.config.value.policy.sessions else "default",
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "plugin": tool.plugin,
+                    "risk": tool.risk,
+                    "safe": tool.safe,
+                    "permission": runtime.permissions.configured(ctx, tool),
+                    "decision": runtime.permissions.decision(ctx, tool),
+                }
+                for tool in sorted(runtime.registry.tools.values(), key=lambda tool: tool.name)
+            ],
+        }
+
     @api.get("/api/secrets", dependencies=protected)
     async def secret_names():
         return [r["id"] for r in await runtime.store.list("secret")]

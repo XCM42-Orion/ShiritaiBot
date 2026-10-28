@@ -143,18 +143,45 @@ class ContextConfig(Model):
         return self
 
 
+ToolPermission = Literal["deny", "manual", "auto", "allow"]
+PermissionPreset = Literal["all_manual", "safe_manual", "safe_auto", "full_access"]
+
+
+class ToolPolicy(Model):
+    preset: PermissionPreset = "safe_manual"
+    tools: dict[str, ToolPermission] = Field(default_factory=dict)
+
+
+class SessionPolicy(ToolPolicy):
+    mode: Literal["agent", "chat"] = "agent"
+
+
 class Policy(Model):
+    owner_default: SessionPolicy = Field(default_factory=SessionPolicy)
+    private_default: SessionPolicy = Field(default_factory=lambda: SessionPolicy(mode="chat"))
+    group_default: SessionPolicy = Field(default_factory=lambda: SessionPolicy(mode="chat"))
+    sessions: dict[str, SessionPolicy] = Field(default_factory=dict)
+    proactive_default: ToolPolicy = Field(default_factory=ToolPolicy)
+    approval_model: str = ""
     denied_tools: list[str] = Field(default_factory=list)
     # All matching scope restrictions intersect; there is no scope grant override.
     scope_tools: dict[str, list[str]] = Field(default_factory=dict)
     approval_timeout: int = Field(default=600, ge=1, le=3600)
-    shell_enabled: bool = False
+    # Accepted for old configuration files; Shell now follows per-tool permissions.
+    shell_enabled: bool = Field(default=False, exclude=True)
     shell_command: list[str] = Field(
         default_factory=lambda: ["bash", "--noprofile", "--norc", "-c"]
     )
     max_steps: int = Field(default=25, ge=1, le=100)
     max_turn_seconds: int = Field(default=1200, ge=10, le=7200)
     max_context_chars: int = Field(default=100000, ge=4000, le=1000000)
+
+    @field_validator("sessions")
+    @classmethod
+    def main_sessions_only(cls, value):
+        if any(not re.fullmatch(r"(?:web|private|group):[^\s]{1,200}", key) for key in value):
+            raise ValueError("session policies require a Main web/private/group session ID")
+        return value
 
 
 class ProactiveConfig(Model):
@@ -257,6 +284,13 @@ class Settings(Model):
             for m in self.models
         ):
             raise ValueError("compression_model references unknown or disabled model/provider")
+        if self.policy.approval_model and not any(
+            m.id == self.policy.approval_model
+            and m.enabled
+            and any(p.id == m.provider and p.enabled for p in self.providers)
+            for m in self.models
+        ):
+            raise ValueError("approval_model references unknown or disabled model/provider")
         if self.private_require_keyword and not self.wake_keywords:
             raise ValueError("private keyword activation requires at least one wake keyword")
         for a in self.adapters:

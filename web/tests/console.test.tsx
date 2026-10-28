@@ -48,7 +48,12 @@ function baseConfig(): Settings {
       denied_tools: [],
       scope_tools: {},
       approval_timeout: 600,
-      shell_enabled: false,
+      owner_default: { mode: "agent", preset: "safe_manual", tools: {} },
+      private_default: { mode: "chat", preset: "safe_manual", tools: {} },
+      group_default: { mode: "chat", preset: "safe_manual", tools: {} },
+      proactive_default: { preset: "safe_manual", tools: {} },
+      sessions: {},
+      approval_model: "",
       shell_command: ["bash", "--noprofile", "--norc", "-c"],
       max_steps: 25,
       max_turn_seconds: 1200,
@@ -93,6 +98,12 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
       subagents: 0,
     }),
     config: vi.fn().mockResolvedValue(baseConfig()),
+    tools: vi.fn().mockResolvedValue({
+      session: "web:owner",
+      policy: baseConfig().policy.owner_default,
+      source: "default",
+      tools: [],
+    }),
     saveConfig: vi.fn().mockResolvedValue({ ok: true, version: 2 }),
     records: vi.fn().mockResolvedValue([]),
     stats: vi.fn().mockResolvedValue({
@@ -864,7 +875,7 @@ describe("configuration editing", () => {
           json: async () => ({
             ok: true,
             version: 2,
-            echo: body.policy.shell_enabled,
+            echo: body.policy.sessions["web:owner"]?.mode,
           }),
         } as unknown as Response;
       }
@@ -910,9 +921,9 @@ describe("configuration editing", () => {
     location.hash = "#/approvals";
 
     render(withQuery(<App />));
-    const toggle = await screen.findByLabelText("启用 Shell 工具");
+    const toggle = await screen.findByLabelText("会话模式");
     const user = userEvent.setup();
-    await user.click(toggle);
+    await user.selectOptions(toggle, "chat");
     expect(screen.getByText("配置有未保存的修改")).toBeTruthy();
     await user.click(screen.getByText("保存并应用"));
     await waitFor(() =>
@@ -1139,5 +1150,135 @@ describe("discovered plugin management", () => {
       "new_plugin",
       "https://github.com/owner/plugin",
     );
+  });
+});
+
+describe("session tool permissions", () => {
+  it("edits modes, per-tool overrides and session defaults while isolating Proactive defaults", async () => {
+    const { ApprovalsPage } = await import("../src/pages/ApprovalsPage");
+    let latest = baseConfig();
+    const client = fakeClient({
+      tools: vi.fn().mockResolvedValue({
+        session: "web:owner",
+        policy: latest.policy.owner_default,
+        source: "default",
+        tools: [
+          {
+            name: "shell",
+            description: "执行命令",
+            plugin: "builtin",
+            risk: "dangerous",
+            safe: false,
+            permission: "manual",
+            decision: "approve",
+          },
+          {
+            name: "current_time",
+            description: "查询时间",
+            plugin: "builtin",
+            risk: "safe",
+            safe: true,
+            permission: "allow",
+            decision: "allow",
+          },
+        ],
+      }),
+      records: vi.fn().mockResolvedValue([]),
+    });
+    function Harness() {
+      const [config, setConfig] = useState(latest);
+      return (
+        <ApprovalsPage
+          client={client}
+          act={async (work) => {
+            await work();
+          }}
+          config={config}
+          setConfig={(next) => {
+            latest = next;
+            setConfig(next);
+          }}
+        />
+      );
+    }
+    render(withQuery(<Harness />));
+    const user = userEvent.setup();
+    const shell = await screen.findByLabelText("shell 权限");
+    await user.selectOptions(shell, "auto");
+    expect(latest.policy.sessions["web:owner"].tools.shell).toBe("auto");
+    await user.selectOptions(screen.getByLabelText("权限预设"), "full_access");
+    expect(latest.policy.sessions["web:owner"].tools).toEqual({});
+    expect(latest.policy.sessions["web:owner"].preset).toBe("full_access");
+    await user.selectOptions(screen.getByLabelText("会话模式"), "chat");
+    expect(latest.policy.sessions["web:owner"].mode).toBe("chat");
+    expect(screen.getByText(/当前为 Chat 模式/)).toBeTruthy();
+    await user.selectOptions(
+      screen.getByLabelText("配置范围"),
+      "proactive_default",
+    );
+    expect(screen.queryByLabelText("会话模式")).toBeNull();
+    await user.selectOptions(screen.getByLabelText("权限预设"), "safe_auto");
+    await user.selectOptions(screen.getByLabelText("shell 权限"), "deny");
+    expect(latest.policy.proactive_default).toEqual({
+      preset: "safe_auto",
+      tools: { shell: "deny" },
+    });
+    expect(latest.policy.sessions["web:owner"].mode).toBe("chat");
+    await user.selectOptions(screen.getByLabelText("配置范围"), "session");
+    await user.clear(screen.getByLabelText("Main 会话 ID"));
+    await user.type(screen.getByLabelText("Main 会话 ID"), "group:qq:42");
+    await user.click(screen.getByText("选择会话"));
+    expect((screen.getByLabelText("会话模式") as HTMLSelectElement).value).toBe(
+      "chat",
+    );
+    await user.selectOptions(screen.getByLabelText("会话模式"), "agent");
+    expect(latest.policy.sessions["group:qq:42"].mode).toBe("agent");
+    await user.click(screen.getByText("恢复继承默认"));
+    expect(latest.policy.sessions["group:qq:42"]).toBeUndefined();
+    expect(latest.policy.sessions["web:owner"].mode).toBe("chat");
+  });
+
+  it("shows model review results separately from human approvals", async () => {
+    const { ApprovalsPage } = await import("../src/pages/ApprovalsPage");
+    const client = fakeClient({
+      records: vi.fn().mockResolvedValue([
+        {
+          id: "human",
+          tool: "shell",
+          status: "pending",
+          reviewer: "human",
+          args: { command: "echo hi" },
+          scope: "web:owner",
+          expires: 2000000000,
+        },
+        {
+          id: "model",
+          tool: "shell",
+          status: "denied",
+          reviewer: "model",
+          args: { command: "rm file" },
+          scope: "background:proactive:a",
+          reason: "未获明确授权",
+        },
+      ]),
+    });
+    render(
+      withQuery(
+        <ApprovalsPage
+          client={client}
+          config={baseConfig()}
+          setConfig={() => {}}
+          act={async (work) => {
+            await work();
+          }}
+        />,
+      ),
+    );
+    await screen.findByText("待人工审批 · 1");
+    expect(screen.getAllByRole("button", { name: "允许这一次" })).toHaveLength(
+      1,
+    );
+    expect(screen.getByText(/未获明确授权/)).toBeTruthy();
+    expect(screen.getByText("已拒绝")).toBeTruthy();
   });
 });

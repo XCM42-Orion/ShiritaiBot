@@ -15,6 +15,7 @@ import type {
   RoutineRecord,
   Settings,
   Statistics,
+  ToolCatalog,
 } from "./types";
 
 export class ApiError extends Error {
@@ -32,6 +33,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 export interface ApiClient {
   health(): Promise<Health>;
   config(): Promise<Settings>;
+  tools(session?: string): Promise<ToolCatalog>;
   saveConfig(settings: Settings): Promise<ConfigSaveResult>;
   records<K extends RecordKind>(kind: K): Promise<RecordMap[K][]>;
   stats(hours: number): Promise<Statistics>;
@@ -104,6 +106,8 @@ export function createClient(getToken: () => string): ApiClient {
   return {
     health: () => request<Health>("/health"),
     config: () => request<Settings>("/config"),
+    tools: (session = "web:owner") =>
+      request<ToolCatalog>("/tools?session=" + encodeURIComponent(session)),
     saveConfig: (settings) =>
       request<ConfigSaveResult>("/config", "PUT", settings),
     records: <K extends RecordKind>(kind: K) =>

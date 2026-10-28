@@ -25,7 +25,7 @@ async def test_plugin_reload_is_atomic_and_removes_stale_tools(app):
     source = """from shiritaibot.plugin_api import Plugin, schema
 class Entry(Plugin):
     async def start(self):
-        self.context.register_tool("example", "Example", schema({}), self.call)
+        self.context.register_tool("example", "Example", schema({}), self.call, risk="safe")
     async def call(self, ctx, args):
         return "FIRST"
 """
@@ -41,6 +41,12 @@ class Entry(Plugin):
     assert json.loads(await app.registry.execute(ctx, "example", {})) == "OTHER"
     with pytest.raises(PublicError):
         await stale.handler(ctx, {})
+    path.write_text(source.replace('risk="safe"', 'risk="unknown"'), encoding="utf-8")
+    with pytest.raises(ValueError):
+        await app.plugins.reload("example")
+    assert json.loads(await app.registry.execute(ctx, "example", {})) == "OTHER"
+    metadata = next(row for row in await app.plugins.listing() if row["id"] == "example")
+    assert metadata["tools"] == [{"name": "example", "risk": "safe", "safe": True}]
     path.write_text("syntax error : :", encoding="utf-8")
     with pytest.raises(SyntaxError):
         await app.plugins.reload("example")
@@ -358,6 +364,9 @@ async def test_email_plugin_rejects_incomplete_settings_without_echoing_values(a
     reason="Local THU plugin is installed separately",
 )
 async def test_thu_login_tools_flow_and_permission_boundaries(app):
+    app.config.value.policy.owner_default.tools.update(
+        thu_learn_login="allow", thu_learn_verify_sms="allow"
+    )
     app.config.value.plugins = [PluginConfig(id="thu_learn", enabled=True)]
     await app.plugins.reload("thu_learn")
     plugin = app.plugins.loaded["thu_learn"]
@@ -391,8 +400,9 @@ async def test_thu_login_tools_flow_and_permission_boundaries(app):
         Context("background:test", "owner", "agent", True, background=True),
     ]:
         for name in ["thu_learn_login", "thu_learn_verify_sms"]:
-            assert app.permissions.decision(ctx, app.registry.tools[name]) == "deny"
-            assert name not in {tool["function"]["name"] for tool in app.registry.specs(ctx)}
+            assert app.permissions.decision(ctx, app.registry.tools[name]) == (
+                "approve" if ctx.background else "deny"
+            )
         with pytest.raises(PublicError):
             await plugin.login(ctx, {})
     assert len(calls) == 2

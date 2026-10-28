@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from shiritaibot.config import SessionPolicy
 from shiritaibot.core import PublicError, uid
 
 COMMANDS = {
@@ -14,8 +15,9 @@ COMMANDS = {
     "new": "开始新上下文，保留历史与长期记忆（仅主人）",
     "clear": "同 /new",
     "stop": "停止当前任务及自己的排队消息",
-    "tools": "查看当前会话允许使用的工具",
+    "tools": "列出所有工具权限；/tools 工具名 deny|manual|auto|allow|inherit；/tools preset 预设",
     "permissions": "查看当前工具的权限与审批要求",
+    "mode": "查看会话模式；/mode agent|chat 切换（仅主人）",
     "tasks": "查看后台子代理任务（仅主人私聊）",
     "memory": "查看长期记忆；/memory 关键词 搜索（仅主人私聊）",
     "approve": "/approve 审批编号，同意一次操作（仅主人私聊）",
@@ -29,7 +31,7 @@ async def command(runtime, ctx, text):
     name, argument = name.lower(), argument.strip()
     name = {"cancel": "stop", "reset": "clear"}.get(name, name)
     cfg = runtime.config.value
-    private = ctx.owner and not ctx.group and ctx.mode == "agent" and not ctx.background
+    private = ctx.owner and not ctx.group and not ctx.background
     actor = runtime.actors.get(ctx.session)
     try:
         if name in {"tasks", "memory", "approve", "deny"} and not private:
@@ -118,17 +120,69 @@ async def command(runtime, ctx, text):
                 )
                 answer += f"\n人格：{persona.name if persona else '基础人设'}"
                 answer += f"\n状态：{'执行中' if actor and actor.current else '空闲'}\n排队：{actor.queue.qsize() if actor else 0}"
-        elif name in {"tools", "permissions"}:
+        elif name in {"tools", "permissions", "mode"}:
             permissions = runtime.registry.permissions
-            answer = "当前会话的工具权限：\n" + (
-                "\n".join(
-                    f"{tool.name} · {'需审批' if decision == 'approve' else '允许'}"
+            profile = permissions.session_policy(ctx).model_copy(deep=True)
+            if argument:
+                if not ctx.owner or ctx.background:
+                    raise PublicError("只有主人可以修改 Main 会话的模式和工具权限。")
+                args = argument.split()
+                if name == "mode":
+                    args = ["mode", *args]
+                data = profile.model_dump()
+                if args == ["reset"]:
+                    async with permissions.policy_lock:
+                        settings = runtime.config.value.model_copy(deep=True)
+                        settings.policy.sessions.pop(ctx.session, None)
+                        await runtime.config.save(settings)
+                    profile = permissions.session_policy(ctx)
+                else:
+                    if len(args) != 2:
+                        raise PublicError(
+                            "用法：/tools 工具名 deny|manual|auto|allow|inherit；/tools mode agent|chat；/tools preset all_manual|safe_manual|safe_auto|full_access；/tools reset"
+                        )
+                    target, value = args
+                    if target == "mode" and value in {"agent", "chat"}:
+                        data["mode"] = value
+                    elif target == "preset" and value in {
+                        "all_manual",
+                        "safe_manual",
+                        "safe_auto",
+                        "full_access",
+                    }:
+                        data.update(preset=value, tools={})
+                    elif target in runtime.registry.tools and value in {
+                        "deny",
+                        "manual",
+                        "auto",
+                        "allow",
+                        "inherit",
+                    }:
+                        if value == "inherit":
+                            data["tools"].pop(target, None)
+                        else:
+                            data["tools"][target] = value
+                    else:
+                        raise PublicError("工具、模式、预设或权限值无效。使用 /tools 查看工具。")
+                    profile = SessionPolicy.model_validate(data)
+                    await permissions.set_session(ctx, profile)
+            labels = {
+                "deny": "禁止使用",
+                "manual": "需要人工审批",
+                "auto": "模型自动审批",
+                "allow": "无需审批",
+            }
+            answer = f"当前会话：{ctx.session}\n模式：{profile.mode}\n预设：{profile.preset}"
+            if name != "mode":
+                answer += "\n" + "\n".join(
+                    f"{tool.name} · {labels[permissions.configured(ctx, tool)]}"
+                    + ("（当前不可用）" if permissions.decision(ctx, tool) == "deny" else "")
                     for tool in sorted(runtime.registry.tools.values(), key=lambda tool: tool.name)
-                    if (decision := permissions.decision(ctx, tool)) != "deny"
                 )
-                or "没有可用工具"
-            )
-            answer += "\n命令不会绕过作用域、群聊限制或操作审批。"
+            if profile.mode == "chat":
+                answer += "\nChat 模式仅对话，不调用工具。"
+            if argument:
+                answer += "\n已保存。模式从下一轮生效，工具权限立即应用。"
         elif name == "tasks":
             rows = await runtime.store.list("subagent_run", limit=20)
             answer = "最近子代理任务：\n" + (

@@ -92,8 +92,8 @@ export const PAGES: PageMeta[] = [
   },
   {
     id: "approvals",
-    label: "权限与审批",
-    subtitle: "待确认的危险操作与执行策略。",
+    label: "工具与权限",
+    subtitle: "Main 会话模式、逐工具权限、Proactive 默认权限与审批记录。",
     icon: ShieldCheck,
   },
   {

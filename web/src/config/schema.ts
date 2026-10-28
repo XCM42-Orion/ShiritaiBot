@@ -180,12 +180,6 @@ export const SUBAGENT_FIELDS: FieldSpec[] = [
 
 export const POLICY_FIELDS: FieldSpec[] = [
   {
-    key: "shell_enabled",
-    label: "启用 Shell 工具",
-    kind: "boolean",
-    help: "默认关闭。启用后每次调用仍需审批；它不是系统沙箱。",
-  },
-  {
     key: "shell_command",
     label: "Shell 启动参数",
     kind: "list",

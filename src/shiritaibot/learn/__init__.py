@@ -36,6 +36,7 @@ class OneLearnPlugin(Plugin):
                 ["operation"],
             ),
             self.query,
+            risk="safe",
             timeout=240,
         )
         self.context.register_tool(

@@ -16,6 +16,21 @@ WebUI 的“安装插件”支持上传 ZIP 或填写公开 GitHub 仓库地址�
 
 插件在同一进程运行，属于可信本地代码，不是安全沙箱。工具执行由权限层控制，但插件代码自身具有宿主账号权限。只安装可信代码。宿主不会自动安装 requirements。
 
+## 工具安全声明与会话权限
+
+`PluginContext.register_tool` 的 `risk` 为必填参数；直接构造 `Tool` 也必须提供。有效值为 `safe`、`normal`、`sensitive`、`dangerous`，仅 `safe` 属于安全工具。遗漏或无效值会使插件加载失败，失败重载保留旧实例；不得把带副作用的工具标记为 safe。
+
+```python
+self.context.register_tool("read_status", "读取状态", schema({}), self.read_status, risk="safe")
+self.context.register_tool("send_notice", "对外发送", parameters, self.send_notice, risk="sensitive")
+```
+
+Plugin Manager 在替换旧实例前验证所有工具的安全等级和 Schema，插件列表 API 暴露每个已注册工具的 `name/risk/safe`；WebUI 的工具目录展示来源和安全性。每个 Agent 会话可将单个工具设为禁止、人工审批、模型自动审批或无需审批。工具安全等级仅决定预设的默认权限，不能替代执行层授权。
+
+OneLearn 的 `learn_query` 声明 safe，`learn_download` 声明 normal。部署环境的飞书只读查询工具声明 safe；清华登录 / 短信验证工具声明 sensitive，并保留主人私聊的业务校验。邮件插件目前只注册事件轮询和通知通道，没有模型可调用工具，不需要虚构工具声明；这些生命周期任务不受模型工具审批控制。
+
+飞书、清华插件源码仍由部署环境单独维护，本次兼容修改提供在 `examples/plugins/session-permissions.patch`，可在仓库根目录运行 `git apply examples/plugins/session-permissions.patch`（本部署已应用，无需重复）。今后新增工具均需显式声明 risk。
+
 ## 插件自行声明配置项
 
 每个插件在自己的 `plugin.toml` 中通过 `settings_schema` 声明配置项；无需修改前端或宿主的插件配置列表。使用 JSON Schema 对象定义，例如：
@@ -141,7 +156,7 @@ notify_to = []
 
 时间过滤按服务器 `INTERNALDATE` 精确比较（含边界），不使用可由发件人填写的 Date 头。`startup` 默认过滤本次插件启动或重载之前的邮件；`last_poll` 过滤上次成功轮询之前的邮件，时间持久化，首次无记录时使用本次启动时间；`none` 不按时间过滤，首次可读取已有邮件；`custom` 过滤带时区的 `filter_before` 之前的邮件。已处理或已过滤的 UID 不会重复扫描；`UIDVALIDITY` 改变时重新按时间条件扫描。`max_per_poll` 限制每次最多读取的候选邮件数，积压分多次轮询处理，每次仍只发一个合并事件；`last_poll` 在积压读完前保持原过滤窗口，失败不推进游标或时间。
 
-邮件内容视为不可信资料：分诊和先期准备的提示中都声明不执行其中的指令，后台准备只有只读工具。分类阶段不加人设；进入 Proactive Loop 后加载配置的默认人设及助手/主人称呼，最终通知遵循人设。配置缺少 `imap_host` 或 `username` 时加载失败，错误只列字段名、不回显输入。IMAP / SMTP 使用标准库客户端，在线程中执行，不阻塞事件循环。
+邮件内容视为不可信资料：分诊和先期准备的提示中都声明不执行其中的指令，后台准备使用创建时的工具权限快照。分类阶段不加人设；进入 Proactive Loop 后加载配置的默认人设及助手/主人称呼，最终通知遵循人设。配置缺少 `imap_host` 或 `username` 时加载失败，错误只列字段名、不回显输入。IMAP / SMTP 使用标准库客户端，在线程中执行，不阻塞事件循环。
 
 SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之后再发邮件，失败只记录 `notify.channel_failed`，不影响 IM 通知、不重发。其他插件可调用 `PluginContext.register_notifier(handler)` 接入同一通道，`handler(source, text)` 为异步函数；重载和停用时宿主自动撤销。
 
@@ -154,7 +169,7 @@ SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之
 | 入口 / 预处理 | 清理标识和标题空白、校验、去重、持久化后唤醒 PE |
 | Filter | 使用独立分类提示词，不加人设；light 模型输出 importance=0–4、reason 和可选通知/查证建议；失败修正一次，再失败交给普通级 Loop 核查 |
 | 分级 | 0 discard；1–4 按级别降序启动后台 Turn，同级 FIFO；不抢占运行中的任务 |
-| Proactive Loop | `background:proactive:<接收记录 ID>`，复用 Agent Runtime，加载配置的默认人设及助手/主人称呼，在当前 L1 权限下调用只读工具；最终输出 `{notify, message, reason}`，message 遵循人设 |
+| Proactive Loop | `background:proactive:<接收记录 ID>`，复用 Agent Runtime，加载配置的默认人设及助手/主人称呼，按创建时的默认工具权限快照调用工具；最终输出 `{notify, message, reason}`，message 遵循人设 |
 | 通知与交接 | Loop 完成后才发送最终 message，追加到目标 Main context；4 级强制通知并穿透免打扰、摘要延迟和节流；失败/超时发兜底并注明未完成 |
 | 每轮记忆 | Main / Proactive 每个 Turn 成功、失败或取消后，持久化摘要任务，由 light 模型压缩输入、工具结果和最终消息；失败重试，不阻塞回复 |
 

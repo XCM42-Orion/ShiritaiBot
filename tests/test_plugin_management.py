@@ -17,7 +17,7 @@ SOURCE = """from shiritaibot.plugin_api import Plugin, schema
 from .helper import VALUE
 class Entry(Plugin):
     async def start(self):
-        self.context.register_tool("managed_tool", "Example", schema({}), self.call)
+        self.context.register_tool("managed_tool", "Example", schema({}), self.call, risk="safe")
     async def call(self, ctx, args):
         return VALUE
 """

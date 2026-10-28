@@ -74,6 +74,7 @@ export interface PluginInfo extends Instance {
   error: string;
   settings_schema?: PluginSettingSchema;
   defaults?: Record<string, unknown>;
+  tools?: { name: string; risk: string; safe: boolean }[];
 }
 
 export interface PersonaConfig extends Instance {
@@ -88,11 +89,46 @@ export interface ContextConfig {
   keep_recent_turns: number;
 }
 
+export type ToolPermission = "deny" | "manual" | "auto" | "allow";
+export type PermissionPreset =
+  "all_manual" | "safe_manual" | "safe_auto" | "full_access";
+
+export interface ToolPolicy {
+  preset: PermissionPreset;
+  tools: Record<string, ToolPermission>;
+}
+
+export interface SessionPolicy extends ToolPolicy {
+  mode: "agent" | "chat";
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+  plugin: string;
+  risk: string;
+  safe: boolean;
+  permission: ToolPermission;
+  decision: string;
+}
+
+export interface ToolCatalog {
+  session: string;
+  policy: SessionPolicy;
+  source: "session" | "default";
+  tools: ToolInfo[];
+}
+
 export interface Policy {
+  owner_default: SessionPolicy;
+  private_default: SessionPolicy;
+  group_default: SessionPolicy;
+  sessions: Record<string, SessionPolicy>;
+  proactive_default: ToolPolicy;
+  approval_model: string;
   denied_tools: string[];
   scope_tools: Record<string, string[]>;
   approval_timeout: number;
-  shell_enabled: boolean;
   shell_command: string[];
   max_steps: number;
   max_turn_seconds: number;
@@ -214,6 +250,8 @@ export interface ApprovalRecord {
   status: ApprovalStatus;
   expires: number;
   turn: string;
+  reviewer?: "human" | "model";
+  reason?: string;
 }
 
 export interface EventRecord {
@@ -263,6 +301,9 @@ export interface SessionRecord {
   scope?: string;
   mode: string;
   actor: string;
+  owner?: boolean;
+  group?: boolean;
+  background?: boolean;
 }
 
 export interface ToolCall {

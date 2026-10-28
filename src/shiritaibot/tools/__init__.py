@@ -15,10 +15,16 @@ class ToolRegistry:
         self.tools: dict[str, Tool] = {}
 
     def add(self, tool: Tool) -> None:
+        self.validate(tool)
         if tool.name in self.tools:
             raise ValueError(f"duplicate tool: {tool.name}")
-        Draft202012Validator.check_schema(tool.schema)
         self.tools[tool.name] = tool
+
+    @staticmethod
+    def validate(tool: Tool) -> None:
+        if tool.risk not in {"safe", "normal", "sensitive", "dangerous"}:
+            raise ValueError("工具必须声明有效的安全等级")
+        Draft202012Validator.check_schema(tool.schema)
 
     def remove_plugin(self, plugin: str) -> None:
         self.tools = {k: v for k, v in self.tools.items() if v.plugin != plugin}

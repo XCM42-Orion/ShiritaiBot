@@ -197,6 +197,7 @@ def test_http_auth_crud_and_validation(tmp_path):
 
 
 async def test_qq_file_reference_cannot_cross_session(app):
+    app.config.value.policy.owner_default.tools["qq_file_download"] = "allow"
     await app.store.put("qq_file", "ref", {"adapter": "a", "data": {}}, "private:a:1")
     result = await app.registry.execute(
         Context("private:a:2", "owner", "agent", True), "qq_file_download", {"ref": "ref"}
@@ -216,3 +217,36 @@ def test_feishu_fixed_operation_validation():
         build_args("search_docs", {"query": "x", "output": "secret.txt"})
     with pytest.raises(LarkError):
         build_args("document", {"doc": "https://attacker.test/docx/a"})
+
+
+def test_tool_catalog_and_session_policy_api(tmp_path):
+    with TestClient(create_app(tmp_path, token="test-token")) as client:
+        assert client.get("/api/tools").status_code == 401
+        client.headers["Authorization"] = "Bearer test-token"
+        catalog = client.get("/api/tools").json()
+        assert catalog["source"] == "default" and catalog["policy"]["mode"] == "agent"
+        tools = {tool["name"]: tool for tool in catalog["tools"]}
+        assert tools["shell"]["safe"] is False and tools["shell"]["permission"] == "manual"
+        assert tools["current_time"]["safe"] is True
+        assert (
+            client.get("/api/tools", params={"session": "background:proactive:x"}).status_code
+            == 422
+        )
+        cfg = client.get("/api/config").json()
+        cfg["policy"]["sessions"]["group:qq:123"] = {
+            "mode": "agent",
+            "preset": "full_access",
+            "tools": {"shell": "deny"},
+        }
+        assert client.put("/api/config", json=cfg).status_code == 200
+        selected = client.get("/api/tools", params={"session": "group:qq:123"}).json()
+        assert selected["source"] == "session" and selected["policy"]["mode"] == "agent"
+        assert next(t for t in selected["tools"] if t["name"] == "shell")["decision"] == "deny"
+        cfg["policy"]["sessions"]["group:qq:123"]["mode"] = "chat"
+        assert client.put("/api/config", json=cfg).status_code == 200
+        selected = client.get("/api/tools", params={"session": "group:qq:123"}).json()
+        assert all(tool["decision"] == "deny" for tool in selected["tools"])
+        cfg["policy"]["sessions"]["group:qq:123"]["tools"]["shell"] = "unknown"
+        assert client.put("/api/config", json=cfg).status_code == 422
+        cfg["policy"]["sessions"] = {"background:x": {"mode": "agent"}}
+        assert client.put("/api/config", json=cfg).status_code == 422
