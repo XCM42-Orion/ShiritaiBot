@@ -2,9 +2,6 @@ import type { ReactNode } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { PAGES, pageMeta } from "../navigation";
 import type { PageId } from "../navigation";
-import type { Notice } from "../hooks/useNotice";
-import { ErrorDialog } from "./ErrorDialog";
-import { Toast } from "./Toast";
 
 export function AppShell({
   page,
@@ -12,8 +9,6 @@ export function AppShell({
   pendingApprovals,
   online,
   version,
-  notice,
-  onDismissNotice,
   onLogout,
   children,
 }: {
@@ -22,8 +17,6 @@ export function AppShell({
   pendingApprovals: number;
   online: boolean;
   version: string;
-  notice: Notice | null;
-  onDismissNotice: () => void;
   onLogout: () => void;
   children: ReactNode;
 }) {
@@ -101,9 +94,6 @@ export function AppShell({
               <p className="subtitle">{meta.subtitle}</p>
             </div>
           </div>
-          {notice && !notice.error && (
-            <Toast message={notice.text} onDismiss={onDismissNotice} />
-          )}
           {children}
         </div>
         <footer>
@@ -111,10 +101,6 @@ export function AppShell({
           <span className="muted">明确权限 · 持续记忆</span>
         </footer>
       </main>
-      <ErrorDialog
-        message={notice?.error ? notice.text : null}
-        onClose={onDismissNotice}
-      />
     </div>
   );
 }

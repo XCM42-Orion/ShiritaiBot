@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act as reactAct,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,7 +17,7 @@ import { ModelsPage } from "../src/pages/ModelsPage";
 import { ChatPage } from "../src/pages/ChatPage";
 import { PluginsPage } from "../src/pages/PluginsPage";
 import { SecretField } from "../src/components/SecretField";
-import { ErrorDialog } from "../src/components/ErrorDialog";
+import { NoticeProvider, useNotice } from "../src/hooks/useNotice";
 import { FieldForm } from "../src/components/FieldForm";
 import { PAGES, pageFromHash } from "../src/navigation";
 import { App } from "../src/App";
@@ -396,21 +403,110 @@ it("sends a chat message from the composer", async () => {
   );
 });
 
-it("opens and dismisses errors as a modal dialog", async () => {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.setAttribute("open", "");
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.removeAttribute("open");
-  };
-  function DialogHost() {
-    const [message, setMessage] = useState<string | null>("无法获取模型");
-    return <ErrorDialog message={message} onClose={() => setMessage(null)} />;
-  }
-  render(<DialogHost />);
-  expect(screen.getByRole("dialog").textContent).toContain("无法获取模型");
-  await userEvent.setup().click(screen.getByText("知道了"));
-  expect(screen.queryByRole("dialog")).toBeNull();
+function NoticeControls() {
+  const { succeed, fail, warn } = useNotice();
+  return (
+    <>
+      <button onClick={() => succeed("操作已完成")}>成功提示</button>
+      <button onClick={() => fail("无法获取模型")}>错误提示</button>
+      <button onClick={() => warn("请检查配置")}>警告提示</button>
+    </>
+  );
+}
+
+describe("notifications", () => {
+  it.each([
+    ["成功提示", "status", "success", "操作已完成"],
+    ["错误提示", "alert", "error", "无法获取模型"],
+    ["警告提示", "alert", "warning", "请检查配置"],
+  ])(
+    "shows %s outside the layout and allows dismissal",
+    async (button, role, tone, text) => {
+      const { container } = render(
+        <NoticeProvider>
+          <NoticeControls />
+        </NoticeProvider>,
+      );
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: button }));
+      const notice = screen.getByRole(role);
+      expect(notice.textContent).toContain(text);
+      expect(notice.classList.contains(`toast--${tone}`)).toBe(true);
+      expect(notice.parentElement).toBe(document.body);
+      expect(container.contains(notice)).toBe(false);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "关闭通知" }));
+      expect(screen.queryByRole(role)).toBeNull();
+    },
+  );
+
+  it("expires success notices, restarts repeated notices, and keeps errors and warnings visible", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <NoticeProvider>
+          <NoticeControls />
+        </NoticeProvider>,
+      );
+      fireEvent.click(screen.getByText("成功提示"));
+      const first = screen.getByRole("status");
+      reactAct(() => vi.advanceTimersByTime(4000));
+      fireEvent.click(screen.getByText("成功提示"));
+      expect(screen.getByRole("status")).not.toBe(first);
+      reactAct(() => vi.advanceTimersByTime(4000));
+      expect(screen.getByRole("status")).toBeTruthy();
+      reactAct(() => vi.advanceTimersByTime(1000));
+      expect(screen.queryByRole("status")).toBeNull();
+      for (const button of ["错误提示", "警告提示"]) {
+        fireEvent.click(screen.getByText(button));
+        reactAct(() => vi.advanceTimersByTime(10000));
+        expect(screen.getByRole("alert")).toBeTruthy();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports page query failures outside the page content", async () => {
+    const client = fakeClient({
+      stats: vi.fn().mockRejectedValue(new Error("连接中断")),
+    });
+    const { container } = render(
+      withQuery(
+        <NoticeProvider>
+          <Dashboard client={client} />
+        </NoticeProvider>,
+      ),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("读取统计失败：连接中断");
+    expect(container.textContent).not.toContain("读取统计失败");
+  });
+
+  it("shows login failures without leaving the login form", async () => {
+    sessionStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: "管理令牌无效" }),
+      }),
+    );
+    try {
+      const { container } = render(withQuery(<App />));
+      const user = userEvent.setup();
+      await user.type(screen.getByLabelText("管理令牌"), "wrong-token");
+      await user.click(screen.getByRole("button", { name: "进入控制台" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toBe("管理令牌无效");
+      expect(container.contains(alert)).toBe(false);
+      expect(screen.getByLabelText("管理令牌")).toBeTruthy();
+      expect(sessionStorage.getItem("shiritaibot-token")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 it("falls back to the overview page for unknown hashes", () => {

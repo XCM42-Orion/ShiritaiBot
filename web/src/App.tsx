@@ -7,7 +7,7 @@ import { LoginView } from "./components/LoginView";
 import { SaveBar } from "./components/SaveBar";
 import { useConfigDraft } from "./hooks/useConfigDraft";
 import { useHashRoute } from "./hooks/useHashRoute";
-import { useNotice } from "./hooks/useNotice";
+import { NoticeProvider, useNotice } from "./hooks/useNotice";
 import { useRealtime } from "./hooks/useRealtime";
 import type { RealtimeEvent } from "./hooks/useRealtime";
 import { AdaptersPage } from "./pages/AdaptersPage";
@@ -27,11 +27,19 @@ import type { Action } from "./pages/common";
 const TOKEN_KEY = "shiritaibot-token";
 
 export function App() {
+  return (
+    <NoticeProvider>
+      <ConsoleApp />
+    </NoticeProvider>
+  );
+}
+
+function ConsoleApp() {
   const [token, setToken] = useState<string | null>(() =>
     sessionStorage.getItem(TOKEN_KEY),
   );
   const [page, navigate] = useHashRoute();
-  const { notice, succeed, fail, dismiss } = useNotice();
+  const { succeed, fail, dismiss } = useNotice();
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
@@ -128,6 +136,7 @@ export function App() {
     return (
       <LoginView
         onAuthenticated={(next) => {
+          dismiss();
           sessionStorage.setItem(TOKEN_KEY, next);
           setToken(next);
         }}
@@ -138,11 +147,7 @@ export function App() {
 
   function content(api: ApiClient) {
     if (!draft.config) {
-      return draft.loading ? (
-        <p className="muted">正在读取配置…</p>
-      ) : (
-        <p className="error-text">读取配置失败，请检查后端服务。</p>
-      );
+      return draft.loading ? <p className="muted">正在读取配置…</p> : null;
     }
     const configProps = {
       client: api,
@@ -187,9 +192,8 @@ export function App() {
       pendingApprovals={pending}
       online={health.isSuccess}
       version={"v" + (health.data?.version ?? "0.1.0")}
-      notice={notice}
-      onDismissNotice={dismiss}
       onLogout={() => {
+        dismiss();
         sessionStorage.removeItem(TOKEN_KEY);
         setToken(null);
         queryClient.clear();

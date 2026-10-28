@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useQuery } from "@tanstack/react-query";
 import { Details } from "../components/Details";
 import { EmptyState } from "../components/EmptyState";
@@ -41,7 +42,7 @@ export function SubagentsPage({
       <section className="panel">
         <h2>任务记录</h2>
         {runs.error && (
-          <p className="error-text">读取任务失败：{runs.error.message}</p>
+          <QueryErrorNotice message={`读取任务失败：${runs.error.message}`} />
         )}
         {runs.data?.map((row) => (
           <article className="record" key={row.id}>

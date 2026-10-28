@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -40,7 +41,9 @@ export function ApprovalsPage({
       <section className="panel">
         <h2>待审批 · {pending.length}</h2>
         {approvals.error && (
-          <p className="error-text">读取审批失败：{approvals.error.message}</p>
+          <QueryErrorNotice
+            message={`读取审批失败：${approvals.error.message}`}
+          />
         )}
         {pending.length ? (
           pending.map((row) => (

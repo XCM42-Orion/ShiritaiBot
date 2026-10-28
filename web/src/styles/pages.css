@@ -1,8 +1,3 @@
-.error-text {
-  color: var(--danger);
-  font-size: 13px;
-}
-
 /* Dashboard */
 
 .dashboard {
@@ -29,8 +24,8 @@
 }
 
 .range-tabs button.selected {
-  background: #2a3c30;
-  color: #c4e8b0;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .chart-panel {
@@ -113,23 +108,23 @@
 .message {
   margin: 12px 0;
   padding: 10px 16px;
-  background: #1d2a20;
-  border-left: 2px solid #435d3a;
+  background: var(--pink-soft);
+  border-left: 2px solid var(--pink-border);
   border-radius: 0 6px 6px 0;
 }
 
 .message.user {
-  background: #202d28;
-  border-color: #607c75;
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .message.tool {
-  background: #141e17;
-  border-color: #435343;
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
 }
 
 .message.delivered {
-  border-color: #829760;
+  border-color: var(--pink);
 }
 
 .message p {
@@ -141,7 +136,7 @@
 
 .message small {
   font-size: 10px;
-  color: #a3b295;
+  color: var(--muted);
 }
 
 .composer {
@@ -151,8 +146,8 @@
   align-items: center;
   gap: 9px;
   padding: 10px;
-  background: #1b281f;
-  border: 1px solid #405139;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
 }
 
@@ -175,7 +170,7 @@
   background: var(--panel-strong);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow);
 }
 
 .command-menu button {
@@ -210,7 +205,7 @@
 .log-row time {
   flex-shrink: 0;
   font-size: 10px;
-  color: #7c9684;
+  color: var(--muted);
 }
 
 /* Login */
@@ -255,7 +250,7 @@
 
 .login code {
   font-size: 11px;
-  color: #b7c6a7;
+  color: var(--accent);
 }
 
 @media (max-width: 700px) {
@@ -272,9 +267,5 @@
   }
   .command-menu strong {
     min-width: 70px;
-  }
-  .toast {
-    right: 12px;
-    bottom: 12px;
   }
 }

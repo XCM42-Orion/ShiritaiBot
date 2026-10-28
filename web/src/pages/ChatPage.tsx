@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Send, Square } from "lucide-react";
@@ -75,7 +76,9 @@ export function ChatPage({ client, act }: PageProps) {
       </div>
       <section className="panel chat-panel" aria-label="会话记录">
         {history.error && (
-          <p className="error-text">读取会话失败：{history.error.message}</p>
+          <QueryErrorNotice
+            message={`读取会话失败：${history.error.message}`}
+          />
         )}
         {!history.data?.length && (
           <EmptyState text="从一句话开始。请先在「模型与服务」里配置模型路由。" />

@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
@@ -99,7 +100,9 @@ export function RoutinePage({ client, act }: PageProps) {
       <section className="panel">
         <h2>日程与任务</h2>
         {routines.error && (
-          <p className="error-text">读取日程失败：{routines.error.message}</p>
+          <QueryErrorNotice
+            message={`读取日程失败：${routines.error.message}`}
+          />
         )}
         {routines.data?.map((row) => (
           <article className="record" key={row.id}>

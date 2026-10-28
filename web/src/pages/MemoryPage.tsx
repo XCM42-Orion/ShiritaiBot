@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
@@ -44,7 +45,9 @@ export function MemoryPage({ client, act }: PageProps) {
       <section className="panel">
         <h2>记忆库</h2>
         {memories.error && (
-          <p className="error-text">读取记忆失败：{memories.error.message}</p>
+          <QueryErrorNotice
+            message={`读取记忆失败：${memories.error.message}`}
+          />
         )}
         {memories.data?.map((row) => (
           <article className="record" key={row.id}>

@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useQuery } from "@tanstack/react-query";
 import { Details } from "../components/Details";
 import { EmptyState } from "../components/EmptyState";
@@ -14,7 +15,7 @@ export function EventsPage({ client }: PageProps) {
     <section className="panel">
       <h2>事件时间线</h2>
       {events.error && (
-        <p className="error-text">读取事件失败：{events.error.message}</p>
+        <QueryErrorNotice message={`读取事件失败：${events.error.message}`} />
       )}
       {events.data?.map((row) => (
         <article className="record" key={row.id}>

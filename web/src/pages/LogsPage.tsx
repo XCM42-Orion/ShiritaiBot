@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useQuery } from "@tanstack/react-query";
 import { EmptyState } from "../components/EmptyState";
 import { formatTime } from "../lib/utils";
@@ -13,7 +14,7 @@ export function LogsPage({ client }: PageProps) {
     <section className="panel">
       <h2>活动日志</h2>
       {activity.error && (
-        <p className="error-text">读取日志失败：{activity.error.message}</p>
+        <QueryErrorNotice message={`读取日志失败：${activity.error.message}`} />
       )}
       {activity.data?.map((row) => (
         <div className="log-row" key={row.id}>

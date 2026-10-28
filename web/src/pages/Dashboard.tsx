@@ -1,3 +1,4 @@
+import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ApiClient } from "../api/client";
@@ -91,7 +92,7 @@ function HourlyChart({
                 y={0}
                 width={step}
                 height={height}
-                fill={index === hover ? "#ffffff14" : "transparent"}
+                fill={index === hover ? "var(--accent-soft)" : "transparent"}
               />
               {series.map((item) => {
                 const value = (Number(row[item.key]) / maximum) * height;
@@ -180,7 +181,7 @@ export function Dashboard({ client }: { client: ApiClient }) {
         </div>
       </div>
       {query.error && (
-        <p className="error-text">读取统计失败：{query.error.message}</p>
+        <QueryErrorNotice message={`读取统计失败：${query.error.message}`} />
       )}
       {data && data.totals && data.buckets ? (
         <>
