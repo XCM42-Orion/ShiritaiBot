@@ -122,17 +122,14 @@ class PluginManager:
         return {p["id"]: p["settings_schema"] for p in await self.discover()}
 
     async def listing(self) -> list[dict]:
-        discovered = {p["id"]: p for p in await self.discover()}
         configs = {p.id: p for p in self.config.value.plugins}
         result = []
-        for key in dict.fromkeys([*discovered, *configs]):
-            meta = discovered.get(key, {"id": key, "name": key, "description": ""})
+        for meta in await self.discover():
+            key = meta["id"]
             cfg = configs.get(key, PluginConfig(id=key))
             error = meta.get("error") or self.errors.get(key, "")
             status = "loaded" if key in self.loaded else "disabled"
-            if key not in discovered:
-                status, error = "missing", "未找到插件目录或清单"
-            elif error:
+            if error:
                 status = "error"
             result.append({**meta, "status": status, "error": error, "enabled": cfg.enabled})
         return result
@@ -141,13 +138,17 @@ class PluginManager:
         async with self.manage_lock:
             await self.sync_config()
             configured = {p.id for p in self.config.value.plugins}
+            discovered = {p["id"] for p in await self.discover()}
             for key in list(self.loaded):
-                if key not in configured:
+                if key not in configured or key not in discovered:
                     async with self.locks[key]:
                         await self.loaded.pop(key).close()
                         self.unregister(key)
                         self._forget_modules(key)
+            self.errors = {key: error for key, error in self.errors.items() if key in discovered}
             for cfg in self.config.value.plugins:
+                if cfg.id not in discovered:
+                    continue
                 try:
                     await self.reload(cfg.id)
                 except Exception:
@@ -225,6 +226,9 @@ class PluginManager:
             raise PublicError("插件尚未配置")
         lock = self.locks.setdefault(key, asyncio.Lock())
         async with lock:
+            metadata = next((p for p in await self.discover() if p["id"] == key), None)
+            if not metadata:
+                raise PublicError("未找到插件清单")
             if not cfg.enabled:
                 old = self.loaded.pop(key, None)
                 self.unregister(key)
@@ -232,9 +236,6 @@ class PluginManager:
                     await old.close()
                 self._forget_modules(key)
                 return
-            metadata = next((p for p in await self.discover() if p["id"] == key), None)
-            if not metadata:
-                raise PublicError("未找到插件清单")
             if metadata["error"]:
                 raise PublicError(metadata["error"])
             plugin_settings = deepcopy({**metadata["defaults"], **cfg.settings})

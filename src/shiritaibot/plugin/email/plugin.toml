@@ -69,6 +69,20 @@ minimum = 200
 maximum = 20000
 default = 2000
 
+[settings_schema.properties.time_filter]
+type = "string"
+title = "收件时间过滤"
+description = "startup：过滤本次插件启动前；last_poll：过滤上次成功轮询前（首次使用本次启动时间）；none：不按时间过滤；custom：使用下方时间。按服务器收件时间判断，已处理 UID 不重复读取。"
+enum = ["startup", "last_poll", "none", "custom"]
+default = "startup"
+
+[settings_schema.properties.filter_before]
+type = "string"
+title = "自定义过滤时间"
+description = "仅 custom 模式必填；过滤此时间之前的邮件。请使用带时区的 ISO 8601，例如 2026-10-28T09:00:00+08:00。"
+format = "date-time"
+default = ""
+
 [settings_schema.properties.smtp_host]
 type = "string"
 title = "SMTP 服务器（可选）"

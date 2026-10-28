@@ -60,7 +60,7 @@ async def test_scan_registers_plugins_and_settings_with_old_config_and_bad_neigh
     assert result["email"]["status"] == "disabled"
     assert result["new_plugin"]["settings_schema"]["properties"]["interval"]["title"] == "检查间隔"
     assert result["broken"]["status"] == "error"
-    assert result["missing"]["status"] == "missing"
+    assert "missing" not in result
     configs = {p.id: p for p in app.config.value.plugins}
     assert configs["new_plugin"].settings == {"interval": 60}
     assert configs["missing"].settings == {"keep": 7}
@@ -71,6 +71,32 @@ async def test_scan_registers_plugins_and_settings_with_old_config_and_bad_neigh
     await app.plugins.reload_all()
     assert app.config.version == version
     assert configs["new_plugin"].settings["interval"] == 120
+
+
+async def test_deleted_plugin_disappears_and_reload_unloads_its_tools(app):
+    await app.plugins.install("deleted", plugin_zip())
+    cfg = next(p for p in app.config.value.plugins if p.id == "deleted")
+    cfg.enabled = True
+    await app.plugins.reload("deleted")
+    closed = []
+    original = app.plugins.loaded["deleted"].close
+
+    async def close():
+        closed.append(True)
+        await original()
+
+    app.plugins.loaded["deleted"].close = close
+    # Losing the manifest makes this directory cease to be a registered plugin.
+    (app.home / "plugins/deleted/plugin.toml").unlink()
+    assert not any(p["id"] == "deleted" for p in await app.plugins.listing())
+    await app.plugins.reload_all()
+    assert closed == [True]
+    assert "deleted" not in app.plugins.loaded
+    assert "managed_tool" not in app.registry.tools
+    assert "deleted" not in app.plugins.errors
+    assert not any(name.startswith("shiritaibot_plugin_deleted_") for name in sys.modules)
+    # Keep dormant settings so restoring the real plugin restores its configuration.
+    assert next(p for p in app.config.value.plugins if p.id == "deleted").enabled
 
 
 async def test_install_reload_relative_imports_and_delete_unregisters_everything(app):
@@ -118,7 +144,7 @@ def test_startup_with_old_config_discovers_email_and_protected_install_lifecycle
             assert client.request(method, path).status_code == 401
         client.headers["Authorization"] = "Bearer admin"
         configs = client.get("/api/config").json()["plugins"]
-        assert [p["id"] for p in configs] == ["email"]
+        assert "email" in {p["id"] for p in configs}
         response = client.post("/api/plugins/install/zip/managed", content=plugin_zip())
         assert response.status_code == 200, response.text
         assert any(p["id"] == "managed" for p in response.json())
@@ -133,6 +159,24 @@ def test_startup_with_old_config_discovers_email_and_protected_install_lifecycle
         assert "managed_tool" not in client.get("/api/health").json()["tools"]
         assert not (tmp_path / "plugins/managed").exists()
         assert client.post("/api/plugins/reload").status_code == 200
+
+
+def test_configured_ids_without_directories_never_appear_in_plugin_api(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        '[[plugins]]\nid = "orphan_enabled"\nenabled = true\n'
+        '[[plugins]]\nid = "orphan_disabled"\nenabled = false\n'
+    )
+    with TestClient(create_app(tmp_path, token="admin")) as client:
+        client.headers["Authorization"] = "Bearer admin"
+        for response in [client.get("/api/plugins"), client.post("/api/plugins/reload")]:
+            assert response.status_code == 200
+            ids = {p["id"] for p in response.json()}
+            assert "email" in ids
+            assert not ids.intersection({"orphan_enabled", "orphan_disabled"})
+            assert all(p["status"] != "missing" for p in response.json())
+        assert not any(
+            p["kind"] == "plugin.failed" for p in client.get("/api/records/activity").json()
+        )
 
 
 @pytest.mark.parametrize(

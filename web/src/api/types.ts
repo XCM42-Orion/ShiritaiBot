@@ -70,7 +70,7 @@ export interface PluginSettingSchema {
 export interface PluginInfo extends Instance {
   name: string;
   description: string;
-  status: "loaded" | "disabled" | "missing" | "error";
+  status: "loaded" | "disabled" | "error";
   error: string;
   settings_schema?: PluginSettingSchema;
   defaults?: Record<string, unknown>;

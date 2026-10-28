@@ -5,19 +5,29 @@ worker thread so the shared event loop never blocks.
 """
 
 import asyncio
+import hashlib
 import imaplib
 import json
 import re
 import smtplib
 import ssl
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import formatdate, make_msgid
+from time import mktime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from shiritaibot.plugin_api import ExternalEvent, Plugin, PublicError
 
@@ -37,6 +47,8 @@ class EmailSettings(BaseModel):
     poll_seconds: int = Field(default=300, ge=60, le=86400)
     max_per_poll: int = Field(default=20, ge=1, le=200)
     max_body_chars: int = Field(default=2000, ge=200, le=20000)
+    time_filter: Literal["startup", "last_poll", "none", "custom"] = "startup"
+    filter_before: AwareDatetime | None = None
     # Optional notification channel; disabled unless smtp_host and notify_to are set.
     smtp_host: str = ""
     smtp_port: int = Field(default=465, ge=1, le=65535)
@@ -45,6 +57,17 @@ class EmailSettings(BaseModel):
     notify_to: list[str] = Field(default_factory=list)
     subject_prefix: str = "[ShiritaiBot]"
     timeout: int = Field(default=30, ge=5, le=120)
+
+    @field_validator("filter_before", mode="before")
+    @classmethod
+    def empty_filter_before(cls, value):
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def require_filter_before(self):
+        if self.time_filter == "custom" and self.filter_before is None:
+            raise ValueError("filter_before is required for custom time_filter")
+        return self
 
 
 def describe(raw: bytes, max_chars: int) -> dict:
@@ -81,9 +104,12 @@ class Entry(Plugin):
             self.settings = EmailSettings.model_validate(self.context.settings)
         except ValidationError as exc:
             # Field names only: the rejected input may contain credentials.
-            fields = ", ".join(".".join(map(str, e["loc"])) for e in exc.errors())
+            fields = ", ".join(
+                ".".join(map(str, e["loc"])) or "time_filter / filter_before" for e in exc.errors()
+            )
             raise PublicError(f"邮件插件配置无效：{fields}") from None
         self.state_path = self.context.data_dir / "imap_state.json"
+        self.started_at = datetime.now(UTC)
         self.lock = asyncio.Lock()
         if self.settings.smtp_host and self.settings.notify_to:
             self.context.register_notifier(self.notify)
@@ -95,8 +121,7 @@ class Entry(Plugin):
             await asyncio.gather(self.task, return_exceptions=True)
 
     async def sync_once(self) -> int:
-        """Emit one event per new message. The first sync (or a UIDVALIDITY change) only
-        records a baseline, so an existing inbox never floods the owner."""
+        """Emit at most one event per poll, then commit the UID and time cursors."""
         async with self.lock:
             state = None
             if await asyncio.to_thread(self.state_path.exists):
@@ -104,28 +129,66 @@ class Entry(Plugin):
                     await asyncio.to_thread(self.state_path.read_text, encoding="utf-8")
                 )
             password = await self.context.resolve_secret(self.settings.password)
-            validity, last, mails = await asyncio.to_thread(self.fetch, state, password)
-            for uid, mail in mails:
+            polled_at = datetime.now(UTC)
+            cutoff = self.cutoff(state)
+            validity, last, mails, more = await asyncio.to_thread(
+                self.fetch, state, password, cutoff
+            )
+            if mails:
+                identities = [mail["message_id"] or str(uid) for uid, mail in mails]
+                batch = json.dumps([self.settings.mailbox, validity, identities])
                 await self.context.emit(
                     ExternalEvent(
                         source="email",
                         kind="email.received",
-                        dedup_key=mail["message_id"] or f"{validity}:{uid}",
-                        title=f"新邮件：{mail['subject']}"[:1000],
-                        payload={**mail, "uid": uid, "mailbox": self.settings.mailbox},
+                        dedup_key="batch:" + hashlib.sha256(batch.encode()).hexdigest(),
+                        title=(
+                            f"新邮件：{mails[0][1]['subject']}"
+                            if len(mails) == 1
+                            else f"收到 {len(mails)} 封新邮件："
+                            + "、".join(mail["subject"] for _, mail in mails)
+                        )[:1000],
+                        payload={
+                            "mailbox": self.settings.mailbox,
+                            "count": len(mails),
+                            "messages": [{**mail, "uid": uid} for uid, mail in mails],
+                        },
                     )
                 )
-                last = max(last, uid)
+
+            next_state = {
+                "uidvalidity": validity,
+                "last_uid": last,
+                "last_polled_at": polled_at.isoformat(),
+            }
+            # Keep the same window until all pages have been read. Advancing the
+            # last-poll cutoff early would silently drop the remaining messages.
+            if more and cutoff is not None and self.settings.time_filter == "last_poll":
+                next_state["pending_filter_before"] = cutoff.isoformat()
 
             def save():
                 temp = self.state_path.with_suffix(".tmp")
-                temp.write_text(json.dumps({"uidvalidity": validity, "last_uid": last}), "utf-8")
+                temp.write_text(json.dumps(next_state), "utf-8")
                 temp.replace(self.state_path)
 
             await asyncio.to_thread(save)
             return len(mails)
 
-    def fetch(self, state: dict | None, password: str) -> tuple[int, int, list]:
+    def cutoff(self, state: dict | None) -> datetime | None:
+        mode = self.settings.time_filter
+        if mode == "none":
+            return None
+        if mode == "custom":
+            return self.settings.filter_before
+        if mode == "last_poll" and state:
+            previous = state.get("pending_filter_before") or state.get("last_polled_at")
+            if previous:
+                return datetime.fromisoformat(previous)
+        return self.started_at
+
+    def fetch(
+        self, state: dict | None, password: str, cutoff: datetime | None
+    ) -> tuple[int, int, list, bool]:
         cfg = self.settings
         context = ssl.create_default_context()
         if cfg.imap_security == "ssl":
@@ -138,21 +201,53 @@ class Entry(Plugin):
             if cfg.imap_security == "starttls":
                 client.starttls(context)
             client.login(cfg.username, password)
-            client.select(cfg.mailbox, readonly=True)
+            status, _ = client.select(cfg.mailbox, readonly=True)
+            if status != "OK":
+                raise imaplib.IMAP4.error("mailbox selection failed")
             validity = int(client.response("UIDVALIDITY")[1][0])
             fresh = state is None or state.get("uidvalidity") != validity
             last = 0 if fresh else int(state["last_uid"])
             # "n:*" always matches the newest message, so filter to strictly newer UIDs.
-            _, data = client.uid("SEARCH", f"UID {last + 1}:*")
+            query = f"UID {last + 1}:*"
+            if cutoff is not None:
+                # IMAP SINCE only has day precision and ignores offsets. Include
+                # the preceding UTC day, then compare exact INTERNALDATE below.
+                day = cutoff.astimezone(UTC) - timedelta(days=1)
+                month = (
+                    "Jan",
+                    "Feb",
+                    "Mar",
+                    "Apr",
+                    "May",
+                    "Jun",
+                    "Jul",
+                    "Aug",
+                    "Sep",
+                    "Oct",
+                    "Nov",
+                    "Dec",
+                )[day.month - 1]
+                query += f" SINCE {day.day:02d}-{month}-{day.year}"
+            status, data = client.uid("SEARCH", query)
+            if status != "OK":
+                raise imaplib.IMAP4.error("mailbox search failed")
             uids = sorted(int(x) for x in (data[0] or b"").split() if int(x) > last)
-            if fresh:
-                return validity, max(uids, default=0), []
             mails = []
             for uid in uids[: cfg.max_per_poll]:
-                _, data = client.uid("FETCH", str(uid), "(BODY.PEEK[])")
-                raw = next((part[1] for part in data if isinstance(part, tuple)), b"")
-                mails.append((uid, describe(raw, cfg.max_body_chars)))
-            return validity, last, mails
+                status, data = client.uid("FETCH", str(uid), "(INTERNALDATE BODY.PEEK[])")
+                part = next((part for part in data if isinstance(part, tuple)), None)
+                if status != "OK" or part is None:
+                    raise imaplib.IMAP4.error("message fetch failed")
+                received = imaplib.Internaldate2tuple(part[0])
+                if cutoff is not None and received is None:
+                    raise imaplib.IMAP4.error("message INTERNALDATE missing")
+                received_at = datetime.fromtimestamp(mktime(received), UTC) if received else None
+                if cutoff is None or (received_at is not None and received_at >= cutoff):
+                    mail = describe(part[1], cfg.max_body_chars)
+                    mail["received_at"] = received_at.isoformat() if received_at else None
+                    mails.append((uid, mail))
+                last = uid
+            return validity, last, mails, len(uids) > cfg.max_per_poll
         finally:
             try:
                 client.logout()

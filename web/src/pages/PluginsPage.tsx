@@ -10,7 +10,6 @@ import type { ConfigPageProps } from "./common";
 const statuses = {
   loaded: "运行中",
   disabled: "未启用",
-  missing: "未安装",
   error: "加载失败",
 };
 
@@ -307,7 +306,7 @@ export function PluginsPage({
                   </button>
                   <button
                     type="button"
-                    disabled={working || metadata.status === "missing"}
+                    disabled={working}
                     onClick={() =>
                       void mutate(
                         () => client.reloadPlugin(plugin.id),

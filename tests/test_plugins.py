@@ -1,8 +1,10 @@
 import asyncio
 import base64
+import imaplib
 import json
 import shlex
 import sys
+from datetime import UTC, datetime, timedelta
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -46,6 +48,42 @@ class Entry(Plugin):
     app.config.value.plugins[-1].enabled = False
     await app.plugins.reload("example")
     assert "example" not in app.registry.tools
+
+
+@pytest.mark.skipif(
+    not Path("src/shiritaibot/plugin/feishu/main.py").is_file(),
+    reason="Local Feishu plugin is installed separately",
+)
+async def test_feishu_manifest_config_drives_cli_and_survives_reload(app):
+    metadata = next(p for p in await app.plugins.listing() if p["id"] == "feishu")
+    assert metadata["settings_schema"]["properties"]["command"]["type"] == "array"
+    profile = app.home / "feishu-profile"
+    profile.mkdir()
+    script = (
+        "import json,os,sys; "
+        "print(json.dumps({'argv':sys.argv[1:],'profile':os.environ['LARKSUITE_CLI_CONFIG_DIR']}))"
+    )
+    settings = app.config.value.model_copy(deep=True)
+    cfg = next(p for p in settings.plugins if p.id == "feishu")
+    cfg.enabled = True
+    cfg.settings = {"config_dir": str(profile), "command": [sys.executable, "-c", script]}
+    await app.reconfigure(settings)
+    owner = Context("web:owner", "owner", "agent", True)
+    result = json.loads(
+        await app.registry.execute(
+            owner,
+            "feishu_query",
+            {
+                "operation": "search_docs",
+                "params": {"query": "插件测试"},
+            },
+        )
+    )
+    assert result["profile"] == str(profile)
+    assert "--query=插件测试" in result["argv"]
+    await app.plugins.reload_all()
+    assert app.plugins.loaded["feishu"].context.settings["config_dir"] == str(profile)
+    assert "feishu_query" in app.registry.tools
 
 
 async def test_learn_bridge_uses_stdin_and_secrets_not_commandline(app):
@@ -174,12 +212,22 @@ async def fake_imap(box: dict, logins: list):
                 uids = sorted(box["messages"])
                 # IMAP: "n:*" also matches the highest UID even when it is below n.
                 found = [u for u in uids if u >= first] or uids[-1:]
+                if "SINCE" in args:
+                    since = datetime.strptime(args.split("SINCE ")[1], "%d-%b-%Y").date()
+                    found = [
+                        uid
+                        for uid in found
+                        if box.get("dates", {}).get(uid, datetime(2000, 1, 1, tzinfo=UTC)).date()
+                        >= since
+                    ]
                 await send(f"* SEARCH {' '.join(map(str, found))}\r\n".encode() + done)
             elif command == "UID" and args.upper().startswith("FETCH"):
                 uid = int(args.split()[1])
                 raw = box["messages"][uid]
+                stamp = box.get("dates", {}).get(uid, datetime(2000, 1, 1, tzinfo=UTC))
+                internal_date = imaplib.Time2Internaldate(stamp)
                 await send(
-                    f"* 1 FETCH (UID {uid} BODY[] {{{len(raw)}}}\r\n".encode()
+                    f"* 1 FETCH (UID {uid} INTERNALDATE {internal_date} BODY[] {{{len(raw)}}}\r\n".encode()
                     + raw
                     + b")\r\n"
                     + done
@@ -223,19 +271,21 @@ async def test_email_imap_new_mail_becomes_proactive_event(app):
         assert await plugin.sync_once() == 0
         assert await app.store.list("event") == []
         box["messages"][2] = mail("作业截止提醒", "数据结构作业 3 周五 23:59 截止", "<hw3@x>")
+        box["dates"] = {2: datetime.now(UTC) + timedelta(seconds=1)}
         assert await plugin.sync_once() == 1
         assert await plugin.sync_once() == 0
-        # A changed UIDVALIDITY re-baselines instead of replaying the mailbox.
+        # A changed UIDVALIDITY still applies the configured time filter.
         box["validity"] = 8
-        box["messages"][3] = mail("另一封", "body", "<other@x>")
+        box["messages"] = {3: mail("另一封旧邮件", "body", "<other@x>")}
         assert await plugin.sync_once() == 0
     events = await app.store.list("event")
     assert len(events) == 1
     event = events[0]["event"]
     assert event["source"] == "email" and event["kind"] == "email.received"
     assert event["title"] == "新邮件：作业截止提醒"
-    assert event["payload"]["from"] == "teacher@example.edu"
-    assert "周五 23:59" in event["payload"]["snippet"]
+    assert event["payload"]["count"] == 1
+    assert event["payload"]["messages"][0]["from"] == "teacher@example.edu"
+    assert "周五 23:59" in event["payload"]["messages"][0]["snippet"]
     assert logins[0] == ["bot@example.com", "mail-secret-value"]
     assert "mail-secret-value" not in str(events) + str(await app.store.list("activity"))
 

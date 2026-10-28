@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from test_permissions import OWNER, eventually
 
 from shiritaibot.agent import repair_history
+from shiritaibot.config import PersonaConfig
 from shiritaibot.core import Context, ExternalEvent, Reply, now
 from shiritaibot.proactive import PREPARE_SESSION, Decision, grade
 from shiritaibot.web import create_app
@@ -21,21 +22,23 @@ MAIL = ExternalEvent(
 
 class Judge:
     def __init__(self, **decision):
-        self.decision, self.calls = decision, 0
+        self.decision, self.calls, self.systems = decision, 0, []
 
     async def complete(self, route, system, messages, tools, **kwargs):
         assert route == "light" and tools == []
         self.calls += 1
+        self.systems.append(system)
         return Reply(text=json.dumps(self.decision, ensure_ascii=False))
 
 
 class Agent:
     def __init__(self, notify=True):
-        self.notify, self.inputs = notify, []
+        self.notify, self.inputs, self.systems = notify, [], []
 
     async def complete(self, route, system, messages, tools, **kwargs):
         assert route == "agent"
         self.inputs.append((list(messages), tools))
+        self.systems.append(system)
         if not any(m["role"] == "tool" for m in messages):
             return Reply(
                 calls=[
@@ -135,6 +138,24 @@ async def test_spam_is_discarded_before_agent_and_keeps_dedup(loop):
     assert not await loop.store.list("memory_summary")
     assert not await loop.store.list("short_term")
     assert await loop.proactive.emit(MAIL) == key
+
+
+@pytest.mark.parametrize("named_persona", [False, True])
+async def test_filter_omits_persona_and_proactive_loop_uses_it(loop, named_persona):
+    prompt = "你是小知，语气温柔，称呼主人为老师。"
+    if named_persona:
+        loop.config.value.personas = [PersonaConfig(id="kind", name="温柔", prompt=prompt)]
+        loop.config.value.default_persona = "kind"
+    else:
+        loop.config.value.persona = prompt
+    loop.config.value.assistant_name = "小知"
+    loop.config.value.owner_name = "老师"
+    key = await loop.proactive.emit(MAIL)
+    await loop.proactive.tick()
+    await finished(loop, key)
+    assert all(prompt not in system for system in loop.proactive.llm.systems)
+    assert all(prompt in system for system in loop.runtime.llm.systems)
+    assert all("老师" in system and "小知" in system for system in loop.runtime.llm.systems)
 
 
 @pytest.mark.parametrize("importance", [1, 2, 3])

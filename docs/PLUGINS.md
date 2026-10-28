@@ -2,13 +2,15 @@
 
 ## 目录约定
 
-按本次确认的结构，`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/` 和通用的邮件插件 `email/` 外，其余目录都被 `.gitignore` 忽略。飞书和网络学堂实现已留在本地对应目录。旧的 `integrations/`、`builtin_plugins/` 已撤销。
+`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/` 和通用的邮件插件 `email/` 外，其余目录都被 `.gitignore` 忽略，飞书和网络学堂需在部署环境中单独安装实际代码与清单。干净 checkout 不含这两个插件。旧的 `integrations/`、`builtin_plugins/` 已撤销。
 
 `src/shiritaibot/learn/` 属于核心代码：定义学校无关的请求/响应、stdio 接入、查询和下载工具、同步基线与变更事件；不包含清华 URL、SSO、SM2 或学校客户端。`plugin/thu_learn/` 则负责清华具体实现，包括客户端和单请求适配进程。
 
 两处插件搜索路径：先 `src/shiritaibot/plugin/<id>/`，再 `<home>/plugins/<id>/`。同名时前者优先。`core` 不作为插件扫描。`plugin.toml` 中 `api = 1`，入口 `main.py` 暴露 `Entry(Plugin)`。
 
 启动时扫描上述目录，自动为有效插件补齐配置，保留已有启用状态和配置值。新发现的插件默认停用，配置后启用并保存。无效清单或加载失败会显示在 WebUI 中，不阻断其他插件。
+
+插件列表只展示磁盘上实际扫描到的插件。配置中残留的 ID 不会生成插件条目，也不显示“未安装”占位项；对应设置保留供恢复代码后使用。手动重载时会停止目录或清单已消失的运行实例，并撤销工具和通知通道。每个插件的清单必须与实际 `main.py` 一起部署，只创建清单不能恢复缺失的实现。
 
 WebUI 的“安装插件”支持上传 ZIP 或填写公开 GitHub 仓库地址（下载默认分支的 ZIP）。插件安装到 `<home>/plugins/<id>/`；ZIP 可以直接包含 `plugin.toml` 与 `main.py`，或套一层仓库目录。同名安装会被拒绝。“移除”会先弹出确认，确认后停止插件、撤销工具和通知通道、删除代码目录与配置并更新列表；同名的两个搜索路径都会清理，插件数据目录与历史记录保留。“重载插件”会重新扫描全部目录、补齐配置并重载；也可单独重载当前插件。重载使用已保存的配置。
 
@@ -108,7 +110,7 @@ poll_seconds = 900
 
 主线是 **收件 → 统一事件 API → 预处理 → 重要性 Filter → Proactive Loop → 通知与短期摘要**：
 
-1. 插件按 `poll_seconds` 轮询 IMAP 邮箱（只读 `EXAMINE` + `BODY.PEEK`，不改已读状态），每封新邮件产生一个 `email.received` 事件（发件人、主题、日期、正文摘要、附件名），交给主动性引擎。首次同步或 `UIDVALIDITY` 变化时只建立基线，不会把已有邮件当新事件；每封邮件按 Message-ID 去重。收件失败产生 `email.sync.failed` 事件（每种错误每天一次）。
+1. 插件按 `poll_seconds` 轮询 IMAP 邮箱（只读 `EXAMINE` + `BODY.PEEK`，不改已读状态），将本次符合时间条件的邮件合并为一个 `email.received` 事件，最多进入一个 Proactive Loop。`payload` 包含 `mailbox`、`count` 和 `messages` 数组，每封保留 UID、发件人、主题、日期、服务器收件时间、正文摘要和附件名；没有符合条件的邮件则不发事件。批次按邮箱、UIDVALIDITY 和邮件标识生成稳定去重键，成功提交后持久化 UID 游标。收件失败产生 `email.sync.failed` 事件（每种错误每天一次）。
 2. 事件立即唤醒主动性引擎（见下文“主动性引擎”），由 light 模型分类重要程度（0–4），0 丢弃，其余进入可调用工具的 Proactive Loop；4 级必须通知。
 3. 事件流程写入 proactive_trace 审计；每个执行 Turn 由模型压缩到 Shortterm Memory，主人可通过 `proactive_recall` 回顾 Main / Proactive 的摘要。
 
@@ -128,6 +130,8 @@ mailbox = "INBOX"
 poll_seconds = 300             # 最短 60
 max_per_poll = 20
 max_body_chars = 2000
+time_filter = "startup"         # startup / last_poll / none / custom
+filter_before = ""              # custom 模式必填，如 2026-10-28T09:00:00+08:00
 # 可选：把主动通知同时发到邮箱（smtp_host 与 notify_to 都填写才启用）
 smtp_host = ""
 smtp_port = 465
@@ -135,7 +139,9 @@ smtp_security = "ssl"
 notify_to = []
 ```
 
-邮件内容视为不可信资料：分诊和先期准备的提示中都声明不执行其中的指令，后台准备只有只读工具。配置缺少 `imap_host` 或 `username` 时加载失败，错误只列字段名、不回显输入。IMAP / SMTP 使用标准库客户端，在线程中执行，不阻塞事件循环。
+时间过滤按服务器 `INTERNALDATE` 精确比较（含边界），不使用可由发件人填写的 Date 头。`startup` 默认过滤本次插件启动或重载之前的邮件；`last_poll` 过滤上次成功轮询之前的邮件，时间持久化，首次无记录时使用本次启动时间；`none` 不按时间过滤，首次可读取已有邮件；`custom` 过滤带时区的 `filter_before` 之前的邮件。已处理或已过滤的 UID 不会重复扫描；`UIDVALIDITY` 改变时重新按时间条件扫描。`max_per_poll` 限制每次最多读取的候选邮件数，积压分多次轮询处理，每次仍只发一个合并事件；`last_poll` 在积压读完前保持原过滤窗口，失败不推进游标或时间。
+
+邮件内容视为不可信资料：分诊和先期准备的提示中都声明不执行其中的指令，后台准备只有只读工具。分类阶段不加人设；进入 Proactive Loop 后加载配置的默认人设及助手/主人称呼，最终通知遵循人设。配置缺少 `imap_host` 或 `username` 时加载失败，错误只列字段名、不回显输入。IMAP / SMTP 使用标准库客户端，在线程中执行，不阻塞事件循环。
 
 SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之后再发邮件，失败只记录 `notify.channel_failed`，不影响 IM 通知、不重发。其他插件可调用 `PluginContext.register_notifier(handler)` 接入同一通道，`handler(source, text)` 为异步函数；重载和停用时宿主自动撤销。
 
@@ -146,9 +152,9 @@ SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之
 | 阶段 | 行为 |
 |---|---|
 | 入口 / 预处理 | 清理标识和标题空白、校验、去重、持久化后唤醒 PE |
-| Filter | light 模型输出 importance=0–4、reason 和可选通知/查证建议；失败修正一次，再失败交给普通级 Loop 核查 |
+| Filter | 使用独立分类提示词，不加人设；light 模型输出 importance=0–4、reason 和可选通知/查证建议；失败修正一次，再失败交给普通级 Loop 核查 |
 | 分级 | 0 discard；1–4 按级别降序启动后台 Turn，同级 FIFO；不抢占运行中的任务 |
-| Proactive Loop | `background:proactive:<接收记录 ID>`，复用 Agent Runtime，在当前 L1 权限下调用只读工具；最终输出 `{notify, message, reason}` |
+| Proactive Loop | `background:proactive:<接收记录 ID>`，复用 Agent Runtime，加载配置的默认人设及助手/主人称呼，在当前 L1 权限下调用只读工具；最终输出 `{notify, message, reason}`，message 遵循人设 |
 | 通知与交接 | Loop 完成后才发送最终 message，追加到目标 Main context；4 级强制通知并穿透免打扰、摘要延迟和节流；失败/超时发兜底并注明未完成 |
 | 每轮记忆 | Main / Proactive 每个 Turn 成功、失败或取消后，持久化摘要任务，由 light 模型压缩输入、工具结果和最终消息；失败重试，不阻塞回复 |
 
