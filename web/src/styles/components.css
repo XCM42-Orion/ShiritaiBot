@@ -618,3 +618,35 @@
     flex-basis: 100%;
   }
 }
+.spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.field-error {
+  color: var(--danger);
+}
+
+.modality-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.modality-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modality-options input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+}

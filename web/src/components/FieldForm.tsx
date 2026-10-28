@@ -4,6 +4,18 @@ import { inferFieldSpec } from "../config/schema";
 import { SecretField } from "./SecretField";
 import { TextFieldList } from "./TextFieldList";
 
+export function jsonObjectError(value: unknown): string | null {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return '请填写 JSON 对象，例如 {"temperature": 0.7}';
+    }
+    return null;
+  } catch {
+    return "JSON 格式无效，请检查引号、逗号和括号。";
+  }
+}
+
 /** Number inputs keep transient empty text so clearing a field does not snap to 0. */
 function NumberInput({
   spec,
@@ -56,6 +68,54 @@ function Control({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  if (spec.kind === "json") {
+    const error = jsonObjectError(value);
+    return (
+      <>
+        <textarea
+          aria-label={spec.label}
+          aria-invalid={Boolean(error)}
+          rows={6}
+          spellCheck={false}
+          placeholder={spec.placeholder}
+          value={
+            typeof value === "string"
+              ? value
+              : JSON.stringify(value ?? {}, null, 2)
+          }
+          onChange={(event) => onChange(event.target.value)}
+        />
+        {error && (
+          <small className="field-error" role="alert">
+            {error}
+          </small>
+        )}
+      </>
+    );
+  }
+  if (spec.kind === "multiselect") {
+    const selected = Array.isArray(value) ? value : [];
+    return (
+      <div role="group" aria-label={spec.label} className="modality-options">
+        {(spec.options ?? []).map((option) => (
+          <label key={option}>
+            <input
+              type="checkbox"
+              checked={selected.includes(option)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked
+                    ? [...selected, option]
+                    : selected.filter((item) => item !== option),
+                )
+              }
+            />
+            {spec.optionLabels?.[option] ?? option}
+          </label>
+        ))}
+      </div>
+    );
+  }
   if (spec.kind === "select") {
     return (
       <select

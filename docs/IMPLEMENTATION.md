@@ -8,7 +8,7 @@
 | 权限 | Owner 私聊 Agent / 群和白名单好友 Chat；执行层限制；作用域白名单取交集；一次性参数绑定审批、过期拒绝、取消、WebUI/QQ 审批 | Admin 角色、群内 Agent 升级、会话记住授权、完整七层配置来源展示、操作系统沙箱 |
 | 工具 | Tavily、bash、时间、QQ 文件下载、记忆、日程、子代理、大输出 artifact 分页 | 网页正文、文档解析、OCR、完整文件管理 |
 | OneBot | 多实例正向 Universal WS、Bearer、echo、登录身份校验、ping/pong、重连、CQ 数组/字符串、白名单、持久化 Outbox、分段、文件引用 | 反向 WS、HTTP、NapCat heartbeat 事件超时、全面平台扩展、撤回处理、图像渲染 |
-| LLM | 多 Provider / 模型 / 路由；四种 wire protocol；模型目录拉取及分页；不透明推理状态同模型回传；HTTP 限流重试和候选 fallback；usage 落库及跨协议统计 | SSE、原生联网搜索、完整多模态、细粒度计价、embedding |
+| LLM | 多 Provider / 模型 / 路由；四种 wire protocol；模型目录拉取及分页；不透明推理状态同模型回传；提供商可配置超时重试轮数及 HTTP(S)/SOCKS5 代理；模型自定义 JSON 请求参数、上下文估算上限及输入模态声明；HTTP 限流重试和候选 fallback；usage 落库及跨协议统计 | SSE、原生联网搜索、完整多模态、精确 tokenizer、细粒度计价、embedding |
 | Subagent | 多 Codex / Claude Code / Generic CLI 实例；stdin prompt、工作目录隔离、三并发、超时、取消、完成事件、CLI 版本检测 | 原生会话续接、实时事件解析、app-server/ACP、MCP 审批桥接、登录状态检测 |
 | 插件 | manifest 发现、启停、手动热重载、冲突检查、加载失败保留旧实例、公共 API、独立数据目录、主动通知通道注册；随仓库提供邮件插件（IMAP 收件事件源，可选 SMTP 通知） | 自动文件监视、依赖安装、MCP、完整 hook/command/source 装饰器 |
 | 飞书 | 本地只读 CLI 插件，固定操作/参数白名单、独立 profile、结构化脱敏 | 写操作、真实账号联调 |

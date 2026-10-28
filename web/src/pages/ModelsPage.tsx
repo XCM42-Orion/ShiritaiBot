@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Check, Download, Plus, Search, Trash2 } from "lucide-react";
-import type { ProviderConfig } from "../api/types";
-import { Field } from "../components/FieldForm";
+import type { ModelConfig, ProviderConfig } from "../api/types";
+import { Field, jsonObjectError } from "../components/FieldForm";
+import { ModelTestButton } from "../components/ModelTestButton";
 import { EmptyState } from "../components/EmptyState";
 import {
   MODEL_FIELDS,
@@ -65,12 +66,15 @@ export function ModelsPage({
   function addModel(row?: { id: string; max_output: number }) {
     if (!provider) return;
     const id = uniqueId(row?.id || "model-new", config.models);
-    const model = {
+    const model: ModelConfig = {
       id,
       provider: provider.id,
       model: row?.id || "",
       enabled: true,
       max_output: Math.min(128000, Math.max(64, row?.max_output || 4096)),
+      max_context: 0,
+      modalities: ["text"],
+      extra_body: {},
     };
     const routes = { ...config.routes };
     for (const key of ["agent", "chat", "light"]) {
@@ -395,17 +399,11 @@ export function ModelsPage({
                         />
                       ))}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void act(
-                          () => client.testModel(provider, model),
-                          "测试请求已完成",
-                        )
-                      }
-                    >
-                      测试当前配置
-                    </button>
+                    <ModelTestButton
+                      test={() => client.testModel(provider, model)}
+                      act={act}
+                      disabled={Boolean(jsonObjectError(model.extra_body))}
+                    />
                   </div>
                 ) : null,
               )}

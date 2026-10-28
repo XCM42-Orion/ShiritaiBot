@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+from copy import deepcopy
 from typing import Any
 
 import httpx
@@ -11,6 +13,25 @@ from shiritaibot.core import PublicError, Reply, canonical, uid
 
 def plain(message: dict) -> dict:
     return {k: v for k, v in message.items() if not k.startswith("_")}
+
+
+def merge_body(base: dict, extra: dict) -> dict:
+    """Merge nested protocol parameters without changing defaults or configuration."""
+    result = deepcopy(base)
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_body(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
+def estimated_tokens(body: dict) -> int:
+    # A shared heuristic, not a provider tokenizer: ASCII ~4 chars/token,
+    # other characters ~1 token. Include system text, tool schemas and opaque state.
+    text = json.dumps(body, ensure_ascii=False)
+    ascii_chars = sum(character.isascii() for character in text)
+    return math.ceil(ascii_chars / 4) + len(text) - ascii_chars
 
 
 def request_payload(
@@ -240,6 +261,38 @@ class ProviderManager:
     async def close(self) -> None:
         await self.client.aclose()
 
+    async def _request(self, provider, method: str, url: str, **kwargs) -> httpx.Response:
+        async def send(client):
+            for attempt in range(provider.max_retries + 1):
+                delay = min(20, 2**attempt)
+                try:
+                    response = await client.request(method, url, timeout=provider.timeout, **kwargs)
+                except httpx.TimeoutException:
+                    if attempt == provider.max_retries:
+                        raise
+                else:
+                    if (
+                        response.status_code not in {429, 500, 502, 503, 504}
+                        or attempt == provider.max_retries
+                    ):
+                        response.raise_for_status()
+                        return response
+                    try:
+                        delay = min(20, max(0, float(response.headers.get("retry-after", delay))))
+                    except ValueError:
+                        pass
+                    await response.aclose()
+                await asyncio.sleep(delay)
+            raise AssertionError("unreachable retry state")
+
+        if provider.proxy:
+            # Scoped clients avoid stale proxy settings after saving or testing a draft.
+            async with httpx.AsyncClient(
+                proxy=provider.proxy, follow_redirects=False, trust_env=False
+            ) as client:
+                return await send(client)
+        return await send(self.client)
+
     async def discover(self, provider) -> list[dict]:
         ref = provider.api_key
         token = await self.vault.resolve(ref) if ref.startswith(("env:", "secret:")) else ref
@@ -254,10 +307,9 @@ class ProviderManager:
         params, found, cursors = {}, {}, set()
         try:
             for _ in range(100):
-                response = await self.client.get(
-                    base + "/models", headers=headers, params=params, timeout=provider.timeout
+                response = await self._request(
+                    provider, "GET", base + "/models", headers=headers, params=params
                 )
-                response.raise_for_status()
                 body = response.json()
                 if not isinstance(body, dict):
                     raise PublicError("提供商未返回有效的模型列表")
@@ -308,6 +360,7 @@ class ProviderManager:
         if not candidates:
             raise PublicError(f"尚未配置 {route} 模型路由，请在 WebUI 配置 Provider、模型和路由")
         async with self.semaphore:
+            context_skipped = False
             for model_id in candidates:
                 model = next((m for m in cfg.models if m.id == model_id and m.enabled), None)
                 provider = next(
@@ -319,6 +372,30 @@ class ProviderManager:
                 path, body = request_payload(
                     provider.protocol, model.model, system, messages, tools, model.max_output
                 )
+                body = merge_body(body, model.extra_body)
+                if provider.protocol == "chat_completions" and "max_tokens" in model.extra_body:
+                    body.pop("max_completion_tokens", None)
+                generation = body.get("generationConfig")
+                output_limit = {
+                    "chat_completions": body.get("max_tokens", body.get("max_completion_tokens")),
+                    "responses": body.get("max_output_tokens"),
+                    "anthropic": body.get("max_tokens"),
+                    "gemini": generation.get("maxOutputTokens")
+                    if isinstance(generation, dict)
+                    else None,
+                }[provider.protocol]
+                reserved_output = (
+                    output_limit
+                    if isinstance(output_limit, int) and output_limit > 0
+                    else model.max_output
+                )
+                if (
+                    model.max_context
+                    and estimated_tokens(body) + reserved_output > model.max_context
+                ):
+                    context_skipped = True
+                    await self.store.activity("provider.context_limit", model.id)
+                    continue
                 ref = provider.api_key
                 token = (
                     await self.vault.resolve(ref) if ref.startswith(("env:", "secret:")) else ref
@@ -330,39 +407,27 @@ class ProviderManager:
                     headers["x-goog-api-key"] = token
                 elif token:
                     headers["Authorization"] = f"Bearer {token}"
-                for attempt in range(3):
-                    try:
-                        response = await self.client.post(
-                            provider.base_url.rstrip("/") + path,
-                            json=body,
-                            headers=headers,
-                            timeout=provider.timeout,
-                        )
-                        if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
-                            try:
-                                delay = min(
-                                    20,
-                                    max(0, float(response.headers.get("retry-after", 2**attempt))),
-                                )
-                            except ValueError:
-                                delay = 2**attempt
-                            await asyncio.sleep(delay)
-                            continue
-                        response.raise_for_status()
-                        reply = parse_reply(provider.protocol, model.model, response.json())
-                        await self.store.put(
-                            "usage",
-                            uid(),
-                            {
-                                "model": model.id,
-                                "protocol": provider.protocol,
-                                "usage": reply.usage,
-                            },
-                        )
-                        return reply
-                    except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
-                        await self.store.activity(
-                            "provider.failed", f"{provider.id}: {type(exc).__name__}"
-                        )
-                        break
+                try:
+                    response = await self._request(
+                        provider,
+                        "POST",
+                        provider.base_url.rstrip("/") + path,
+                        json=body,
+                        headers=headers,
+                    )
+                    reply = parse_reply(provider.protocol, model.model, response.json())
+                    await self.store.put(
+                        "usage",
+                        uid(),
+                        {"model": model.id, "protocol": provider.protocol, "usage": reply.usage},
+                    )
+                    return reply
+                except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+                    await self.store.activity(
+                        "provider.failed", f"{provider.id}: {type(exc).__name__}"
+                    )
+        if context_skipped:
+            raise PublicError(
+                "候选模型调用失败，部分模型的估算上下文超过上限，请减少输入或调整模型上下文配置"
+            )
         raise PublicError("所有候选模型调用失败，请检查 Provider 地址、凭据与模型名称")

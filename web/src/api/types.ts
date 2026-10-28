@@ -18,12 +18,18 @@ export interface ProviderConfig extends Instance {
   base_url: string;
   api_key: string;
   timeout: number;
+  max_retries: number;
+  proxy: string;
 }
 
 export interface ModelConfig extends Instance {
   provider: string;
   model: string;
   max_output: number;
+  max_context: number;
+  modalities: ("text" | "image" | "audio" | "video")[];
+  // API accepts an object or JSON editor text and returns a normalized object.
+  extra_body: Record<string, unknown> | string;
 }
 
 export interface AdapterConfig extends Instance {

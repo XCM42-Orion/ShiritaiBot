@@ -5,7 +5,7 @@ description = "An event-driven personal agent for OneBot"
 requires-python = ">=3.12"
 dependencies = [
   "aiosqlite>=0.20,<1", "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1",
-  "httpx>=0.28,<1", "websockets>=15,<17", "pydantic>=2.10,<3",
+  "httpx[socks]>=0.28,<1", "websockets>=15,<17", "pydantic>=2.10,<3",
   "typer>=0.15,<1", "tomli-w>=1.2,<2", "cryptography>=44",
   "psutil>=6,<8", "croniter>=6,<7", "tzdata>=2025", "jieba>=0.42,<1",
   "jsonschema>=4.23,<5"

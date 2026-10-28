@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import tomllib
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import tomli_w
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from shiritaibot.core import Model
 
@@ -25,6 +27,28 @@ class ProviderConfig(Instance):
     base_url: str = "https://api.openai.com/v1"
     api_key: str = "env:OPENAI_API_KEY"
     timeout: int = Field(default=120, ge=5, le=600)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    proxy: str = ""
+
+    @field_validator("proxy")
+    @classmethod
+    def proxy_valid(cls, value: str) -> str:
+        value = value.strip()
+        if value:
+            try:
+                url = urlsplit(value)
+                _ = url.port
+            except ValueError:
+                raise ValueError("invalid proxy URL or port") from None
+            if (
+                url.scheme not in {"http", "https", "socks5", "socks5h"}
+                or not url.hostname
+                or url.path not in {"", "/"}
+                or url.query
+                or url.fragment
+            ):
+                raise ValueError("proxy must be an HTTP(S) or SOCKS5 URL")
+        return value
 
 
 class ModelConfig(Instance):
@@ -32,6 +56,43 @@ class ModelConfig(Instance):
     provider: str
     model: str
     max_output: int = Field(default=4096, ge=64, le=128000)
+    max_context: int = Field(default=0, ge=0, le=10000000)
+    modalities: list[Literal["text", "image", "audio", "video"]] = Field(
+        default_factory=lambda: ["text"], min_length=1
+    )
+    extra_body: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("extra_body", mode="before")
+    @classmethod
+    def parse_extra_body(cls, value):
+        # The editor and TOML storage may use JSON text (TOML has no null).
+        if isinstance(value, str):
+            value = json.loads(value)
+        if not isinstance(value, dict):
+            raise ValueError("custom request parameters must be a JSON object")
+        json.dumps(value, allow_nan=False)
+        if "stream" in value and value["stream"] is not False:
+            raise ValueError("streaming responses are not supported")
+        if value.keys() & {
+            "model",
+            "messages",
+            "input",
+            "instructions",
+            "system",
+            "contents",
+            "systemInstruction",
+            "tools",
+        }:
+            raise ValueError(
+                "custom parameters cannot replace model, conversation or tool definitions"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def context_valid(self) -> ModelConfig:
+        if self.max_context and self.max_context <= self.max_output:
+            raise ValueError("max_context must exceed max_output, or be 0 for unspecified")
+        return self
 
 
 class AdapterConfig(Instance):
@@ -164,7 +225,10 @@ class ConfigService:
             def write() -> None:
                 self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
                 temp = self.path.with_suffix(".tmp")
-                temp.write_text(tomli_w.dumps(value.model_dump()), encoding="utf-8")
+                data = value.model_dump()
+                for model in data["models"]:
+                    model["extra_body"] = json.dumps(model["extra_body"], ensure_ascii=False)
+                temp.write_text(tomli_w.dumps(data), encoding="utf-8")
                 os.chmod(temp, 0o600)
                 temp.replace(self.path)
 

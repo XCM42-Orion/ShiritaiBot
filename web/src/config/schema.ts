@@ -14,6 +14,8 @@ export type FieldKind =
   | "secret"
   | "list"
   | "time"
+  | "json"
+  | "multiselect"
   | "textarea";
 
 export interface FieldSpec {
@@ -23,6 +25,7 @@ export interface FieldSpec {
   help?: string;
   placeholder?: string;
   options?: string[];
+  optionLabels?: Record<string, string>;
   min?: number;
   max?: number;
   full?: boolean;
@@ -51,6 +54,22 @@ export const PROVIDER_FIELDS: FieldSpec[] = [
   },
   { key: "api_key", label: "API Key", kind: "secret" },
   { key: "timeout", label: "超时（秒）", kind: "number", min: 5, max: 600 },
+  {
+    key: "max_retries",
+    label: "最大重试轮数",
+    kind: "number",
+    min: 0,
+    max: 10,
+    help: "超时、限流或临时服务错误后的额外重试次数；0 表示不重试。默认 2 轮，最多发送 3 次。",
+  },
+  {
+    key: "proxy",
+    label: "网络请求代理",
+    kind: "text",
+    placeholder: "http://127.0.0.1:7890",
+    help: "支持 HTTP、HTTPS、SOCKS5；用于模型发现、测试及正式调用。留空使用服务进程的默认网络环境。",
+    full: true,
+  },
 ];
 
 export const MODEL_FIELDS: FieldSpec[] = [
@@ -64,6 +83,31 @@ export const MODEL_FIELDS: FieldSpec[] = [
     max: 128000,
   },
   { key: "enabled", label: "启用", kind: "boolean" },
+  {
+    key: "max_context",
+    label: "最大上下文 tokens",
+    kind: "number",
+    min: 0,
+    max: 10000000,
+    help: "包括输入与输出，须大于最大输出。0 表示未指定；按字符估算 token，超出时尝试下一候选模型。",
+  },
+  {
+    key: "modalities",
+    label: "模态支持（输入）",
+    kind: "multiselect",
+    options: ["text", "image", "audio", "video"],
+    optionLabels: { text: "文本", image: "图像", audio: "音频", video: "视频" },
+    help: "至少选择一项。用于记录模型能力；当前消息链路仍为文本，勾选不会开启媒体上传或转换。",
+    full: true,
+  },
+  {
+    key: "extra_body",
+    label: "自定义请求体参数（JSON）",
+    kind: "json",
+    full: true,
+    placeholder: '{"temperature": 0.7}',
+    help: '按接口原生格式填写 JSON 对象，嵌套对象递归合并；Gemini 示例：{"generationConfig":{"temperature":0.7}}。参数覆盖默认值，但不能替换模型、对话或工具定义，也不能开启流式响应。',
+  },
 ];
 
 export const ADAPTER_FIELDS: FieldSpec[] = [
@@ -370,6 +414,8 @@ export function createProvider(rows: ProviderConfig[]): ProviderConfig {
     base_url: "https://api.openai.com/v1",
     api_key: "",
     timeout: 120,
+    max_retries: 2,
+    proxy: "",
   };
 }
 

@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -14,12 +16,16 @@ def test_draft_model_test_uses_unsaved_form_without_persisting(tmp_path, saved_k
                 "api_key": "draft-test-key",
                 "base_url": "https://fake.test/v1",
                 "enabled": False,
+                "max_retries": 0,
             },
             "model": {
                 "id": "GLM-5.3-Flash",
                 "provider": "draft",
                 "model": "remote/GLM-5.3-Flash",
                 "enabled": False,
+                "extra_body": {"temperature": 0.4},
+                "max_context": 64000,
+                "modalities": ["text", "image"],
             },
         }
         assert client.post("/api/models/test", json=body).status_code == 401
@@ -36,6 +42,7 @@ def test_draft_model_test_uses_unsaved_form_without_persisting(tmp_path, saved_k
             assert str(request.url) == "https://fake.test/v1/chat/completions"
             assert request.headers["authorization"] == "Bearer draft-test-key"
             assert b"remote/GLM-5.3-Flash" in request.content
+            assert json.loads(request.content)["temperature"] == 0.4
             return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
 
         client.portal.call(runtime.llm.client.aclose)

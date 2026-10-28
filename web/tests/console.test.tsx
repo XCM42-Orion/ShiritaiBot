@@ -34,6 +34,8 @@ function baseConfig(): Settings {
         base_url: "https://api.example/v1",
         api_key: "secret:saved",
         timeout: 120,
+        max_retries: 2,
+        proxy: "",
       },
     ],
     models: [],
@@ -236,15 +238,127 @@ describe("models workspace", () => {
     await user.clear(screen.getByLabelText("模型标识"));
     await user.type(screen.getByLabelText("模型标识"), "GLM-5.3-Flash");
     await user.type(screen.getByLabelText("提供商模型名称"), "GLM-5.3-Flash");
+    fireEvent.change(screen.getByLabelText("最大重试轮数"), {
+      target: { value: "4" },
+    });
+    await user.type(
+      screen.getByLabelText("网络请求代理"),
+      "http://127.0.0.1:7890",
+    );
+    fireEvent.change(screen.getByLabelText("最大上下文 tokens"), {
+      target: { value: "64000" },
+    });
+    await user.click(screen.getByLabelText("图像"));
+    fireEvent.change(screen.getByLabelText("自定义请求体参数（JSON）"), {
+      target: { value: '{"temperature":0.7,"stop":null}' },
+    });
     await user.click(screen.getByText("测试当前配置"));
     expect(client.testModel).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ api_key: "draft-key" }),
+      expect.objectContaining({
+        api_key: "draft-key",
+        max_retries: 4,
+        proxy: "http://127.0.0.1:7890",
+      }),
       expect.objectContaining({
         id: "GLM-5.3-Flash",
         model: "GLM-5.3-Flash",
+        max_context: 64000,
+        modalities: ["text", "image"],
+        extra_body: '{"temperature":0.7,"stop":null}',
       }),
     );
     expect(client.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "restores the test button after completion (failure=%s)",
+    async (failure) => {
+      let resolve!: (value: unknown) => void;
+      let reject!: (reason: Error) => void;
+      const pending = new Promise((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      const testModel = vi.fn().mockReturnValue(pending);
+      const client = fakeClient({ testModel });
+      const errors: unknown[] = [];
+      const action = async (work: () => Promise<unknown>) => {
+        try {
+          await work();
+        } catch (error) {
+          errors.push(error);
+        }
+      };
+      render(
+        <Host client={client}>
+          {(config, setConfig) => (
+            <ModelsPage
+              client={client}
+              config={config}
+              setConfig={setConfig}
+              act={action}
+            />
+          )}
+        </Host>,
+      );
+      const user = userEvent.setup();
+      await user.click(screen.getByText("手动添加"));
+      await user.click(screen.getByText("手动添加"));
+      const [button, other] = screen.getAllByRole("button", {
+        name: "测试当前配置",
+      }) as HTMLButtonElement[];
+      await user.click(button);
+      expect(button.disabled).toBe(true);
+      expect(button.getAttribute("aria-busy")).toBe("true");
+      expect(button.querySelector(".spinner")).toBeTruthy();
+      expect(other.disabled).toBe(false);
+      await user.click(button);
+      expect(testModel).toHaveBeenCalledTimes(1);
+      await reactAct(async () => {
+        if (failure) reject(new Error("test failed"));
+        else resolve({ text: "OK", usage: {} });
+      });
+      expect(button.disabled).toBe(false);
+      expect(button.textContent).toBe("测试当前配置");
+      expect(button.querySelector(".spinner")).toBeNull();
+      expect(errors.length).toBe(failure ? 1 : 0);
+    },
+  );
+
+  it("keeps invalid JSON visible and blocks testing until corrected", async () => {
+    const client = fakeClient();
+    render(
+      <Host client={client}>
+        {(config, setConfig) => (
+          <ModelsPage
+            client={client}
+            config={config}
+            setConfig={setConfig}
+            act={act}
+          />
+        )}
+      </Host>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByText("手动添加"));
+    const editor = screen.getByLabelText(
+      "自定义请求体参数（JSON）",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: '{"temperature":' } });
+    expect(editor.value).toBe('{"temperature":');
+    expect(editor.getAttribute("aria-invalid")).toBe("true");
+    const button = screen.getByRole("button", {
+      name: "测试当前配置",
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.change(editor, { target: { value: '{"temperature":0}' } });
+    expect(button.disabled).toBe(false);
+    await user.click(button);
+    expect(client.testModel).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      expect.objectContaining({ extra_body: '{"temperature":0}' }),
+    );
   });
 
   it("adds a discovered model with the plus button and keeps routes in sync", async () => {
