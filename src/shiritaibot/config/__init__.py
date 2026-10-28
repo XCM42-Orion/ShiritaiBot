@@ -186,13 +186,7 @@ class Settings(Model):
     )
     adapters: list[AdapterConfig] = Field(default_factory=list)
     subagents: list[SubagentConfig] = Field(default_factory=list)
-    plugins: list[PluginConfig] = Field(
-        default_factory=lambda: [
-            PluginConfig(id="feishu"),
-            PluginConfig(id="thu_learn"),
-            PluginConfig(id="email"),
-        ]
-    )
+    plugins: list[PluginConfig] = Field(default_factory=list)
     policy: Policy = Field(default_factory=Policy)
     proactive: ProactiveConfig = Field(default_factory=ProactiveConfig)
     tavily_key: str = "env:TAVILY_API_KEY"

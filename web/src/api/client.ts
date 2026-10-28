@@ -7,6 +7,7 @@ import type {
   MemoryRecord,
   ModelConfig,
   ModelTestResult,
+  PluginInfo,
   ProviderConfig,
   RecordKind,
   RecordMap,
@@ -45,7 +46,12 @@ export interface ApiClient {
   setRoutineStatus(id: string, status: string): Promise<RoutineRecord>;
   cancelSubagent(id: string): Promise<unknown>;
   detectSubagent(id: string): Promise<unknown>;
-  reloadPlugin(id: string): Promise<unknown>;
+  plugins(): Promise<PluginInfo[]>;
+  reloadPlugins(): Promise<PluginInfo[]>;
+  reloadPlugin(id: string): Promise<PluginInfo[]>;
+  installPluginZip(id: string, file: File): Promise<PluginInfo[]>;
+  installPluginGithub(id: string, url: string): Promise<PluginInfo[]>;
+  removePlugin(id: string): Promise<PluginInfo[]>;
   discoverModels(provider: ProviderConfig): Promise<DiscoveredModel[]>;
   testModel(
     provider: ProviderConfig,
@@ -68,13 +74,16 @@ export function createClient(getToken: () => string): ApiClient {
     const headers: Record<string, string> = {
       Authorization: "Bearer " + getToken(),
     };
-    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const binary = body instanceof Blob;
+    if (body !== undefined)
+      headers["Content-Type"] = binary ? "application/zip" : "application/json";
     let response: Response;
     try {
       response = await fetch("/api" + path, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body:
+          body === undefined ? undefined : binary ? body : JSON.stringify(body),
       });
     } catch {
       throw new ApiError("无法连接后端服务，请确认进程仍在运行。", 0);
@@ -124,8 +133,23 @@ export function createClient(getToken: () => string): ApiClient {
       request("/subagents/" + encodeURIComponent(id) + "/cancel", "POST"),
     detectSubagent: (id) =>
       request("/subagents/" + encodeURIComponent(id) + "/detect", "POST"),
+    plugins: () => request<PluginInfo[]>("/plugins"),
+    reloadPlugins: () => request<PluginInfo[]>("/plugins/reload", "POST"),
     reloadPlugin: (id) =>
-      request("/plugins/" + encodeURIComponent(id) + "/reload", "POST"),
+      request<PluginInfo[]>(
+        "/plugins/" + encodeURIComponent(id) + "/reload",
+        "POST",
+      ),
+    installPluginZip: (id, file) =>
+      request<PluginInfo[]>(
+        "/plugins/install/zip/" + encodeURIComponent(id),
+        "POST",
+        file,
+      ),
+    installPluginGithub: (id, url) =>
+      request<PluginInfo[]>("/plugins/install/github", "POST", { id, url }),
+    removePlugin: (id) =>
+      request<PluginInfo[]>("/plugins/" + encodeURIComponent(id), "DELETE"),
     discoverModels: (provider) =>
       request<DiscoveredModel[]>("/providers/discover", "POST", provider),
     testModel: (provider, model) =>

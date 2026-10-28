@@ -1,3 +1,119 @@
 api = 1
 name = "Email"
 description = "IMAP 收件作为主动性引擎的事件源；可选 SMTP 作为通知通道"
+
+[settings_schema]
+type = "object"
+
+[settings_schema.properties.imap_host]
+type = "string"
+title = "IMAP 服务器"
+default = ""
+
+[settings_schema.properties.imap_port]
+type = "integer"
+title = "IMAP 端口"
+minimum = 1
+maximum = 65535
+default = 993
+
+[settings_schema.properties.imap_security]
+type = "string"
+title = "IMAP 加密方式"
+enum = [
+    "ssl",
+    "starttls",
+    "none",
+]
+default = "ssl"
+
+[settings_schema.properties.username]
+type = "string"
+title = "邮箱账号"
+default = ""
+
+[settings_schema.properties.password]
+type = "string"
+title = "邮箱密码或授权码"
+writeOnly = true
+default = ""
+
+[settings_schema.properties.mailbox]
+type = "string"
+title = "收件文件夹"
+default = "INBOX"
+
+[settings_schema.properties.poll]
+type = "boolean"
+title = "自动检查新邮件"
+default = true
+
+[settings_schema.properties.poll_seconds]
+type = "integer"
+title = "轮询间隔（秒）"
+minimum = 60
+maximum = 86400
+default = 300
+
+[settings_schema.properties.max_per_poll]
+type = "integer"
+title = "每次最多读取邮件数"
+minimum = 1
+maximum = 200
+default = 20
+
+[settings_schema.properties.max_body_chars]
+type = "integer"
+title = "正文摘要字符上限"
+minimum = 200
+maximum = 20000
+default = 2000
+
+[settings_schema.properties.smtp_host]
+type = "string"
+title = "SMTP 服务器（可选）"
+default = ""
+
+[settings_schema.properties.smtp_port]
+type = "integer"
+title = "SMTP 端口"
+minimum = 1
+maximum = 65535
+default = 465
+
+[settings_schema.properties.smtp_security]
+type = "string"
+title = "SMTP 加密方式"
+enum = [
+    "ssl",
+    "starttls",
+    "none",
+]
+default = "ssl"
+
+[settings_schema.properties.sender]
+type = "string"
+title = "发件地址"
+description = "留空则使用邮箱账号。"
+default = ""
+
+[settings_schema.properties.notify_to]
+type = "array"
+title = "通知收件人"
+description = "每行一个邮箱；同时填写 SMTP 服务器后启用邮件通知。"
+default = []
+
+[settings_schema.properties.notify_to.items]
+type = "string"
+
+[settings_schema.properties.subject_prefix]
+type = "string"
+title = "邮件主题前缀"
+default = "[ShiritaiBot]"
+
+[settings_schema.properties.timeout]
+type = "integer"
+title = "连接超时（秒）"
+minimum = 5
+maximum = 120
+default = 30

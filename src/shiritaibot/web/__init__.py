@@ -19,6 +19,7 @@ from shiritaibot.app import Application
 from shiritaibot.config import ModelConfig, ProviderConfig, Settings
 from shiritaibot.core import Context, ExternalEvent, Model, PublicError
 from shiritaibot.core.process import run_process
+from shiritaibot.plugin.core.packages import MAX_ARCHIVE, download_github, validate_id
 from shiritaibot.routine import RoutineItem
 from shiritaibot.store.statistics import statistics
 from shiritaibot.tools.builtin import register_builtin
@@ -46,6 +47,11 @@ class MemoryInput(Model):
 class ModelTestInput(Model):
     provider: ProviderConfig
     model: ModelConfig
+
+
+class PluginRepositoryInput(Model):
+    id: str = Field(pattern=r"^[a-z0-9_]{1,64}$")
+    url: str = Field(max_length=300)
 
 
 def ensure_token(home: Path) -> str:
@@ -240,12 +246,46 @@ def create_app(
 
     @api.get("/api/plugins", dependencies=protected)
     async def plugins():
-        return await runtime.plugins.discover()
+        return await runtime.plugins.listing()
+
+    @api.post("/api/plugins/reload", dependencies=protected)
+    async def reload_plugins():
+        async with runtime.configure_lock:
+            return await runtime.plugins.reload_all()
+
+    @api.post("/api/plugins/install/github", dependencies=protected)
+    async def install_github_plugin(body: PluginRepositoryInput):
+        validate_id(body.id)
+        archive = await download_github(body.url)
+        async with runtime.configure_lock:
+            return await runtime.plugins.install(body.id, archive)
+
+    @api.post("/api/plugins/install/zip/{key}", dependencies=protected)
+    async def install_zip_plugin(key: str, request: Request):
+        validate_id(key)
+        archive = bytearray()
+        async for chunk in request.stream():
+            archive.extend(chunk)
+            if len(archive) > MAX_ARCHIVE:
+                raise HTTPException(413, "插件 ZIP 不能超过 20 MiB")
+        async with runtime.configure_lock:
+            return await runtime.plugins.install(key, bytes(archive))
+
+    @api.delete("/api/plugins/{key}", dependencies=protected)
+    async def remove_plugin(key: str):
+        validate_id(key)
+        async with runtime.configure_lock:
+            return await runtime.plugins.remove(key)
 
     @api.post("/api/plugins/{key}/reload", dependencies=protected)
     async def reload(key: str):
-        await runtime.plugins.reload(key)
-        return {"ok": True}
+        async with runtime.configure_lock, runtime.plugins.manage_lock:
+            await runtime.plugins.sync_config()
+            try:
+                await runtime.plugins.reload(key)
+            except Exception:
+                raise PublicError(runtime.plugins.errors.get(key, "插件加载失败")) from None
+            return await runtime.plugins.listing()
 
     @api.post("/api/subagents/{key}/cancel", dependencies=protected)
     async def cancel(key: str):

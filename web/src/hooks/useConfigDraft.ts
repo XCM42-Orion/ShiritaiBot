@@ -17,7 +17,13 @@ export function useConfigDraft(client: ApiClient | null) {
   const [draft, setDraft] = useState<Settings | null>(null);
   const config = draft ?? query.data ?? null;
 
-  const update = useCallback((next: Settings) => setDraft(next), []);
+  const update = useCallback(
+    (next: Settings) => {
+      const saved = queryClient.getQueryData<Settings>(["config"]);
+      setDraft(JSON.stringify(next) === JSON.stringify(saved) ? null : next);
+    },
+    [queryClient],
+  );
   const discard = useCallback(() => setDraft(null), []);
   const save = useCallback(async () => {
     if (!client || !config) return;

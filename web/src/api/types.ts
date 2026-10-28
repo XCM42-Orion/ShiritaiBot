@@ -54,6 +54,28 @@ export interface PluginConfig extends Instance {
   settings: Record<string, unknown>;
 }
 
+export interface PluginSettingSchema {
+  type?: string;
+  title?: string;
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
+  writeOnly?: boolean;
+  items?: PluginSettingSchema;
+  properties?: Record<string, PluginSettingSchema>;
+}
+
+export interface PluginInfo extends Instance {
+  name: string;
+  description: string;
+  status: "loaded" | "disabled" | "missing" | "error";
+  error: string;
+  settings_schema?: PluginSettingSchema;
+  defaults?: Record<string, unknown>;
+}
+
 export interface PersonaConfig extends Instance {
   name: string;
   prompt: string;

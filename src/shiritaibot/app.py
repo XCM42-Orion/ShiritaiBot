@@ -86,21 +86,12 @@ class Application:
 
     async def reconfigure(self, settings: Settings) -> None:
         async with self.configure_lock:
-            settings = await self.vault.protect_settings(settings)
+            settings = await self.vault.protect_settings(settings, await self.plugins.schemas())
             await self.config.save(settings)
             await self.adapters.close()
             await self.adapters.start()
             await register_builtin(self)
-            for key in list(self.plugins.loaded):
-                if not any(p.id == key for p in settings.plugins):
-                    async with self.plugins.locks[key]:
-                        await self.plugins.loaded.pop(key).close()
-                        self.plugins.unregister(key)
-            for cfg in settings.plugins:
-                try:
-                    await self.plugins.reload(cfg.id)
-                except Exception as exc:
-                    await self.store.activity("plugin.failed", f"{cfg.id}: {type(exc).__name__}")
+            await self.plugins.reload_all()
 
     async def close(self) -> None:
         for task in self.tasks:

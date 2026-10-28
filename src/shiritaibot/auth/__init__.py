@@ -47,7 +47,7 @@ class Vault:
             return self.cipher.decrypt(row["cipher"].encode()).decode() if row else ""
         raise PublicError("secret reference required")
 
-    async def protect_settings(self, settings):
+    async def protect_settings(self, settings, plugin_schemas: dict | None = None):
         """Accept inline credentials while keeping configuration and API reads secret-free."""
         result = settings.model_copy(deep=True)
 
@@ -77,8 +77,24 @@ class Vault:
                 for item in value:
                     await walk(item)
 
+        async def protect_schema(value, schema):
+            if not isinstance(schema, dict):
+                return value
+            if schema.get("writeOnly") and isinstance(value, str):
+                return await protect(value)
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    value[key] = await protect_schema(
+                        item, schema.get("properties", {}).get(key, {})
+                    )
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    value[index] = await protect_schema(item, schema.get("items", {}))
+            return value
+
         for plugin in result.plugins:
             await walk(plugin.settings)
+            await protect_schema(plugin.settings, (plugin_schemas or {}).get(plugin.id, {}))
         return result
 
 

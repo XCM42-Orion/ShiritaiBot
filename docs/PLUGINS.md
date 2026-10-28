@@ -8,7 +8,40 @@
 
 两处插件搜索路径：先 `src/shiritaibot/plugin/<id>/`，再 `<home>/plugins/<id>/`。同名时前者优先。`core` 不作为插件扫描。`plugin.toml` 中 `api = 1`，入口 `main.py` 暴露 `Entry(Plugin)`。
 
-插件在同一进程运行，属于可信本地代码，不是安全沙箱。工具执行由权限层控制，但插件代码自身具有宿主账号权限。只安装可信代码。宿主不会自动安装 requirements，也不会自动 clone 仓库。
+启动时扫描上述目录，自动为有效插件补齐配置，保留已有启用状态和配置值。新发现的插件默认停用，配置后启用并保存。无效清单或加载失败会显示在 WebUI 中，不阻断其他插件。
+
+WebUI 的“安装插件”支持上传 ZIP 或填写公开 GitHub 仓库地址（下载默认分支的 ZIP）。插件安装到 `<home>/plugins/<id>/`；ZIP 可以直接包含 `plugin.toml` 与 `main.py`，或套一层仓库目录。同名安装会被拒绝。“移除”会先弹出确认，确认后停止插件、撤销工具和通知通道、删除代码目录与配置并更新列表；同名的两个搜索路径都会清理，插件数据目录与历史记录保留。“重载插件”会重新扫描全部目录、补齐配置并重载；也可单独重载当前插件。重载使用已保存的配置。
+
+插件在同一进程运行，属于可信本地代码，不是安全沙箱。工具执行由权限层控制，但插件代码自身具有宿主账号权限。只安装可信代码。宿主不会自动安装 requirements。
+
+## 插件自行声明配置项
+
+每个插件在自己的 `plugin.toml` 中通过 `settings_schema` 声明配置项；无需修改前端或宿主的插件配置列表。使用 JSON Schema 对象定义，例如：
+
+```toml
+api = 1
+name = "My Plugin"
+
+[settings_schema]
+type = "object"
+
+[settings_schema.properties.poll_seconds]
+type = "integer"
+title = "检查间隔（秒）"
+description = "轮询外部服务的间隔"
+minimum = 60
+default = 300
+
+[settings_schema.properties.service_key]
+type = "string"
+title = "服务密钥"
+writeOnly = true
+default = ""
+```
+
+WebUI 按字段类型生成文本、数字、开关、枚举下拉框、字符串列表及复杂对象/数组的 JSON 编辑框。`title`、`description`、`minimum`、`maximum` 用于表单展示，`default` 用于默认配置；也支持 `[settings]` 定义默认值，优先于字段的 `default`。`writeOnly = true` 的字符串用密钥控件填写并加密保存。未声明字段的老插件仍可编辑已有 settings 或完整 JSON。
+
+配置项定义和默认值属于插件目录；用户填写的配置值及启用状态仍保存在主配置 `config.toml`，凭据存放于 Vault。运行时会合并默认值和已有设置，并校验插件声明的 schema；校验失败只报告字段路径。修改插件清单后点击“重载插件”即可更新表单和运行实例。
 
 ## 飞书 CLI
 
@@ -79,7 +112,7 @@ poll_seconds = 900
 2. 事件立即唤醒主动性引擎（见下文“主动性引擎”），由 light 模型分类重要程度（0–4），0 丢弃，其余进入可调用工具的 Proactive Loop；4 级必须通知。
 3. 事件流程写入 proactive_trace 审计；每个执行 Turn 由模型压缩到 Shortterm Memory，主人可通过 `proactive_recall` 回顾 Main / Proactive 的摘要。
 
-在“插件”页面添加 ID 为 `email` 的条目，点击“填入配置模板”，直接填写密码后保存（自动加密）：
+在“插件”页面选择自动发现的 `email`，直接填写邮箱信息、启用并保存（密码自动加密）。如需恢复默认设置，可点击“填入配置模板”：
 
 ```toml
 [[plugins]]
@@ -131,7 +164,7 @@ SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之
 
 ## 编写普通插件
 
-将 `examples/plugins/hello_world` 复制到 `src/shiritaibot/plugin/hello_world` 或 `<home>/plugins/hello_world`。在 WebUI 添加 ID 为 `hello_world` 的插件并启用。
+将 `examples/plugins/hello_world` 复制到 `src/shiritaibot/plugin/hello_world` 或 `<home>/plugins/hello_world`，在 WebUI 点击“重载插件”，选择自动发现的插件、启用并保存。也可将该目录打包成 ZIP 后通过 WebUI 安装。
 
 ```python
 from shiritaibot.plugin_api import Plugin, schema

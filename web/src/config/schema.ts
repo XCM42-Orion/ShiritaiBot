@@ -1,6 +1,5 @@
 import type {
   AdapterConfig,
-  PluginConfig,
   PersonaConfig,
   ProviderConfig,
   SubagentConfig,
@@ -333,140 +332,6 @@ export function createPersona(rows: PersonaConfig[]): PersonaConfig {
   };
 }
 
-export const PLUGIN_FIELDS: FieldSpec[] = [
-  { key: "id", label: "插件标识", kind: "text" },
-  { key: "enabled", label: "启用插件", kind: "boolean" },
-];
-
-export const PLUGIN_SETTINGS_FIELDS: Record<string, FieldSpec[]> = {
-  email: [
-    { key: "imap_host", label: "IMAP 服务器", kind: "text" },
-    {
-      key: "imap_port",
-      label: "IMAP 端口",
-      kind: "number",
-      min: 1,
-      max: 65535,
-    },
-    {
-      key: "imap_security",
-      label: "IMAP 加密方式",
-      kind: "select",
-      options: ["ssl", "starttls", "none"],
-    },
-    { key: "username", label: "邮箱账号", kind: "text" },
-    { key: "password", label: "邮箱密码或授权码", kind: "secret" },
-    { key: "mailbox", label: "收件文件夹", kind: "text" },
-    { key: "poll", label: "自动检查新邮件", kind: "boolean" },
-    {
-      key: "poll_seconds",
-      label: "轮询间隔（秒）",
-      kind: "number",
-      min: 60,
-      max: 86400,
-    },
-    {
-      key: "max_per_poll",
-      label: "每次最多读取邮件数",
-      kind: "number",
-      min: 1,
-      max: 200,
-    },
-    {
-      key: "max_body_chars",
-      label: "正文摘要字符上限",
-      kind: "number",
-      min: 200,
-      max: 20000,
-    },
-    { key: "smtp_host", label: "SMTP 服务器（可选）", kind: "text" },
-    {
-      key: "smtp_port",
-      label: "SMTP 端口",
-      kind: "number",
-      min: 1,
-      max: 65535,
-    },
-    {
-      key: "smtp_security",
-      label: "SMTP 加密方式",
-      kind: "select",
-      options: ["ssl", "starttls", "none"],
-    },
-    {
-      key: "sender",
-      label: "发件地址",
-      kind: "text",
-      help: "留空则使用邮箱账号。",
-    },
-    {
-      key: "notify_to",
-      label: "通知收件人",
-      kind: "list",
-      help: "每行一个邮箱；同时填写 SMTP 服务器后启用邮件通知。",
-    },
-    { key: "subject_prefix", label: "邮件主题前缀", kind: "text" },
-    {
-      key: "timeout",
-      label: "连接超时（秒）",
-      kind: "number",
-      min: 5,
-      max: 120,
-    },
-  ],
-  feishu: [
-    {
-      key: "command",
-      label: "启动命令",
-      kind: "list",
-      help: "每行一个参数，默认 lark-cli。",
-    },
-    { key: "config_dir", label: "独立飞书配置目录", kind: "text" },
-  ],
-  thu_learn: [
-    { key: "command", label: "启动命令", kind: "list" },
-    { key: "username", label: "学号", kind: "text" },
-    { key: "password", label: "密码", kind: "secret" },
-    { key: "poll", label: "自动检查作业变化", kind: "boolean" },
-    { key: "poll_seconds", label: "轮询间隔（秒）", kind: "number", min: 60 },
-  ],
-};
-
-export function pluginTemplate(id: string): Record<string, unknown> | null {
-  if (id === "email") {
-    return {
-      imap_host: "",
-      imap_port: 993,
-      imap_security: "ssl",
-      username: "",
-      password: "",
-      mailbox: "INBOX",
-      poll: true,
-      poll_seconds: 300,
-      max_per_poll: 20,
-      max_body_chars: 2000,
-      smtp_host: "",
-      smtp_port: 465,
-      smtp_security: "ssl",
-      sender: "",
-      notify_to: [],
-      subject_prefix: "[ShiritaiBot]",
-      timeout: 30,
-    };
-  }
-  if (id === "feishu") return { command: ["lark-cli"], config_dir: "" };
-  if (id === "thu_learn") {
-    return {
-      command: [],
-      username: "",
-      password: "",
-      poll: false,
-      poll_seconds: 900,
-    };
-  }
-  return null;
-}
-
 /** Fallback for plugin settings the frontend does not know about yet. */
 export function inferFieldSpec(key: string, value: unknown): FieldSpec {
   if (typeof value === "boolean") return { key, label: key, kind: "boolean" };
@@ -511,13 +376,5 @@ export function createSubagent(rows: SubagentConfig[]): SubagentConfig {
     permission: "read_only",
     timeout: 900,
     model: "",
-  };
-}
-
-export function createPlugin(rows: PluginConfig[]): PluginConfig {
-  return {
-    id: uniqueId("plugin-new", rows),
-    enabled: false,
-    settings: {},
   };
 }

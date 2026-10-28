@@ -1,3 +1,12 @@
 api = 1
 name = "Hello World"
 description = "最小异步工具插件示例"
+
+[settings_schema]
+type = "object"
+
+[settings_schema.properties.greeting]
+type = "string"
+title = "欢迎消息"
+description = "WebUI 自动读取本插件目录中的配置定义。"
+default = "你好，ShiritaiBot！"

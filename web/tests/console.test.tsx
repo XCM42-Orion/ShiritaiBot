@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ApiClient } from "../src/api/client";
-import type { Settings } from "../src/api/types";
+import type { PluginInfo, Settings } from "../src/api/types";
 import { Dashboard } from "../src/pages/Dashboard";
 import { ModelsPage } from "../src/pages/ModelsPage";
 import { ChatPage } from "../src/pages/ChatPage";
@@ -126,7 +126,12 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     setRoutineStatus: stub(),
     cancelSubagent: stub(),
     detectSubagent: stub(),
+    plugins: vi.fn().mockResolvedValue([]),
+    reloadPlugins: vi.fn().mockResolvedValue([]),
     reloadPlugin: stub(),
+    installPluginZip: vi.fn().mockResolvedValue([]),
+    installPluginGithub: vi.fn().mockResolvedValue([]),
+    removePlugin: vi.fn().mockResolvedValue([]),
     discoverModels: vi.fn().mockResolvedValue([]),
     testModel: vi.fn().mockResolvedValue({ text: "OK", usage: {} }),
     sessions: vi.fn().mockResolvedValue([]),
@@ -138,7 +143,41 @@ const act = (work: () => Promise<unknown>) => work().then(() => undefined);
 
 describe("email plugin configuration", () => {
   it("edits existing mail settings without losing credentials and can fill a new template", async () => {
-    const client = fakeClient();
+    const client = fakeClient({
+      plugins: vi.fn().mockResolvedValue([
+        {
+          id: "email",
+          name: "Email",
+          description: "",
+          enabled: false,
+          status: "disabled",
+          error: "",
+          defaults: {
+            imap_host: "",
+            imap_port: 993,
+            imap_security: "ssl",
+            mailbox: "INBOX",
+            poll: true,
+            poll_seconds: 300,
+            smtp_port: 465,
+            notify_to: [],
+          },
+          settings_schema: {
+            type: "object",
+            properties: {
+              imap_host: { type: "string", title: "IMAP 服务器" },
+              imap_port: { type: "integer", title: "IMAP 端口" },
+              password: { type: "string", title: "邮箱密码", writeOnly: true },
+              notify_to: {
+                type: "array",
+                title: "通知收件人",
+                items: { type: "string" },
+              },
+            },
+          },
+        },
+      ]),
+    });
     let latest = baseConfig();
     latest.plugins = [
       {
@@ -166,8 +205,17 @@ describe("email plugin configuration", () => {
         />
       );
     }
-    render(<EmailHost />);
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <EmailHost />
+      </QueryClientProvider>,
+    );
     const user = userEvent.setup();
+    await screen.findByLabelText("IMAP 服务器");
     expect((screen.getByLabelText("密钥") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("IMAP 端口") as HTMLInputElement).value).toBe(
       "993",
@@ -969,5 +1017,127 @@ describe("identity, personas and context settings", () => {
     await user.click(screen.getByRole("button", { name: "移除" }));
     expect(latest.personas).toEqual([]);
     expect(latest.assistant_name).toBe("小知");
+  });
+});
+
+describe("discovered plugin management", () => {
+  const metadata: PluginInfo = {
+    id: "new_plugin",
+    name: "New plugin",
+    description: "A scanned plugin",
+    enabled: false,
+    status: "disabled",
+    error: "",
+    defaults: { frequency: 30 },
+    settings_schema: {
+      type: "object",
+      properties: {
+        frequency: { type: "integer", title: "自定义检查间隔", minimum: 10 },
+      },
+    },
+  };
+
+  function renderPlugins(client: ApiClient, initial = baseConfig()) {
+    let latest = initial;
+    function PluginHost() {
+      const [config, setConfig] = useState(initial);
+      return (
+        <PluginsPage
+          client={client}
+          act={act}
+          config={config}
+          setConfig={(next) => {
+            latest = next;
+            setConfig(next);
+          }}
+        />
+      );
+    }
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <PluginHost />
+      </QueryClientProvider>,
+    );
+    return () => latest;
+  }
+
+  it("shows a scanned plugin absent from the config and renders its own schema", async () => {
+    const client = fakeClient({
+      plugins: vi.fn().mockResolvedValue([metadata]),
+    });
+    const latest = renderPlugins(client);
+    const input = await screen.findByLabelText("自定义检查间隔");
+    expect((input as HTMLInputElement).value).toBe("30");
+    fireEvent.change(input, { target: { value: "45" } });
+    expect(latest().plugins).toEqual([
+      { id: "new_plugin", enabled: false, settings: { frequency: 45 } },
+    ]);
+    expect(screen.queryByRole("textbox", { name: "插件标识" })).toBeNull();
+  });
+
+  it("confirms removal before deleting and keeps other unsaved configuration", async () => {
+    const remove = vi.fn().mockResolvedValue([]);
+    const client = fakeClient({
+      plugins: vi.fn().mockResolvedValue([metadata]),
+      removePlugin: remove,
+    });
+    const initial = baseConfig();
+    initial.owner_name = "未保存的名字";
+    initial.plugins = [
+      { id: metadata.id, enabled: false, settings: { frequency: 50 } },
+    ];
+    const latest = renderPlugins(client, initial);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "移除" }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "确认移除插件" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(remove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "移除" }));
+    await user.click(screen.getByRole("button", { name: "确认移除" }));
+    await waitFor(() => expect(latest().plugins).toEqual([]));
+    expect(remove).toHaveBeenCalledWith("new_plugin");
+    expect(latest().owner_name).toBe("未保存的名字");
+  });
+
+  it("rescans plugins and installs ZIP or GitHub packages through the API", async () => {
+    const scan = vi.fn().mockResolvedValue([]);
+    const zip = vi.fn().mockResolvedValue([]);
+    const github = vi.fn().mockResolvedValue([]);
+    const client = fakeClient({
+      reloadPlugins: scan,
+      installPluginZip: zip,
+      installPluginGithub: github,
+    });
+    renderPlugins(client);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "重载插件" }));
+    expect(scan).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "安装插件" }));
+    await user.type(screen.getByLabelText("安装插件标识"), "new_plugin");
+    const file = new File(["zip bytes"], "plugin.zip", {
+      type: "application/zip",
+    });
+    await user.upload(screen.getByLabelText("ZIP 插件包"), file);
+    expect(
+      (screen.getByLabelText("ZIP 插件包") as HTMLInputElement).files?.[0],
+    ).toBe(file);
+    await user.click(screen.getByRole("button", { name: "安装并扫描" }));
+    expect(zip).toHaveBeenCalledWith("new_plugin", file);
+    await user.click(screen.getByRole("button", { name: "安装插件" }));
+    await user.selectOptions(screen.getByLabelText("安装来源"), "github");
+    await user.type(
+      screen.getByLabelText("GitHub 仓库地址"),
+      "https://github.com/owner/plugin",
+    );
+    await user.click(screen.getByRole("button", { name: "安装并扫描" }));
+    expect(github).toHaveBeenCalledWith(
+      "new_plugin",
+      "https://github.com/owner/plugin",
+    );
   });
 });
