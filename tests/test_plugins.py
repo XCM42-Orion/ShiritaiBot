@@ -9,6 +9,7 @@ from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
+from test_permissions import eventually
 
 from shiritaibot.config import PluginConfig
 from shiritaibot.core import Context, ExternalEvent, PublicError
@@ -259,7 +260,13 @@ async def test_email_optional_smtp_channel_is_best_effort(app):
         source="routine", kind="routine.reminder", dedup_key="r1", title="下午三点开组会"
     )
     await app.proactive.emit(reminder)
+
+    async def processed():
+        return all(row["status"] == "processed" for row in await app.store.list("event"))
+
     async with server:
+        await app.proactive.tick()
+        await eventually(processed)
         await app.proactive.tick()
     assert "下午三点开组会" in (await app.store.list("reply"))[0]["text"]
     assert len(received) == 1
@@ -270,8 +277,10 @@ async def test_email_optional_smtp_channel_is_best_effort(app):
     assert "来源：routine" in message.get_content()
 
     # A dead SMTP server neither blocks nor repeats the IM notification.
-    await app.proactive.emit(reminder.model_copy(update={"dedup_key": "r2", "source": "other"}))
+    app.config.value.proactive.throttle_seconds = 0
+    await app.proactive.emit(reminder.model_copy(update={"dedup_key": "r2"}))
     await app.proactive.tick()
+    await eventually(processed)
     await app.proactive.tick()
     assert len(await app.store.list("reply")) == 2
     assert len(received) == 1

@@ -2,7 +2,7 @@
 
 > 一个基于 Python（asyncio）的、以 IM 为交互面、以事件驱动为核心的个人 Agent 框架。
 >
-> 状态：设计草案 v0.4。由 AutoWorker（Rust）设计草案 v0.3 迁移而来：设计理念和架构不变，技术栈换成 Python。第 19 节的决策已全部确认（2026-10-27）。
+> 状态：设计草案 v0.5。由 AutoWorker（Rust）设计草案 v0.3 迁移而来：设计理念和架构不变，技术栈换成 Python。第 19 节保留已确认决策；2026-10-28 按 Main / Proactive 双 Loop 状态机修订第 6、8、10 节。当前实现范围见 IMPLEMENTATION.md。
 
 ---
 
@@ -76,7 +76,7 @@ ShiritaiBot 的目标工作流是：
 
 因此，除了需求里列出的六个模块，设计中还加了两个**横切模块**：
 
-- **Proactive Engine（主动性引擎）**：事件 → 分诊 → Playbook → 通知。这是让 Agent "不用我说也会做"的核心，第 8 节详述。
+- **Proactive Engine（主动性引擎）**：统一事件 API → 预处理 → Filter → Proactive Loop → 通知与上下文交接。这是让 Agent "不用我说也会做"的核心，第 8 节详述。
 - **Notification Policy（打扰策略）**：免打扰时段、紧急度、合并摘要、根据反馈调整。主动的 Agent 最容易变成骚扰，这一层必须单独设计。
 
 ---
@@ -734,6 +734,10 @@ async def run_turn(self, trigger: TurnTrigger) -> TurnOutcome:
 
 ### 6.11 上下文管理与压缩
 
+**每轮压缩（当前实现）**：每个 Main / Proactive Turn 的成功、失败或取消都提交持久化摘要任务，由 `light` 模型压缩本轮输入、工具调用/结果和最终消息，写入 Shortterm Memory（默认 7 天）。摘要在后台生成，不阻塞已完成的答复；失败保留任务重试，不能把原始流程日志冒充模型摘要。Main 私聊可召回这些摘要，Chat 和群聊按会话隔离。这里的“一轮”是整个 Turn，不是每次工具调用。
+
+**上下文窗口压缩（目标设计，尚未实现）**：以下 epoch 机制与每轮 Shortterm Memory 压缩独立，不能互相替代。
+
 - 历史**只追加**。压缩不修改旧消息，而是开启一个新的"纪元"（epoch）：生成"截至目前的摘要 + 未完成事项 + 关键事实"，作为新纪元的第一条消息，旧纪元归档。这样做：
   1. 符合"前缀稳定"的缓存原则（第 7 节），压缩是一次性的缓存重建，而不是每轮都失效；
   2. 和部分模型的"保留思考块"要求兼容（编辑历史会让之前的思考块失效甚至报错）。
@@ -979,88 +983,91 @@ class ChatRequest:
 
 ## 8. Proactive Engine（主动性引擎）
 
-### 8.1 管线
+### 8.1 两条 Loop 与事件管线
+
+Main Agent Loop 是通常的 Agent 会话：协议端用户消息 → Context Manager → 模型 → 工具 → 模型（可多次）→ 最终回复 → 协议端。每个 Turn 结束后由模型压缩，写入 Shortterm Memory。
+
+Proactive Engine 使用独立的后台会话，但复用同一 Agent Runtime、工具权限和执行守卫：
 
 ```
- ┌──────────┐   ┌──────────┐   ┌───────────┐   ┌──────────────┐   ┌────────────┐
- │ Sources  │──▶│ Normalize│──▶│ Dedup &   │──▶│ Triage       │──▶│ Playbook   │
- │ 事件源    │   │ 归一化    │   │ Filter    │   │ 分诊         │   │ 执行       │
- └──────────┘   └──────────┘   └───────────┘   └──────────────┘   └─────┬──────┘
-  Learn Manager 插件             seen_events     匹配 Playbook，        Background
-  ICS 订阅变化                   表去重           否则通用分诊；         会话中运行
-  日程 / 提醒到点                                 由 Agent 判断           │
-  邮件 IMAP                                      要不要通知              ▼
-  RSS / GitHub                                                      ┌────────────┐
-  Subagent 完成                                                     │ Notify     │
-  Webhook                                                           │ 打扰策略    │
-                                                                    └─────┬──────┘
-                                                                          ▼
-                                                                Outbox → QQ 私聊
-                                                                + 交接记录写入聊天会话
+邮件 / 作业 / Routine / 子代理结果 / 可扩展事件源
+  → 统一 Proactive API
+  → 预处理（字段校验、归一化、按来源去重、持久化）
+  → Filter（分类模型，importance 0–4）
+       0 → discard（保留去重键和审计，不进入 Loop）
+       1–4 → 按重要程度降序启动 Proactive Loop
+                模型 ↔ 工具（可多步）→ 最终消息与通知决定
+                   ├─ 静默结束（1–3 可选）
+                   └─ 通知用户（4 强制）→ 最终消息追加到 Main Agent context
+                每轮结束 → 模型压缩 → Shortterm Memory
 ```
 
-### 8.2 事件模型
+状态：`pending → filtered → discarded` 或 `pending → filtered → running → processed`；通知另有 `pending → sent` 状态。分类结果落库后才启动 Loop，同级事件按接收顺序处理；排序作用于当前已分类批次，不抢占已运行的 Turn。旧版本的 `preparing` 状态可在升级后超时收尾。
 
-事件会跨越插件边界，所以用 Pydantic 模型定义（同时作为插件协议的 schema）：
+Filter 不调用工具，Proactive Loop 才调用工具、决定是否通知并产生最终消息。最高级事件也经过 Loop；Loop 失败、丢失或超时仍有通知兜底。默认 L1 只读权限不因重要程度增加而扩大。
+
+### 8.2 统一事件 API 与模型
+
+所有事件源只负责采集并构造 `ExternalEvent`，不自行调用分类模型、启动 Agent 或直接通知用户。轮询和推送都提交到同一入口。
+
+| API | 进程内 / 插件 | HTTP（需认证） | 返回 |
+|---|---|---|---|
+| 单条提交 | `ProactiveEngine.emit(event)` / `PluginContext.emit(event)` | `POST /api/events` | PE 接收记录 ID |
+| 批量提交 | `emit_many(events)` | `POST /api/events/batch` | 同顺序的记录 ID 列表 |
+| 状态查询 | `get_event(id)` | `GET /api/events/{id}` | 事件、分类、执行结果和状态 |
+
+提交返回表示已持久化，不表示执行或送达完成。重复的 `(source, dedup_key)` 返回同一接收记录 ID；来源事件 `id` 保存在事件体中，与 PE 接收记录 ID 分开。重试批量提交通过逐条去重避免重复执行，不承诺数据库批量事务。
+
+当前公共 Pydantic 模型如下（附加字段未来须版本化，不能仅在文档中假设存在）：
 
 ```python
-class ExternalEvent(BaseModel):
-    source: str                      # "learn-manager:cn.edu.tsinghua.learn"（插件 ID + OneLearn 平台 ID）
-    kind: str                        # "learn.assignment.created" / "learn.assignment.updated" / "learn.notice.created"
-    dedup_key: str                   # "cn.edu.tsinghua.learn:assignment:123456:<指纹>"
-    subject: PrincipalId             # 和谁有关（单用户下就是 Owner，字段保留以便扩展）
-    title: str
-    occurred_at: AwareDatetime
-    urgency_hint: Urgency            # LOW / NORMAL / HIGH / CRITICAL
-    payload: dict[str, Any]          # 原始结构化数据（截止时间、附件列表……）
-    attachments: list[FileRef] = []
-    trust: TrustLevel = TrustLevel.UNTRUSTED   # 外部内容默认不可信（见第 16 节）
+class ExternalEvent(Model):
+    id: str                         # 来源事件 ID；未提供时自动生成
+    source: str                     # 来源，例如 email、routine、learn-manager:<平台>
+    kind: str                       # 事件名，例如 email.received / learn.assignment.created
+    dedup_key: str                  # 来源范围内稳定的去重键；内容更新需使用新键
+    title: str                      # 可读标题
+    occurred_at: AwareDatetime      # 发生时间，必须带时区，默认当前 UTC
+    payload: dict[str, Any]         # 结构化内容、正文、附件引用等
+    urgency: Literal["low", "normal", "high", "critical"] = "normal"  # 来源提示
 ```
 
-事件源由内置模块（Routine、Subagent、ICS 订阅）或插件（第 12 节）提供。插件可以用两种方式接入：**轮询**（Host 按插件声明的间隔调用 `source.poll(cursor)`）或**推送**（插件主动调用 `event.emit`）。
+统一预处理清理标识和标题两端空白、校验字段、保留原始结构化内容，再按来源去重落库。事件内容始终作为不可信数据；来源的 `urgency` 不是最终重要程度。插件通知通道只接收 PE 已提交的通知副本，不能替代事件入口。
 
-内置的"**关注群**"事件源：Owner 可以把某些群（例如课程群、班群）标记为关注。这些群里的消息（包括不触发 Bot 的消息）每隔几分钟由 `light` 路由批量扫描一次，只挑出和 Owner 有关的内容（老师发的通知、调课、截止时间、@Owner 的消息），产生 `group.notice` 事件进入分诊。扫描是批量的，不会每条消息调用一次模型。
+未来的关注群、RSS、Webhook 等事件源也必须使用上述 API。通用插件 hook 注册系统、关注群批量扫描仍属后续扩展，当前预处理由 PE 的统一方法承担。
 
-### 8.3 分诊（Triage）与通知判断
+### 8.3 Filter：重要程度与执行策略
 
-**默认自治等级是 L1**，并且"要不要通知"由 Agent 判断，而不是规则硬编码。
+分类使用 `light` 路由，输出结构化 `Decision`：`importance`、`reason`，以及通知建议 `decision`、事件摘要 `message`、可选查证建议 `prepare`、兼容字段 `urgency`。通知建议不是最终通知正文，也不能跳过 Loop。
 
-```
-事件 ─▶ ① 有 Playbook 匹配这个 kind 吗？
-         ├─ 有 ─▶ 按 Playbook 的 autonomy 执行；通知与否按 Playbook 的 notify 模式（见下文）
-         └─ 没有 ─▶ ② 通用分诊 Turn（light 路由，L1 权限）
-                     输入：事件摘要和来源、主人的通知偏好（程序记忆）、
-                           近期同类事件的反馈、当前日程状态（是否在上课）
-                     可用工具：只读（memory_search、routine_list、来源插件的只读工具）
-                     输出（结构化）：{ decision, urgency, message, reason }
-```
+| importance | 含义 | 强制行为 |
+|---|---|---|
+| 0 | 无价值，例如垃圾广告邮件 | 直接 discard，不执行工具、不通知 |
+| 1 | 低 | 进入 Loop，可静默、摘要或通知 |
+| 2 | 普通 | 进入 Loop，由模型结合工具结果决定 |
+| 3 | 高 | 优先启动 Loop，默认建议通知，仍允许有理由地静默 |
+| 4 | 最高 | 必须通知，覆盖 Filter 的 ignore/log/digest 及 Loop 的静默决定 |
 
-| decision | 效果 |
-|----------|------|
-| `notify` | 生成通知，交给打扰策略（第 8.6 节）立即或择机发送 |
-| `digest` | 放进下一次合并摘要 |
-| `log` | 只记录到"动态"页面 |
-| `ignore` | 丢弃（`seen_events` 中仍然记录，不会重复处理） |
+为兼容旧的已持久化分类结果，缺少 importance 时根据 decision/urgency 推导；新分类提示明确要求 0–4。结构化分类失败重试一次，仍失败按 2 级交给 Loop 核查，不能当作垃圾丢弃。显式 Routine 提醒和定时任务也经过 Filter，但最低为 3，不能被分类器丢弃；显式提醒不能被 Loop 静默。引擎停用时普通事件只记录，显式 Routine 仍处理。
 
-- **每个决定都必须带 `reason`**，并且写入活动日志。WebUI 的"动态"页面能看到"没通知你：这是体育课签到提醒，你之前说过这类不用提醒"，旁边有一个按钮"这类应该通知我"。点了之后写入程序记忆，修正后续判断。
-- 结构化输出用 Pydantic 模型定义（`TriageDecision`），模型输出不合法时把校验错误反馈给模型重试一次，仍然失败则按 `log` 处理并记录。
-- **Playbook 内的通知判断**：Playbook 的 `notify` 字段有三种模式。`auto`（默认）：由执行 Playbook 的 Agent 决定，它要么调用 `send_notification`，要么调用 `skip_notification(reason)`，Turn 结束时必须二选一，保证决定是显式的、可审计的。`always`：一定通知。`never`：只记录或进入摘要。
-- **建议升级**：分诊发现某类事件反复出现并且主人总是有后续动作时，可以在"动态"页面提出"要不要为这类事件建一个 Playbook？"，每类事件最多建议一次，不在 QQ 里打扰。
+Proactive Loop 的最终输出为 `{notify, message, reason}`：`message` 是给用户的完整最终消息。普通事件可选择不通知；4 级由执行层强制通知，并穿透免打扰、摘要等待和来源节流。无效输出、失败或超时使用分类摘要/事件标题作为兜底，并明确处理未完成；4 级不会因此丢通知。通知消息进入协议端持久化队列后才回写 Main context；平台实际送达由 Outbox 独立跟踪。
 
-**自治等级：**
+`decision=notify/digest/log/ignore` 是分类器的建议：digest 可延后合并，log/ignore 在 importance > 0 时仍需执行 Loop。Playbook 将来只能提供 Loop 的指令和工具策略，不得绕过 Filter 或降低 4 级的通知保证。
+
+**自治等级与事件重要程度是两回事：**
 
 | 等级 | 名称 | 允许做的事 |
-|------|------|-----------|
-| L0 | 静默 | 只记录到"动态"页面 |
-| **L1（默认）** | 通知 | 用只读工具了解情况，判断要不要通知，并撰写通知内容；**不写入任何数据** |
-| L2 | 准备 | 做**没有外部副作用**的工作：下载、分析、整理材料、起草；建待办和提醒也属于 L2（只影响主人自己的数据） |
-| L3 | 执行 | 在白名单内执行有外部副作用的动作（例如回复某个群、提交作业）；白名单之外需要审批 |
+|---|---|---|
+| L0 | 静默 | 只记录，不执行后台工具 |
+| **L1（默认，当前实现）** | 只读处理与通知 | 查询记忆、日程及获准的只读工具，完成后由 PE 通知；不执行有副作用的工具 |
+| L2（规划） | 准备 | 下载、整理材料、起草、建待办等主人内部数据操作 |
+| L3（规划） | 执行 | 白名单内有外部副作用的操作；其余需要审批 |
 
-- 没有 Playbook 的新事件类型一律 L1。
-- Playbook 可以声明更高的等级，但**插件附带的 Playbook 如果要求 L2 及以上，需要主人在启用插件时确认**；L3 必须由主人在 WebUI 中逐项开启动作白名单。
-- 单用户设计下，主动通知只发给 Owner。
+单用户设计下主动通知只发给 Owner。提高 importance 不代表获得 L2/L3 权限。
 
 ### 8.4 Playbook
+
+以下是后续扩展设计，当前尚未实现。Playbook 在 Filter 之后的 Proactive Loop 中执行；只设置最终通知意图，实际消息在本轮工具工作结束后统一发送。
 
 Playbook 是**用于事件的 Skill**：Markdown 加 frontmatter，主人可以在 WebUI 里用自然语言编辑，ShiritaiBot 也可以在对话里帮你写（"以后有新作业都帮我……"）。Playbook 有三个来源：内置的通用模板、**插件附带的**（例如 Learn Manager 附带下面这个）、主人自己写的。
 
@@ -1079,7 +1086,7 @@ tools: [learn_get_assignment, learn_download, doc_read, routine_todo_create, rou
 
 0. 先判断值不值得打扰我：已经提交过的、已经过了截止时间的、标注为选做并且我以前从不做选做的，
    调用 skip_notification 说明原因，结束。
-1. 通知我：课程、标题、截止时间（换算成"还有几天"），一句话说明要做什么。
+1. 准备最终通知草稿：课程、标题、截止时间（换算成"还有几天"），一句话说明要做什么。
 2. 建一个待办，截止时间就是作业截止时间；在截止前 2 天晚上 20:00 和前 1 天 20:00 各设一次提醒。
    如果我的日程里截止前 3 天都很满（用 routine_list 查），提醒提前到 3 天前。
 3. 下载附件，阅读作业要求和相关课件。
@@ -1091,28 +1098,20 @@ tools: [learn_get_assignment, learn_download, doc_read, routine_todo_create, rou
 
 执行方式：Playbook 的正文作为 Background 会话中一个 Turn 的指令，事件 payload 作为输入。复用同一个 Agent Loop，所以第 6 节的守卫、权限和持久化全部适用。frontmatter 用 Pydantic 模型校验，WebUI 保存时即时报错。
 
-### 8.5 交接（Handoff）：后台和前台的上下文衔接
+### 8.5 交接（Handoff）：最终消息进入 Main context
 
-这个场景的关键问题：后台会话生成了讲解稿，问"现在要听讲解吗？"，用户在**私聊会话**回复"好"。私聊会话怎么知道"好"指什么？
+Proactive Loop 的工具调用和中间消息留在后台会话；决定通知时，由 PE 把 Loop 的最终 `message` 交给协议端，再将同一正文作为 assistant 消息追加到目标 Main 会话（内部标记 `_proactive`，不触发新 Turn）。用户回复“好”时，下轮上下文能看到自己刚收到的完整消息。静默事件不会向 Main context 插入未发送的消息。
 
-做法：通知发出时，同时向目标聊天会话追加一条**交接记录**（作为 system/context 消息追加，不改历史）：
+若 Main Turn 正在运行，普通主动通知等到该轮结束后发送和追加，避免把后台消息插在 tool call / tool result 之间破坏历史。审批提示使用独立的即时通道，不等待正在等待审批的 Turn。
 
-```
-<handoff from="proactive:learn-assignment-created" task="T-0193" at="2026-10-27 14:05">
-已通知用户：数据结构 作业3「AVL 树」，截止 11-03 23:59。
-已完成：待办 #88，提醒 2 条，附件已下载（artifact:a91），讲解稿（artifact:a92）。
-已询问用户：「现在要听讲解吗？」
-</handoff>
-```
-
-这样私聊会话在下一个 Turn 就能读到 artifact，自然地继续对话。
+默认目标是配置的第一个启用的 Owner 私聊；没有该目标时使用 `web:owner`。当前“通知完成”指进入协议端持久化队列；不等于 QQ 送达确认，外部平台的 uncertain / expired 状态仍由 Outbox 展示。
 
 ### 8.6 打扰策略（Notification Policy）
 
 | 维度 | 设计 |
 |------|------|
 | 免打扰时段 | 默认 23:30–08:00；只有 `Critical`（例如 1 小时内截止）可以穿透 |
-| 合并摘要 | `Low` 级通知攒起来，在固定时间（例如 12:30、18:00）合并成一条"今日动态"发送 |
+| 合并摘要 | `digest` 建议的通知延后合并（当前至少等待 60 秒或来源节流周期）；固定时间摘要属于后续扩展 |
 | 节流 | 同一来源 10 分钟内的多条通知合并 |
 | 上下文感知 | 如果主人正在私聊里和 Bot 对话，主动通知插在当前 Turn 结束之后，不打断 |
 | 日程感知 | 主人日程上正在上课或开会时，非紧急通知延后到日程结束 |
@@ -1252,6 +1251,7 @@ ShiritaiBot 同时用官方 `mcp` SDK 暴露一个 MCP 服务（stdio 或本地 
 
 ```
 L0 工作记忆   当前会话上下文（第 6.11 节），由 Agent Runtime 管理
+ST 短期记忆   Main / Proactive 每轮的模型摘要（默认 7 天），保留完成/失败/取消状态
 L1 情景记忆   原始消息日志 + 片段（Episode）摘要         —— "发生过什么"
 L2 语义记忆   记忆原子（事实、偏好、关系、承诺……）      —— "我知道什么"
 L3 核心画像   每个 Principal / 群一份紧凑画像          —— "他是谁"（常驻 prompt [3] 层）
@@ -1302,6 +1302,10 @@ CREATE TABLE profile (owner_kind TEXT, owner_id TEXT, content TEXT, version INTE
 **SQLite 访问约定**：WAL 模式；一个写连接（所有写操作通过它串行执行）加一个小的读连接池，`aiosqlite` 让每个连接在自己的线程里运行，不阻塞事件循环。sqlite-vec 需要解释器的 `sqlite3` 支持加载扩展（`enable_load_extension`）：python.org 的官方构建和 uv 管理的 Python 都支持，部分发行版自带的或自行编译的 Python 可能不支持。启动时检测，不支持就以无向量模式运行（第 10.8 节），`shiritaibot doctor` 会提示原因。
 
 ### 10.4 写路径：反思（Reflection）
+
+**先区分每轮摘要和长期反思**：Shortterm Memory 每个 Turn 都写，由模型生成，输入是本轮原始消息和工具轨迹；超长轨迹分块压缩后再合并摘要。通知与主 Loop 不等待摘要成功。摘要任务持久化，失败定时重试；到期摘要不参与召回。事件阶段审计单独存放在 `proactive_trace`，0 级事件只有 discard 审计，没有执行 Turn，因此不生成虚构的 Loop 摘要。私人 Main / Background 摘要属于 Owner，Chat/群摘要只属于原会话，不进入主人私人召回。
+
+下面的长期记忆反思流程是后续设计，其批量触发条件不影响每轮短期摘要。
 
 **反思的范围**（单用户）：Owner 的 Agent 会话（私聊、Background）；以及 Owner 标记为"**关注**"的群（例如课程群），从这些群里只提取和 Owner 有关的信息（老师的公告、@Owner 的内容、约定），可见性为 `group:<id>`。普通 Chat 模式的群**不做反思**，只有显式的群备忘（第 10.5 节）。
 
@@ -2115,7 +2119,7 @@ shiritaibot service install|uninstall [--user]   # 仅 Linux：生成或移除 s
 | **M1 对话核心** | LLM Gateway：**四种协议**（Chat Completions、Responses、Gemini、Anthropic）+ 多模型和路由；Session Actor、**Agent / Chat 两种 Turn 引擎**、Tool 框架、`web_search`（模型自带搜索 + Tavily）、触发 / 去抖 / steering / 取消、权限、缓存布局、纪元压缩；基础 WebUI（对话、日志、模型与服务、群设置） | 私聊 Agent 模式、群聊 Chat 模式多轮对话；运行中插话和取消符合第 6.5 节；`/model` 切换可用；同一份对话在四种协议之间切换不报错；缓存命中率 > 70%；不同 `PYTHONHASHSEED` 下前缀字节一致 |
 | **M2 日程** | 日历 / 事件 / 待办 / 提醒、ICS 导入和订阅、调度器、Jobs、日程工具、WebUI 日程页 | 导入课表；"明早 8 点提醒我交报告"可靠触发；重启或休眠唤醒后不丢提醒 |
 | **M3 记忆** | message_log、反思、原子、BM25 + 图谱（无 Embedding 模式先行）、云端 Embedding 接入与后补、可见性、衰减和归档、画像、群备忘、WebUI 记忆页 | 跨天记得偏好；不配置 Embedding 也能召回；Chat 模式的群里召回不到任何私人记忆（有自动化测试） |
-| **M4 主动性 + 插件** | Proactive Engine、通用分诊（L1，Agent 判断要不要通知）、Playbook、打扰策略、交接记录、关注群事件源；目录式插件宿主（扫描、加载、`requirements.txt`、**热重载**）、`shiritaibot.plugin_api`、MCP Server 挂载、文档解析 | 用示例插件发出事件 → 分诊 → 通知全链路跑通；修改插件代码后热重载生效，正在进行的会话不受影响；"没通知"的原因可以在 WebUI 里看到 |
+| **M4 主动性 + 插件** | Proactive Engine、统一事件 API、重要性 Filter、Proactive Loop（L1；4 级强制通知）、每轮短期摘要、Playbook、打扰策略、交接记录、关注群事件源；目录式插件宿主（扫描、加载、`requirements.txt`、**热重载**）、`shiritaibot.plugin_api`、MCP Server 挂载、文档解析 | 用示例插件发出事件 → 分诊 → 通知全链路跑通；修改插件代码后热重载生效，正在进行的会话不受影响；"没通知"的原因可以在 WebUI 里看到 |
 | **M4′ OneLearn + Learn Manager**（独立仓库，和 M4 并行） | OneLearn 协议 v0.1（规范 + JSON Schema）、`onelearn-thu` 实现端（Python，Core + 课件 / 课表）、Learn Manager 插件及附带的 Playbook | `onelearn-thu` 的输出全部通过 JSON Schema 校验；第 12.8 节场景端到端跑通 |
 | **M5 子代理** | Claude Code / Codex 后端、工作空间、审批桥接、ShiritaiBot MCP Server | 在 QQ 里"帮我把作业 3 的代码框架写好"，完成后收到总结（Linux 和 Windows 上都验证） |
 | **M6 打磨** | OneLearn 实现端编写指南（方便其他学校的同学接入），视需要再做 SDK 和一致性测试工具；更多 Adapter（Telegram / 飞书 / Discord）、插件市场、指标导出、移动端 WebUI 优化 | |
@@ -2135,7 +2139,7 @@ shiritaibot service install|uninstall [--user]   # 仅 Linux：生成或移除 s
 | 5 | 平台 | **Linux 为主**，Windows、macOS 兼容；**只提供 CLI 形态** | 0、2.4、9.3、17.2 |
 | 6 | 前端 | **TypeScript + React + Vite**（不使用 Next.js，原因见 14.4） | 2.4、14.4 |
 | 7 | 网络学堂 | **不放在主仓库**。Learn Manager 是独立仓库的 ShiritaiBot 插件（一个插件文件夹）；清华网络学堂的对接是 OneLearn 协议的一个实现端 `onelearn-thu`，用 Python 实现（见第 18 条） | 2.3、12.7 |
-| 8 | 主动性默认等级 | **默认 L1**，并且由 Agent 判断要不要通知（每个决定都带原因，可以反馈纠正） | 8.3 |
+| 8 | 主动性默认等级 | **默认 L1**；统一入口 → 分类 Filter → Proactive Loop；importance=0 丢弃、4 强制通知，其余由 Loop 决定；Main/Proactive 每轮生成模型短期摘要（2026-10-28 修订） | 8.3 |
 | 9 | 外部搜索后端 | 协议不自带搜索时，**先实现 Tavily**；`SearchBackend` 接口保留扩展（Brave、博查、SearXNG 等以后按需加） | 6.0、14.3 |
 | 10 | Chat 群里临时使用 Agent | **保留 `owner_escalation`（`/agent` 前缀），默认关闭**，按群开启 | 6.0 |
 | 11 | 学校平台接入的统一协议 | 仿照 OneBot V11 定义 **OneLearn 协议**（暂定名）：各校的实现端（任意语言）hack 完自己的平台后，把公告、作业、提交等包装成统一格式，通过 stdio / WebSocket 提供；Learn Manager 作为应用端，承担协议之后的全部处理（同步、变更检测、事件、接入 Agent Loop）。**协议就是集成边界**，学校相关的代码不进 Learn Manager | 12.7、[LEARN_PROTOCOL.md](LEARN_PROTOCOL.md)、18 |

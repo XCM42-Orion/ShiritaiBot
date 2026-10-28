@@ -217,13 +217,19 @@ class AdapterHub:
                 session,
             )
 
-    async def notify_owner(self, text: str) -> None:
+    async def notify_owner(self, text: str, *, handoff: bool = True) -> None:
         target = next((a for a in self.config.value.adapters if a.enabled and a.owner_id), None)
         session = f"private:{target.id}:{target.owner_id}" if target else "web:owner"
-        await self.enqueue(session, text)
-        await self.store.append(
-            session, "handoff", {"role": "user", "content": "[后台交接：已通知主人] " + text}
-        )
+        if not handoff:
+            # Approval prompts must be visible while the requesting turn waits for approval.
+            await self.enqueue(session, text)
+        elif self.runtime is not None:
+            await self.runtime.handoff(session, text, self.enqueue)
+        else:
+            await self.enqueue(session, text)
+            await self.store.append(
+                session, "handoff", {"role": "assistant", "content": text, "_proactive": True}
+            )
 
     async def flush(self) -> None:
         while True:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from pathlib import Path
 
 from shiritaibot.adapters.onebot11 import AdapterHub
@@ -40,7 +41,8 @@ class Application:
         self.registry = ToolRegistry(self.permissions, self.store)
         self.llm = ProviderManager(self.config, self.vault, self.store)
         self.memory = MemoryManager(self.store)
-        self.short_term = ShortTermMemory(self.store)
+        self.short_term = ShortTermMemory(self.store, self.llm)
+        await self.short_term.recover()
         self.adapters = AdapterHub(self.config, self.vault, self.store)
         self.proactive = ProactiveEngine(
             self.config, self.store, self.llm, self.adapters.notify_owner, self.short_term
@@ -52,22 +54,30 @@ class Application:
         )
         await register_builtin(self)
         self.runtime = AgentRuntime(
-            self.config, self.store, self.llm, self.registry, self.memory, self.deliver
+            self.config,
+            self.store,
+            self.llm,
+            self.registry,
+            self.memory,
+            self.deliver,
+            self.short_term,
         )
         self.adapters.runtime, self.adapters.permissions = self.runtime, self.permissions
-        self.permissions.notify = self.adapters.notify_owner
+        self.permissions.notify = partial(self.adapters.notify_owner, handoff=False)
         self.proactive.runtime = self.runtime
         self.proactive.channels = self.plugins.notifiers
+        self.plugins.get_event = self.proactive.get_event
         await self.plugins.start()
         await self.adapters.start()
         self.tasks = [
             asyncio.create_task(self.routine.run()),
             asyncio.create_task(self.proactive.run()),
+            asyncio.create_task(self.short_term.run()),
         ]
 
     async def deliver(self, session: str, text: str) -> None:
         if session.startswith(PREPARE_SESSION):
-            # Proactive groundwork returns to the loop, which owns notification policy.
+            # Proactive turns return to PE, which owns the final notification decision.
             await self.proactive.prepared(session, text)
         elif session.startswith("background:"):
             await self.adapters.notify_owner(text)

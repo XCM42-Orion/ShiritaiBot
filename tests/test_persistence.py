@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 import pytest
+from test_permissions import eventually
 
 from shiritaibot.app import Application
 from shiritaibot.core import Context, ExternalEvent, now
@@ -55,6 +56,11 @@ async def test_scheduler_dedup_and_quiet_hours(app):
     await app.routine.tick()
     assert len(await app.store.list("event")) == 1
     await app.proactive.tick()
+
+    async def processed():
+        return all(row["status"] == "processed" for row in await app.store.list("event"))
+
+    await eventually(processed)
     await app.proactive.tick()
     assert len(await app.store.list("reply")) == 1
     assert "提醒测试" in (await app.store.list("reply"))[0]["text"]

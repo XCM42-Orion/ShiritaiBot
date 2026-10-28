@@ -168,8 +168,8 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "proactive_recall",
-            "查询短期记忆：最近 7 天主动性引擎处理过的事件（如收到的邮件、提醒），"
-            "包括判断结论、处理阶段和每一步经过；可按关键词过滤",
+            "查询短期记忆：最近 7 天 Main / Proactive Loop 的模型压缩摘要，"
+            "包括请求、事件、工具结果、最终答复和未完成事项；可按关键词过滤",
             schema(
                 {
                     "query": {"type": "string", "maxLength": 200},
