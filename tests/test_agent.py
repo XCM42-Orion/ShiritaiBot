@@ -1,9 +1,11 @@
 import asyncio
 
+import pytest
 from test_permissions import eventually
 
 from shiritaibot.agent import repair_history
 from shiritaibot.core import Context, Reply
+from shiritaibot.llm import parse_reply
 
 
 class ToolLLM:
@@ -36,6 +38,64 @@ async def test_agent_tool_loop_persists_and_delivers(app):
     assert len(llm.inputs) == 2
     rows = await eventually(lambda: app.store.list("turn"))
     assert rows[0]["status"] == "completed"
+
+
+@pytest.mark.parametrize("first_text", ["我先查一下时间。", "", " \n"])
+async def test_main_loop_delivers_text_before_tools_without_reasoning(app, monkeypatch, first_text):
+    entered, release = asyncio.Event(), asyncio.Event()
+    intermediate = [first_text, "查到了，再确认一下。"]
+
+    class LLM:
+        async def complete(self, route, system, messages, tools, **kwargs):
+            step = sum(m["role"] == "tool" for m in messages)
+            if step == len(intermediate):
+                return Reply(text="工具调用完成")
+            return parse_reply(
+                "chat_completions",
+                "test",
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": intermediate[step],
+                                "reasoning_content": "内部推理，不应发送",
+                                "tool_calls": [
+                                    {
+                                        "id": f"call-{step}",
+                                        "type": "function",
+                                        "function": {"name": "current_time", "arguments": "{}"},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                },
+            )
+
+    execute = app.registry.execute
+
+    async def blocked_execute(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await execute(*args, **kwargs)
+
+    app.runtime.llm = LLM()
+    monkeypatch.setattr(app.registry, "execute", blocked_execute)
+    await app.runtime.submit(Context("web:owner", "owner", "agent", True), "现在几点")
+    await asyncio.wait_for(entered.wait(), 2)
+    replies = await app.store.list("reply")
+    assert [r["text"] for r in replies] == ([first_text] if first_text.strip() else [])
+    release.set()
+
+    async def completed():
+        return [r for r in await app.store.list("turn") if r["status"] == "completed"]
+
+    await eventually(completed)
+    replies = await app.store.list("reply")
+    assert [r["text"] for r in reversed(replies)] == [
+        text for text in [*intermediate, "工具调用完成"] if text.strip()
+    ]
 
 
 async def test_steering_and_stop(app):

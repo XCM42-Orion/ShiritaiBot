@@ -259,6 +259,10 @@ class AgentRuntime:
                         await self.deliver(ctx.session, reply.text or "模型没有返回可显示的内容。")
                         body["status"] = "completed"
                         return
+                    # Main-loop text is visible before tools run; proactive turns
+                    # deliver only their final structured notification decision.
+                    if not ctx.background and reply.text.strip():
+                        await self.deliver(ctx.session, reply.text)
                     for call in reply.calls:
                         function = call["function"]
                         sig = fingerprint(function)

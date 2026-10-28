@@ -41,13 +41,14 @@ class Agent:
         self.systems.append(system)
         if not any(m["role"] == "tool" for m in messages):
             return Reply(
+                text="我先查一下日程。",
                 calls=[
                     {
                         "id": "check",
                         "type": "function",
                         "function": {"name": "routine_list", "arguments": "{}"},
                     }
-                ]
+                ],
             )
         return Reply(
             text=json.dumps(
