@@ -1,0 +1,53 @@
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #101716;
+  --bg-raised: #141e1a;
+  --panel: #18221f;
+  --panel-strong: #1b2721;
+  --input-bg: #111b17;
+
+  /* Text */
+  --text: #dce7e3;
+  --text-strong: #e1eadf;
+  --muted: #81938c;
+  --text-label: #bccbc1;
+
+  /* Lines and states */
+  --border: #2a3832;
+  --border-strong: #36483e;
+  --accent: #b5df9a;
+  --accent-strong: #c8ecb1;
+  --accent-ink: #20301c;
+  --danger: #e1a49c;
+  --danger-border: #69433d;
+  --danger-bg: #342722;
+  --success-bg: #26392b;
+  --success-border: #4c6253;
+  --focus: #9fc88b;
+
+  /* Charts */
+  --chart-input: #8dcfb3;
+  --chart-output: #8d9ce0;
+  --chart-incoming: #8dcfb3;
+  --chart-outgoing: #e2bb82;
+
+  /* Layout */
+  --sidebar-width: 232px;
+  --radius: 10px;
+  --radius-sm: 7px;
+
+  font-family:
+    "DM Sans",
+    "Noto Sans SC",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}

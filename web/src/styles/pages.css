@@ -1,0 +1,280 @@
+.error-text {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* Dashboard */
+
+.dashboard {
+  margin-bottom: 22px;
+}
+
+.dashboard > .panel-head {
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.range-tabs {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.range-tabs button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+.range-tabs button.selected {
+  background: #2a3c30;
+  color: #c4e8b0;
+}
+
+.chart-panel {
+  position: relative;
+  padding-left: 42px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chart-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.hourly-chart {
+  display: block;
+  width: 100%;
+  overflow: visible;
+  color: var(--muted);
+}
+
+.hourly-chart g:focus {
+  outline: 1px solid var(--accent);
+}
+
+.chart-scale {
+  position: absolute;
+  left: 8px;
+  top: 66px;
+  bottom: 86px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  max-width: 34px;
+  font-size: 10px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.chart-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  min-height: 20px;
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.stats-note {
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+/* Chat */
+
+.chat-toolbar {
+  margin: 0 0 14px;
+}
+
+.chat-toolbar select {
+  max-width: 280px;
+}
+
+.chat-panel {
+  min-height: 320px;
+}
+
+.message {
+  margin: 12px 0;
+  padding: 10px 16px;
+  background: #1d2a20;
+  border-left: 2px solid #435d3a;
+  border-radius: 0 6px 6px 0;
+}
+
+.message.user {
+  background: #202d28;
+  border-color: #607c75;
+}
+
+.message.tool {
+  background: #141e17;
+  border-color: #435343;
+}
+
+.message.delivered {
+  border-color: #829760;
+}
+
+.message p {
+  margin: 7px 0 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message small {
+  font-size: 10px;
+  color: #a3b295;
+}
+
+.composer {
+  position: sticky;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  background: #1b281f;
+  border: 1px solid #405139;
+  border-radius: var(--radius-sm);
+}
+
+.composer textarea {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  resize: none;
+}
+
+.command-menu {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  z-index: 5;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.command-menu button {
+  justify-content: flex-start;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.command-menu strong {
+  min-width: 95px;
+}
+
+.command-menu span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Logs */
+
+.log-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.log-row time {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #7c9684;
+}
+
+/* Login */
+
+.login {
+  max-width: 400px;
+  margin: 12vh auto;
+  padding: 28px;
+}
+
+.login > .brand-mark {
+  margin-bottom: 20px;
+  width: 50px;
+  height: 54px;
+}
+
+.login h1 {
+  font-size: 34px;
+  letter-spacing: -1.2px;
+}
+
+.login > p {
+  font-size: 13px;
+}
+
+.login form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 26px 0 18px;
+}
+
+.login label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.login form > button {
+  width: 100%;
+}
+
+.login code {
+  font-size: 11px;
+  color: #b7c6a7;
+}
+
+@media (max-width: 700px) {
+  .chart-panel {
+    padding-left: 24px;
+  }
+  .chart-legend {
+    gap: 10px;
+    font-size: 11px;
+  }
+  .log-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .command-menu strong {
+    min-width: 70px;
+  }
+  .toast {
+    right: 12px;
+    bottom: 12px;
+  }
+}

@@ -24,7 +24,7 @@ export function ErrorDialog({
       <h2 id="error-title">操作未完成</h2>
       <p id="error-detail">{message}</p>
       <div className="actions">
-        <button className="primary" autoFocus onClick={onClose}>
+        <button type="button" className="primary" autoFocus onClick={onClose}>
           知道了
         </button>
       </div>

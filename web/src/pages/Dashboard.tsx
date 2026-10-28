@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { ApiClient } from "../api/client";
+import type { Statistics, TokenBucket } from "../api/types";
+import { formatHour, formatNumber } from "../lib/utils";
 
-type Row = { hour: string; [key: string]: string | number };
-const number = (value: number) => value.toLocaleString("zh-CN");
-const time = (value: string) =>
-  new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
+const HOUR_RANGES = [
+  [24, "24 小时"],
+  [72, "3 天"],
+  [168, "7 天"],
+] as const;
+
+interface Series {
+  key: keyof TokenBucket;
+  label: string;
+  color: string;
+}
 
 function HourlyChart({
   title,
@@ -18,42 +22,43 @@ function HourlyChart({
   series,
 }: {
   title: string;
-  rows: Row[];
-  series: { key: string; label: string; color: string }[];
+  rows: TokenBucket[];
+  series: Series[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const maximum = Math.max(
     1,
     ...rows.map((row) =>
-      series.reduce((sum, s) => sum + Number(row[s.key]), 0),
+      series.reduce((sum, item) => sum + Number(row[item.key]), 0),
     ),
   );
-  const width = 900,
-    height = 190,
-    step = width / Math.max(1, rows.length);
+  const width = 900;
+  const height = 190;
+  const step = width / Math.max(1, rows.length);
   const selected = hover === null ? null : rows[hover];
+
   return (
     <section className="panel chart-panel">
       <div className="panel-head">
         <h3>{title}</h3>
         <div className="chart-legend">
-          {series.map((s) => (
-            <span key={s.key}>
-              <i style={{ background: s.color }} />
-              {s.label}
+          {series.map((item) => (
+            <span key={item.key}>
+              <i style={{ background: item.color }} />
+              {item.label}
             </span>
           ))}
         </div>
       </div>
-      <div className="chart-scale">
-        <span>{number(maximum)}</span>
+      <div className="chart-scale" aria-hidden="true">
+        <span>{formatNumber(maximum)}</span>
         <span>0</span>
       </div>
       <svg
         className="hourly-chart"
         viewBox={`0 0 ${width} ${height + 28}`}
         role="group"
-        aria-label={`${title}逐小时图表`}
+        aria-label={title + "逐小时图表"}
         onMouseLeave={() => setHover(null)}
       >
         {[0, 0.5, 1].map((level) => (
@@ -74,7 +79,9 @@ function HourlyChart({
               key={row.hour}
               tabIndex={0}
               role="img"
-              aria-label={`${time(row.hour)} ${series.map((s) => `${s.label} ${row[s.key]}`).join("，")}`}
+              aria-label={`${formatHour(row.hour)} ${series
+                .map((item) => `${item.label} ${row[item.key]}`)
+                .join("，")}`}
               onMouseEnter={() => setHover(index)}
               onFocus={() => setHover(index)}
               onBlur={() => setHover(null)}
@@ -86,18 +93,18 @@ function HourlyChart({
                 height={height}
                 fill={index === hover ? "#ffffff14" : "transparent"}
               />
-              {series.map((s) => {
-                const h = (Number(row[s.key]) / maximum) * height;
-                offset += h;
+              {series.map((item) => {
+                const value = (Number(row[item.key]) / maximum) * height;
+                offset += value;
                 return (
                   <rect
-                    key={s.key}
+                    key={item.key}
                     x={index * step + step * 0.15}
                     y={height - offset}
                     width={step * 0.7}
-                    height={h}
+                    height={value}
                     rx={1}
-                    fill={s.color}
+                    fill={item.color}
                   />
                 );
               })}
@@ -117,7 +124,7 @@ function HourlyChart({
                   fill="currentColor"
                   fontSize={12}
                 >
-                  {time(row.hour)}
+                  {formatHour(row.hour)}
                 </text>
               )}
             </g>
@@ -127,10 +134,10 @@ function HourlyChart({
       <div className="chart-detail" aria-live="polite">
         {selected ? (
           <>
-            <strong>{time(selected.hour)} 时</strong>
-            {series.map((s) => (
-              <span key={s.key}>
-                {s.label} {number(Number(selected[s.key]))}
+            <strong>{formatHour(selected.hour)} 时</strong>
+            {series.map((item) => (
+              <span key={item.key}>
+                {item.label} {formatNumber(Number(selected[item.key]))}
               </span>
             ))}
           </>
@@ -142,23 +149,15 @@ function HourlyChart({
   );
 }
 
-export function Dashboard({
-  api,
-  onError,
-}: {
-  api: (path: string) => Promise<any>;
-  onError: (error: Error) => void;
-}) {
-  const [hours, setHours] = useState(24);
+export function Dashboard({ client }: { client: ApiClient }) {
+  const [hours, setHours] = useState<number>(24);
   const query = useQuery({
     queryKey: ["stats", hours],
-    queryFn: () => api(`/stats?hours=${hours}`),
+    queryFn: () => client.stats(hours),
     refetchInterval: 30000,
   });
-  useEffect(() => {
-    if (query.error) onError(query.error);
-  }, [query.error]);
-  const data = query.data;
+  const data: Statistics | undefined = query.data;
+
   return (
     <section className="dashboard">
       <div className="panel-head">
@@ -166,34 +165,37 @@ export function Dashboard({
           <h2>数据看板</h2>
           <p className="muted">北京时间 · 每小时聚合 · 每 30 秒更新</p>
         </div>
-        <div className="range-tabs">
-          {[
-            [24, "24 小时"],
-            [72, "3 天"],
-            [168, "7 天"],
-          ].map(([value, label]) => (
+        <div className="range-tabs" role="group" aria-label="统计区间">
+          {HOUR_RANGES.map(([value, label]) => (
             <button
+              type="button"
               key={value}
               className={hours === value ? "selected" : ""}
-              onClick={() => setHours(Number(value))}
+              aria-pressed={hours === value}
+              onClick={() => setHours(value)}
             >
               {label}
             </button>
           ))}
         </div>
       </div>
-      {data ? (
+      {query.error && (
+        <p className="error-text">读取统计失败：{query.error.message}</p>
+      )}
+      {data && data.totals && data.buckets ? (
         <>
           <div className="metrics">
-            {[
-              ["总 tokens", "total_tokens"],
-              ["对话消息", "messages"],
-              ["模型调用", "llm_calls"],
-              ["失败轮次", "failed_turns"],
-            ].map(([label, key]) => (
-              <div className="metric" key={key}>
+            {(
+              [
+                ["总 tokens", data.totals.total_tokens],
+                ["对话消息", data.totals.messages],
+                ["模型调用", data.totals.llm_calls],
+                ["失败轮次", data.totals.failed_turns],
+              ] as const
+            ).map(([label, value]) => (
+              <div className="metric" key={label}>
                 <span>{label}</span>
-                <strong>{number(data.totals[key])}</strong>
+                <strong>{formatNumber(value)}</strong>
                 <small>
                   过去 {hours === 24 ? "24 小时" : `${hours / 24} 天`}
                 </small>
@@ -204,31 +206,45 @@ export function Dashboard({
             title="Token 用量"
             rows={data.buckets}
             series={[
-              { key: "input_tokens", label: "输入", color: "#8dcfb3" },
-              { key: "output_tokens", label: "输出", color: "#8d9ce0" },
+              {
+                key: "input_tokens",
+                label: "输入",
+                color: "var(--chart-input)",
+              },
+              {
+                key: "output_tokens",
+                label: "输出",
+                color: "var(--chart-output)",
+              },
             ]}
           />
           <HourlyChart
             title="对话消息"
             rows={data.buckets}
             series={[
-              { key: "incoming_messages", label: "用户消息", color: "#8dcfb3" },
-              { key: "outgoing_messages", label: "助手回复", color: "#e2bb82" },
+              {
+                key: "incoming_messages",
+                label: "用户消息",
+                color: "var(--chart-incoming)",
+              },
+              {
+                key: "outgoing_messages",
+                label: "助手回复",
+                color: "var(--chart-outgoing)",
+              },
             ]}
           />
           <p className="muted stats-note">
-            统计区间 {time(data.start)} 至 {time(data.end)}
+            统计区间 {formatHour(data.start)} 至 {formatHour(data.end)}
             ，首尾小时按实际区间截取。Token
-            取提供商返回的用量，包含工具轮次与连接测试；缓存命中{" "}
-            {number(data.totals.cached_tokens)}{" "}
-            tokens（已计入输入）。消息统计已入库的用户消息和最终回复，包含斜杠命令，不含工具结果与内部交接；未返回用量的请求不估算
-            tokens。
+            取提供商返回的用量，包含工具轮次与连接测试； 缓存命中{" "}
+            {formatNumber(data.totals.cached_tokens)} tokens（已计入输入）。
+            消息统计已入库的用户消息和最终回复，包含斜杠命令，不含工具结果与内部交接；
+            未返回用量的请求不估算 tokens。
           </p>
         </>
       ) : (
-        <p className="muted">
-          {query.isPending ? "正在读取统计…" : "暂时无法读取统计"}
-        </p>
+        !query.error && <p className="muted">正在读取统计…</p>
       )}
     </section>
   );

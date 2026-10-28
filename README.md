@@ -82,7 +82,12 @@ src/shiritaibot/
     thu_learn/           本地清华网络学堂插件（Git 忽略）
   plugin_api/            插件公共 API
   web/                   FastAPI 控制面
-web/                     React 配置界面
+web/                     React 控制台（Vite）
+  src/api/               类型化 API 客户端与后端数据模型
+  src/pages/             每个管理视图一个页面组件
+  src/components/        共享界面组件
+  src/hooks/             路由、配置草稿、通知与实时连接
+  src/styles/            设计变量与分层样式
 tests/                   核心和模拟集成测试
 examples/plugins/        最小插件示例
 ```
@@ -102,6 +107,7 @@ uv run pyright
 uv run pytest -q
 npm --prefix web run build
 npm --prefix web test
+npm --prefix web run format:check
 uv run shiritaibot doctor
 ```
 
