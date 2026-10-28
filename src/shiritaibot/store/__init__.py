@@ -117,6 +117,7 @@ class Store:
             "SELECT COALESCE(MAX(seq),0) AS seq FROM messages WHERE session=?", (session,)
         )
         await self.put("session_epoch", session, {"seq": rows[0]["seq"]})
+        await self.delete("context_state", session)
 
     async def activity(self, kind: str, detail: str, scope: str = "") -> None:
         await self.put(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from urllib.parse import urlparse
 
 import httpx
@@ -50,6 +51,48 @@ async def register_builtin(app) -> None:
 
     async def memory_write(ctx, args):
         return await app.memory.add(ctx, args["content"], args.get("kind", "knowledge"))
+
+    async def history_query(ctx, args):
+        # Ignore context epochs/checkpoints: these are the original records.
+        # Session is derived from the caller, never supplied by the model.
+        if not ctx.owner or ctx.mode != "agent" or ctx.group:
+            raise PublicError("仅限主人 Agent 查询当前会话历史")
+        seq = args.get("message_seq")
+        before = args.get("before_seq", 0)
+        query = args.get("query", "")
+        limit = args.get("limit", 10)
+        offset = args.get("offset", 0)
+        rows = await app.store.query(
+            "SELECT seq,turn,data,created FROM messages WHERE session=? "
+            "AND (?=0 OR seq<?) AND (? IS NULL OR seq=?) "
+            "AND instr(lower(COALESCE(json_extract(data,'$._original_content'),json_extract(data,'$.content'),'')),lower(?))>0 "
+            "AND COALESCE(json_extract(data,'$._command'),0)=0 ORDER BY seq DESC LIMIT ?",
+            (ctx.session, before, before, seq, seq, query, limit + 1),
+        )
+        messages = []
+        for row in reversed(rows[:limit]):
+            message = json.loads(row["data"])
+            content = message.get("_original_content", message.get("content", ""))
+            end = offset + 4000
+            messages.append(
+                {
+                    "seq": row["seq"],
+                    "turn": row["turn"],
+                    "created": row["created"],
+                    "role": message["role"],
+                    "speaker": message.get("_speaker", message["role"]),
+                    "content": content[offset:end],
+                    "total_chars": len(content),
+                    "next_offset": end if len(content) > end else None,
+                    "tool_calls": message.get("tool_calls", []),
+                    "tool_call_id": message.get("tool_call_id"),
+                }
+            )
+        return {
+            "session": ctx.session,
+            "messages": messages,
+            "next_before_seq": rows[limit - 1]["seq"] if len(rows) > limit else None,
+        }
 
     async def proactive_recall(ctx, args):
         return await app.short_term.recent(args.get("query", ""), args.get("limit", 10))
@@ -144,6 +187,21 @@ async def register_builtin(app) -> None:
             await asyncio.to_thread(temp.unlink, missing_ok=True)
 
     entries = [
+        Tool(
+            "history_query",
+            "查询当前会话的原始历史（含已压缩、丢弃或 /new 前的记录）。可按关键词搜索，"
+            "用 next_before_seq 向前翻页；用 message_seq 和 offset 分段读取长消息。",
+            schema(
+                {
+                    "query": {"type": "string", "maxLength": 1000},
+                    "before_seq": {"type": "integer", "minimum": 0},
+                    "message_seq": {"type": "integer", "minimum": 1},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                }
+            ),
+            history_query,
+        ),
         Tool("current_time", "查询当前时间与时区", schema({}), current_time, chat=True),
         Tool(
             "shell",

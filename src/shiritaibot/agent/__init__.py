@@ -5,10 +5,11 @@ from collections import Counter, deque
 from dataclasses import replace
 
 from shiritaibot.agent.commands import command
+from shiritaibot.agent.context import ContextManager, context_chars
 from shiritaibot.core import Context, PublicError, canonical, fingerprint, now, uid
 
 
-def repair_history(messages: list[dict], max_chars: int) -> list[dict]:
+def repair_history(messages: list[dict], max_chars: int | None) -> list[dict]:
     """Keep complete request/result pairs, including after interrupted turns."""
     result, pending = [], {}
     for message in messages:
@@ -36,7 +37,7 @@ def repair_history(messages: list[dict], max_chars: int) -> list[dict]:
         for key in pending
     )
     # Trim at user boundaries; never send an orphan tool result to a provider.
-    while len(canonical(result)) > max_chars:
+    while max_chars is not None and len(canonical(result)) > max_chars:
         index = next((i for i, m in enumerate(result[1:], 1) if m["role"] == "user"), None)
         if index is None:
             break
@@ -169,6 +170,11 @@ class AgentRuntime:
     async def _turn(self, actor: SessionActor, ctx: Context, text: str) -> None:
         ctx = replace(ctx, turn=uid())
         cfg = self.config.value.model_copy(deep=True)
+        selected_persona = await self.store.get("session_persona", ctx.session)
+        system = cfg.system_prompt(
+            selected_persona.get("persona", "") if selected_persona else "",
+            owner=ctx.owner,
+        )
         selected = await self.store.get("session_model", ctx.session)
         if selected and selected.get("model"):
             cfg.routes["agent" if ctx.mode == "agent" else "chat"] = [selected["model"]]
@@ -181,14 +187,12 @@ class AgentRuntime:
             if ctx.owner and ctx.mode == "agent" and not ctx.group
             else ctx.session,
             "loop": "proactive" if ctx.background else "main",
+            "assistant_name": cfg.assistant_name,
+            "owner_name": cfg.owner_name,
         }
         await self.store.put("turn", ctx.turn, body, ctx.session)
         try:
             async with asyncio.timeout(cfg.policy.max_turn_seconds):
-                history = repair_history(
-                    await self.store.history(ctx.session, include_commands=False),
-                    cfg.policy.max_context_chars,
-                )
                 # Chat never calls the private memory interface, even for the owner in a group.
                 memory = (
                     await self.memory.search(ctx, text)
@@ -199,33 +203,54 @@ class AgentRuntime:
                     memory += await self.short_term.recent(limit=5)
                 user = {
                     "role": "user",
+                    "_speaker": cfg.owner_name if ctx.owner else ctx.actor,
+                    "_original_content": text,
                     "content": text
                     + f"\n<context time='{now().isoformat()}' timezone='{cfg.proactive.timezone}'>\n"
                     + canonical(memory)
                     + "\n</context>",
                 }
+                # Persist the original input even if context compression fails.
                 await self.store.append(ctx.session, ctx.turn, user)
+                history = repair_history(
+                    await ContextManager(self.store, self.llm).prepare(
+                        ctx.session,
+                        cfg,
+                        user,
+                        owner=ctx.owner,
+                        current_turn=ctx.turn,
+                    ),
+                    None,
+                )
                 history.append(user)
                 tools = self.registry.specs(ctx)
                 repetitions: Counter = Counter()
                 for step in range(cfg.policy.max_steps if ctx.mode == "agent" else 3):
                     while actor.steering:
+                        steering = actor.steering.popleft()
                         item = {
                             "role": "user",
-                            "content": "[用户在你工作时追加] " + actor.steering.popleft(),
+                            "content": "[用户在你工作时追加] " + steering,
+                            "_original_content": steering,
+                            "_speaker": cfg.owner_name if ctx.owner else ctx.actor,
                         }
                         await self.store.append(ctx.session, ctx.turn, item)
                         history.append(item)
-                    if len(canonical(history)) > cfg.policy.max_context_chars * 2:
+                    if context_chars(history) > cfg.policy.max_context_chars * 2:
                         raise PublicError("本轮上下文达到限制，请开启新会话或减少输入")
                     reply = await self.llm.complete(
                         "agent" if ctx.mode == "agent" else "chat",
-                        cfg.persona,
+                        system,
                         history,
                         tools,
                         settings=cfg,
                     )
-                    message = {"role": "assistant", "content": reply.text, "_opaque": reply.opaque}
+                    message = {
+                        "role": "assistant",
+                        "content": reply.text,
+                        "_opaque": reply.opaque,
+                        "_speaker": cfg.assistant_name,
+                    }
                     if reply.calls:
                         message["tool_calls"] = reply.calls
                     await self.store.append(ctx.session, ctx.turn, message)

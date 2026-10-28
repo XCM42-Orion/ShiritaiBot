@@ -16,6 +16,7 @@ import { Dashboard } from "../src/pages/Dashboard";
 import { ModelsPage } from "../src/pages/ModelsPage";
 import { ChatPage } from "../src/pages/ChatPage";
 import { PluginsPage } from "../src/pages/PluginsPage";
+import { SettingsPage } from "../src/pages/SettingsPage";
 import { SecretField } from "../src/components/SecretField";
 import { NoticeProvider, useNotice } from "../src/hooks/useNotice";
 import { FieldForm } from "../src/components/FieldForm";
@@ -61,6 +62,18 @@ function baseConfig(): Settings {
     tavily_key: "env:TAVILY_API_KEY",
     concurrency: 4,
     persona: "test",
+    personas: [],
+    default_persona: "",
+    assistant_name: "ShiritaiBot",
+    owner_name: "主人",
+    wake_keywords: [],
+    private_require_keyword: false,
+    context: {
+      strategy: "discard",
+      max_turns: 50,
+      compression_model: "",
+      keep_recent_turns: 10,
+    },
   };
 }
 
@@ -592,7 +605,7 @@ describe("app shell", () => {
     expect(location.hash).toBe("#/models");
 
     await user.click(screen.getByRole("button", { name: "设置" }));
-    expect(await screen.findByLabelText("助手人设")).toBeTruthy();
+    expect(await screen.findByLabelText("基础人设")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "退出" }));
     expect(await screen.findByLabelText("管理令牌")).toBeTruthy();
@@ -753,5 +766,94 @@ describe("configuration editing", () => {
       expect(screen.queryByText("配置有未保存的修改")).toBeNull(),
     );
     vi.unstubAllGlobals();
+  });
+});
+
+describe("identity, personas and context settings", () => {
+  it("edits settings and maintains the default persona through rename, disable and removal", async () => {
+    let latest = baseConfig();
+    latest.models = [
+      {
+        id: "summary",
+        provider: "main",
+        enabled: true,
+        model: "summarizer",
+        max_output: 4096,
+      },
+    ];
+    function Host() {
+      const [config, setConfig] = useState(latest);
+      return (
+        <SettingsPage
+          client={fakeClient()}
+          act={act}
+          config={config}
+          setConfig={(next) => {
+            latest = next;
+            setConfig(next);
+          }}
+        />
+      );
+    }
+    render(<Host />);
+    const user = userEvent.setup();
+    expect(
+      (screen.getByLabelText("主人私聊 Agent 需要关键词") as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    await user.clear(screen.getByLabelText("助手称呼"));
+    await user.type(screen.getByLabelText("助手称呼"), "小知");
+    await user.clear(screen.getByLabelText("对主人的称呼"));
+    await user.type(screen.getByLabelText("对主人的称呼"), "老师");
+    fireEvent.change(screen.getByLabelText("唤起关键词"), {
+      target: { value: "小知\n助手" },
+    });
+    await user.click(screen.getByLabelText("主人私聊 Agent 需要关键词"));
+    await user.click(screen.getByRole("button", { name: "添加" }));
+    await user.clear(screen.getByLabelText("人格标识"));
+    await user.type(screen.getByLabelText("人格标识"), "kind");
+    await user.clear(screen.getByLabelText("人格名称"));
+    await user.type(screen.getByLabelText("人格名称"), "温柔");
+    await user.clear(screen.getByLabelText("人格提示词"));
+    await user.type(screen.getByLabelText("人格提示词"), "秘密提示词");
+    await user.selectOptions(screen.getByLabelText("默认人格"), "kind");
+    await user.selectOptions(
+      screen.getByLabelText("上下文管理策略"),
+      "compress",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("上下文压缩模型"),
+      "summary",
+    );
+    fireEvent.change(screen.getByLabelText("最大保留上下文轮数"), {
+      target: { value: "8" },
+    });
+    fireEvent.change(screen.getByLabelText("压缩时保留最近轮数"), {
+      target: { value: "2" },
+    });
+    expect(latest).toMatchObject({
+      assistant_name: "小知",
+      owner_name: "老师",
+      wake_keywords: ["小知", "助手"],
+      private_require_keyword: true,
+      default_persona: "kind",
+      personas: [
+        { id: "kind", name: "温柔", prompt: "秘密提示词", enabled: true },
+      ],
+      context: {
+        strategy: "compress",
+        max_turns: 8,
+        keep_recent_turns: 2,
+        compression_model: "summary",
+      },
+    });
+    await user.clear(screen.getByLabelText("人格标识"));
+    await user.type(screen.getByLabelText("人格标识"), "gentle");
+    expect(latest.default_persona).toBe("gentle");
+    await user.click(screen.getByLabelText("启用人格"));
+    expect(latest.default_persona).toBe("");
+    await user.click(screen.getByRole("button", { name: "移除" }));
+    expect(latest.personas).toEqual([]);
+    expect(latest.assistant_name).toBe("小知");
   });
 });
