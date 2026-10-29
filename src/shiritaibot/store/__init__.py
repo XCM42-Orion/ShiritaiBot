@@ -9,6 +9,8 @@ import aiosqlite
 
 from shiritaibot.core import EventBus, canonical, now, uid
 
+GROUP_MESSAGES_KEPT = 2000
+
 
 class Store:
     def __init__(self, home: Path, bus: EventBus):
@@ -118,6 +120,38 @@ class Store:
         )
         await self.put("session_epoch", session, {"seq": rows[0]["seq"]})
         await self.delete("context_state", session)
+
+    async def record_group(
+        self, session: str, message_id: str, sender: str, name: str, text: str, triggered: bool
+    ) -> None:
+        await self.execute(
+            "INSERT OR IGNORE INTO group_messages"
+            "(session,message_id,sender,name,text,triggered,created) VALUES(?,?,?,?,?,?,?)",
+            (session, message_id, sender, name, text, int(triggered), now().timestamp()),
+        )
+        # Bounded per-group buffer; the full chat log is not an archive target.
+        await self.execute(
+            "DELETE FROM group_messages WHERE session=? AND seq<=(SELECT seq FROM group_messages "
+            "WHERE session=? ORDER BY seq DESC LIMIT 1 OFFSET ?)",
+            (session, session, GROUP_MESSAGES_KEPT),
+        )
+
+    async def group_messages(
+        self,
+        session: str,
+        limit: int,
+        *,
+        before_seq: int = 0,
+        query: str = "",
+        exclude: str = "",
+    ) -> list[dict]:
+        rows = await self.query(
+            "SELECT seq,sender,name,text,triggered,created FROM group_messages WHERE session=? "
+            "AND (?=0 OR seq<?) AND message_id!=? AND instr(lower(text),lower(?))>0 "
+            "ORDER BY seq DESC LIMIT ?",
+            (session, before_seq, before_seq, exclude, query, limit),
+        )
+        return rows[::-1]
 
     async def activity(self, kind: str, detail: str, scope: str = "") -> None:
         await self.put(

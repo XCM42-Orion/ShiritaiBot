@@ -183,7 +183,9 @@ async def test_session_mode_overrides_transport_and_controls_tool_exposure(app, 
     class LLM:
         async def complete(self, selected_route, system, messages, tools, settings):
             assert selected_route == route
-            assert bool(tools) is (mode == "agent")
+            names = {tool["function"]["name"] for tool in tools}
+            assert "current_time" in names
+            assert ("shell" in names) is (mode == "agent")
             done.set()
             return Reply(text="ok")
 

@@ -81,6 +81,12 @@ function baseConfig(): Settings {
       compression_model: "",
       keep_recent_turns: 10,
     },
+    group_context: {
+      enabled: false,
+      inject_messages: 20,
+      inject_chars: 4000,
+      query_tool: true,
+    },
   };
 }
 
@@ -1004,6 +1010,14 @@ describe("identity, personas and context settings", () => {
     fireEvent.change(screen.getByLabelText("压缩时保留最近轮数"), {
       target: { value: "2" },
     });
+    await user.click(screen.getByLabelText("启用群聊上下文感知"));
+    fireEvent.change(screen.getByLabelText("每轮注入消息条数"), {
+      target: { value: "30" },
+    });
+    fireEvent.change(screen.getByLabelText("注入字符预算"), {
+      target: { value: "6000" },
+    });
+    await user.click(screen.getByLabelText("提供 group_context_query 工具"));
     expect(latest).toMatchObject({
       assistant_name: "小知",
       owner_name: "老师",
@@ -1018,6 +1032,12 @@ describe("identity, personas and context settings", () => {
         max_turns: 8,
         keep_recent_turns: 2,
         compression_model: "summary",
+      },
+      group_context: {
+        enabled: true,
+        inject_messages: 30,
+        inject_chars: 6000,
+        query_tool: false,
       },
     });
     await user.clear(screen.getByLabelText("人格标识"));
@@ -1169,6 +1189,7 @@ describe("session tool permissions", () => {
             plugin: "builtin",
             risk: "dangerous",
             safe: false,
+            chat: false,
             permission: "manual",
             decision: "approve",
           },
@@ -1178,6 +1199,7 @@ describe("session tool permissions", () => {
             plugin: "builtin",
             risk: "safe",
             safe: true,
+            chat: true,
             permission: "allow",
             decision: "allow",
           },
@@ -1212,6 +1234,8 @@ describe("session tool permissions", () => {
     await user.selectOptions(screen.getByLabelText("会话模式"), "chat");
     expect(latest.policy.sessions["web:owner"].mode).toBe("chat");
     expect(screen.getByText(/当前为 Chat 模式/)).toBeTruthy();
+    expect(screen.getAllByText("当前不可用")).toHaveLength(1);
+    expect(screen.getByText("权限：无需审批")).toBeTruthy();
     await user.selectOptions(
       screen.getByLabelText("配置范围"),
       "proactive_default",

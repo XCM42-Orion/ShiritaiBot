@@ -68,9 +68,12 @@ class Tool:
     schema: dict[str, Any]
     handler: Callable[[Context, dict[str, Any]], Awaitable[Any]]
     risk: str
+    # Chat sessions only offer basic conversation tools; extensions stay Agent-only.
     chat: bool = False
     timeout: float = 60
     plugin: str = "builtin"
+    # Runtime availability (for example a disabled feature); None means always.
+    available: Callable[[Context], bool] | None = None
 
     @property
     def safe(self) -> bool:

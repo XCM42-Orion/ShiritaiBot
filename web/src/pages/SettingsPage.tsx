@@ -6,6 +6,7 @@ import {
   IDENTITY_FIELDS,
   PERSONA_FIELDS,
   CONTEXT_FIELDS,
+  GROUP_CONTEXT_FIELDS,
   createPersona,
 } from "../config/schema";
 import type { ConfigPageProps } from "./common";
@@ -165,6 +166,18 @@ export function SettingsPage({ config, setConfig }: ConfigPageProps) {
               policy: { ...config.policy, max_context_chars: Number(value) },
             })
           }
+        />
+      </section>
+      <section className="panel">
+        <h2>群聊上下文感知</h2>
+        <p className="muted">
+          让 Bot
+          在群里被唤起时了解之前的讨论。群成员发言作为资料提供给模型，不会被当作指令，也不写入会话历史。
+        </p>
+        <FieldForm
+          value={config.group_context}
+          fields={GROUP_CONTEXT_FIELDS}
+          onChange={(group_context) => setConfig({ ...config, group_context })}
         />
       </section>
       <section className="panel">

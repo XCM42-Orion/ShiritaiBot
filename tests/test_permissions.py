@@ -9,6 +9,13 @@ from shiritaibot.tools import schema
 
 OWNER = Context("web:owner", "owner", "agent", True)
 
+# Basic conversation tools remain available in Chat mode (web_search needs a Tavily key).
+CHAT_TOOLS = ["artifact_read", "current_time"]
+
+
+def tool_names(specs):
+    return [spec["function"]["name"] for spec in specs]
+
 
 async def eventually(check):
     async with asyncio.timeout(3):
@@ -35,7 +42,7 @@ async def test_private_capabilities_cannot_escape_into_chat(app, ctx):
         "qq_file_download",
     ]:
         assert app.permissions.decision(ctx, app.registry.tools[tool]) == "deny"
-    assert [x["function"]["name"] for x in app.registry.specs(ctx)] == []
+    assert tool_names(app.registry.specs(ctx)) == CHAT_TOOLS
     result = json.loads(
         await app.registry.execute(ctx, "memory_write", {"content": "must not be stored"})
     )
@@ -146,7 +153,7 @@ async def test_per_tool_override_and_chat_ceiling(app, permission, expected):
     app.config.value.policy.sessions[OWNER.session] = profile
     assert app.permissions.decision(OWNER, app.registry.tools["shell"]) == expected
     profile.mode = "chat"
-    assert app.registry.specs(OWNER) == []
+    assert tool_names(app.registry.specs(OWNER)) == CHAT_TOOLS
     assert "error" in await app.registry.execute(OWNER, "shell", {"command": "echo blocked"})
 
 
@@ -163,13 +170,15 @@ async def test_group_and_nonowner_can_use_explicitly_granted_agent_tools(app):
     group = Context("group:a:1", "member", group=True)
     private = Context("private:a:2", "friend")
     for ctx in (group, private):
-        assert app.registry.specs(ctx) == []
+        assert tool_names(app.registry.specs(ctx)) == CHAT_TOOLS
         app.config.value.policy.sessions[ctx.session] = SessionPolicy(
             tools={"group_action": "allow"}
         )
         assert json.loads(await app.registry.execute(ctx, "group_action", {})) == "ok"
     assert effects == [group.session, private.session]
-    assert app.registry.specs(Context("group:a:other", "member", group=True)) == []
+    assert (
+        tool_names(app.registry.specs(Context("group:a:other", "member", group=True))) == CHAT_TOOLS
+    )
 
 
 async def test_main_defaults_and_session_override_persist(app):
@@ -184,7 +193,7 @@ async def test_main_defaults_and_session_override_persist(app):
     await reloaded.load()
     assert reloaded.value.policy.sessions[group.session].mode == "chat"
     assert app.permissions.context(group).mode == "chat"
-    assert app.registry.specs(group) == []
+    assert tool_names(app.registry.specs(group)) == CHAT_TOOLS
 
 
 async def test_proactive_snapshot_is_independent_of_main_and_new_defaults(app):
@@ -198,7 +207,7 @@ async def test_proactive_snapshot_is_independent_of_main_and_new_defaults(app):
     new = app.permissions.context(Context("background:proactive:new", "owner", background=True))
     assert app.permissions.decision(old, app.registry.tools["shell"]) == "approve"
     assert app.permissions.decision(new, app.registry.tools["shell"]) == "allow"
-    assert app.registry.specs(OWNER) == []
+    assert tool_names(app.registry.specs(OWNER)) == CHAT_TOOLS
     with pytest.raises(PublicError):
         await app.permissions.set_session(old, SessionPolicy())
     with pytest.raises(ValueError):

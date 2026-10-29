@@ -34,11 +34,21 @@ class PluginContext:
         handler: Callable[[Context, dict], Awaitable[Any]],
         risk: str,
         timeout: int = 60,
+        chat: bool = False,
     ) -> None:
         if risk not in {"safe", "normal", "sensitive", "dangerous"}:
             raise ValueError("tool risk must be safe, normal, sensitive or dangerous")
         self.tools.append(
-            Tool(name, description, parameters, handler, risk=risk, timeout=timeout, plugin=self.id)
+            Tool(
+                name,
+                description,
+                parameters,
+                handler,
+                risk=risk,
+                chat=chat,
+                timeout=timeout,
+                plugin=self.id,
+            )
         )
 
     def register_notifier(self, handler: Callable[[str, str], Awaitable[None]]) -> None:

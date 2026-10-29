@@ -17,3 +17,10 @@ CREATE TABLE IF NOT EXISTS memory (
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, tokens);
 CREATE TABLE IF NOT EXISTS seen_messages (id TEXT PRIMARY KEY, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS group_messages (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE,
+  sender TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL, triggered INTEGER NOT NULL,
+  created REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS group_messages_session ON group_messages(session,seq);
+CREATE INDEX IF NOT EXISTS group_messages_created ON group_messages(created);

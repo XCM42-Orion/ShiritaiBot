@@ -198,7 +198,7 @@ export function ApprovalsPage({
                   })
                 }
               >
-                <option value="chat">Chat · 仅对话</option>
+                <option value="chat">Chat · 基础对话</option>
                 <option value="agent">Agent · 允许工具调用</option>
               </select>
             </label>
@@ -258,8 +258,9 @@ export function ApprovalsPage({
         )}
         {mode === "chat" && (
           <p className="muted">
-            当前为 Chat 模式，所有工具均不可用。下方配置将在切换为 Agent
-            后使用。
+            当前为 Chat
+            模式，仅基础对话工具（如时间、网页搜索、群聊上下文查询）按下方权限可用；其余扩展工具在切换为
+            Agent 后使用。
           </p>
         )}
         {catalog.error && (
@@ -310,9 +311,9 @@ export function ApprovalsPage({
                         "插件未加载，保留的权限配置将在工具重新注册后使用。"}
                     </p>
                     <small className="muted">
-                      {mode === "chat" || !tool
+                      {!tool || (mode === "chat" && !tool.chat)
                         ? "当前不可用"
-                        : `Agent 权限：${PERMISSIONS[permission]}`}
+                        : `权限：${PERMISSIONS[permission]}`}
                     </small>
                   </div>
                   <label className="field">

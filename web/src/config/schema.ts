@@ -317,6 +317,37 @@ export const CONTEXT_FIELDS: FieldSpec[] = [
   },
 ];
 
+export const GROUP_CONTEXT_FIELDS: FieldSpec[] = [
+  {
+    key: "enabled",
+    label: "启用群聊上下文感知",
+    kind: "boolean",
+    help: "记录白名单群内的全部发言（含未 @ Bot 的消息），每群保留最近 2000 条。",
+  },
+  {
+    key: "inject_messages",
+    label: "每轮注入消息条数",
+    kind: "number",
+    min: 0,
+    max: 200,
+    help: "被唤起时附带的最近群聊条数，不含触发消息本身；0 表示不直接注入。",
+  },
+  {
+    key: "inject_chars",
+    label: "注入字符预算",
+    kind: "number",
+    min: 200,
+    max: 100000,
+    help: "注入记录的总字符上限，超出时优先保留最新消息；计入上下文字符上限。",
+  },
+  {
+    key: "query_tool",
+    label: "提供 group_context_query 工具",
+    kind: "boolean",
+    help: "允许 Bot 按关键词查询或向前翻阅本群记录，并在提示词中提醒其按需查询。仍受工具权限控制。",
+  },
+];
+
 export function createPersona(rows: PersonaConfig[]): PersonaConfig {
   return {
     id: uniqueId("persona-new", rows),

@@ -441,7 +441,7 @@ Owner 在首次启动时通过 `config.toml` 的 `[owner]` 绑定。只有 Owner
 
 权限配置以 Main 会话为单位，不按消息发送者临时切换模式。每个 `web:<id>`、`private:<adapter>:<user>`、`group:<adapter>:<group>` 可以在 `policy.sessions` 中保存 `SessionPolicy = {mode, preset, tools}`，也作为该会话后续 Turn 和新上下文的默认策略。
 
-没有单独配置时依次选择对应的 `group_default`、`owner_default`（主人私聊 / WebUI）或 `private_default`。主人私聊默认 Agent，其余默认 Chat。Chat 仅对话：不提供任何工具，执行层也拒绝全部工具调用。Agent 按预设和逐工具覆盖授权，不再硬编码“群聊不能使用 Agent 工具”。原有身份白名单、数据归属和特定业务校验继续生效。
+没有单独配置时依次选择对应的 `group_default`、`owner_default`（主人私聊 / WebUI）或 `private_default`。主人私聊默认 Agent，其余默认 Chat。Chat 是基础对话模式：不开放 Proactive Loop、私人记忆、日程、子代理、Shell、文件下载等基本对话之外的扩展功能；只提供声明为基础对话工具（`Tool.chat`）的工具，例如 `current_time`、`web_search`、`artifact_read`、`group_context_query`，并照常受预设和逐工具权限控制。Agent 按预设和逐工具覆盖授权，不再硬编码“群聊不能使用 Agent 工具”。原有身份白名单、数据归属和特定业务校验继续生效。
 
 每个工具都必须声明 `risk`：`safe`（只读、无副作用）、`normal`（可逆副作用）、`sensitive`（对外操作、认证等）、`dangerous`（Shell、删除等）。仅 `safe` 被安全工具预设免审，缺少或无效声明的插件工具注册失败，重载失败保留旧实例。
 
@@ -475,8 +475,8 @@ Proactive Loop 不按其临时会话 ID 配置。`policy.proactive_default = {pr
 |---|---|---|
 | 定位 | 可调用工具的助手 | 仅对话助手 |
 | 默认用于 | 主人私聊 / WebUI；Proactive Loop 使用独立默认策略 | 群聊和其他私聊 |
-| 执行引擎 | Agent Loop，受步数和时间限制 | 单次模型回复 |
-| 工具 | 按当前预设和逐工具权限配置，可包含 Shell | 无工具 |
+| 执行引擎 | Agent Loop，受步数和时间限制 | 同一 Agent Loop 和限制，工具集更小 |
+| 工具 | 按当前预设和逐工具权限配置，可包含 Shell | 仅基础对话工具，同样按预设和逐工具权限配置 |
 | 上下文 | 持久化会话历史及可配置的压缩 / 丢弃策略 | 同样持久化，使用独立 Chat 路由 |
 | 记忆 | 私人记忆的自动召回仍只用于主人私聊；工具的数据归属校验独立生效 | 不自动召回私人记忆，不调用记忆工具 |
 | 模型路由 | `agent` | `chat` |
@@ -502,7 +502,7 @@ class ChatEngine:
 
 - 主人在群里说话也使用该群的会话配置。群聊默认 Chat；Owner 可明确改成 Agent，群内成员共享会话的工具授权。
 - 模式仅由 Owner 或 WebUI 修改。`/mode agent|chat` 从下一轮生效，不清除历史、记忆或工具配置；运行中每次工具调用重新检查权限。
-- Chat 的工具列表始终为空，`current_time`、`web_search` 也不例外。Agent 的 `web_search` 在配置 Tavily Key 后注册，受同样的权限规则控制。
+- Chat 不开放基本对话之外的扩展功能，工具列表只含基础对话工具；插件工具默认仅 Agent 可用，注册时显式传入 `chat=True` 才进入 Chat。`web_search` 在配置 Tavily Key 后注册，受同样的权限规则控制。
 
 ### 6.1 Session Actor 模型
 
@@ -549,7 +549,7 @@ type SessionState = Idle | Debouncing | Running | WaitingApproval
 | `follow_up` | Bot 刚回复过某人，N 秒内该用户的下一条消息视为追问（默认 60 秒） |
 | `ambient` | 旁听模式：小模型判断"是否值得插话"（默认关闭，成本高且容易打扰） |
 
-**不触发的群消息也不会丢**：它们进入会话的 `ambient_buffer`（环形，`collections.deque(maxlen=N)` 加字符数上限）。下次触发时，作为"期间群聊记录"一并提供给模型，让 Bot 能理解上下文（例如"大家刚才在讨论什么"）。
+**不触发的群消息也不会丢**：开启 `group_context.enabled` 后，白名单群内的全部发言（含 Bot 自己发出的回复）写入 `group_messages` 表，每群保留最近 2000 条。下次触发时，最近 `inject_messages` 条（不含触发消息本身，总长不超过 `inject_chars`）作为 `<group_context>` 块附在本轮输入前，让 Bot 能理解上下文（例如"大家刚才在讨论什么"）；该块每轮重新生成，不写入会话历史。`query_tool` 开启时提供 `group_context_query` 工具供 Bot 按关键词查询或向前翻页，提示词会提醒其按需查询。群成员发言明确标注为资料而非指令。
 
 ### 6.3 去抖（Debounce）
 

@@ -28,6 +28,24 @@ def segments(value) -> list[dict]:
     return result
 
 
+def describe(parts: list[dict]) -> str:
+    """Readable plain text for group context, keeping placeholders for non-text segments."""
+    labels = {"image": "[图片]", "face": "[表情]", "record": "[语音]", "video": "[视频]"}
+    out = []
+    for part in parts:
+        data = part.get("data", {})
+        kind = part.get("type")
+        if kind == "text":
+            out.append(str(data.get("text", "")))
+        elif kind == "at":
+            out.append(f"@{data.get('name') or data.get('qq', '')} ")
+        elif kind == "file":
+            out.append(f"[文件 {data.get('name', '')}]")
+        elif kind in labels:
+            out.append(labels[kind])
+    return "".join(out).strip()[:2000]
+
+
 class OneBot:
     def __init__(self, config, vault, store, sink):
         self.config, self.vault, self.store, self.sink = config, vault, store, sink
@@ -171,6 +189,17 @@ class AdapterHub:
         )
         settings = self.config.value
         keyword = any(word in text for word in settings.wake_keywords)
+        message_id = f"{cfg.id}:{event.get('message_id')}"
+        if group and settings.group_context.enabled:
+            sender = event.get("sender") or {}
+            await self.store.record_group(
+                session,
+                message_id,
+                user,
+                str(sender.get("card") or sender.get("nickname") or user),
+                describe(parts),
+                mentioned or keyword,
+            )
         if group and not (mentioned or keyword):
             return
         # Explicit controls and approvals must remain reachable while keyword gating is on.
@@ -191,7 +220,6 @@ class AdapterHub:
             if text.startswith(word):
                 text = text[len(word) :].lstrip(" ，,：:！!、")
                 break
-        message_id = f"{cfg.id}:{event.get('message_id')}"
         if not await self.store.execute(
             "INSERT OR IGNORE INTO seen_messages VALUES(?,?)", (message_id, now().timestamp())
         ):
@@ -273,6 +301,15 @@ class AdapterHub:
                             },
                         )
                         row.update(status="sent", receipt=receipt)
+                        if kind == "group" and self.config.value.group_context.enabled:
+                            await self.store.record_group(
+                                row["scope"],
+                                f"{adapter_id}:self:{row['id']}",
+                                bot.self_id,
+                                self.config.value.assistant_name,
+                                row["text"],
+                                False,
+                            )
                     except Exception:
                         # An unacknowledged send may have succeeded. Do not automatically duplicate it.
                         row["status"] = "uncertain"

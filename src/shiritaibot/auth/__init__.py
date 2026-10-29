@@ -164,7 +164,9 @@ class Permissions:
 
     def decision(self, ctx: Context, tool: Tool) -> str:
         policy = self.config.value.policy
-        if not ctx.background and self.session_policy(ctx).mode != "agent":
+        if not ctx.background and self.session_policy(ctx).mode != "agent" and not tool.chat:
+            return "deny"
+        if tool.available and not tool.available(ctx):
             return "deny"
         if ctx.allowed_tools is not None and tool.name not in ctx.allowed_tools:
             return "deny"

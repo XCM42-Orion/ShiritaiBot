@@ -36,7 +36,10 @@
 
 ## 验证方式
 
-会话权限更新：203 项 pytest、26 项 Vitest、Ruff、核心 Pyright、TypeScript / Vite 构建及 Prettier 检查通过。覆盖预设矩阵、逐工具覆盖、严格 Chat 无工具、群聊 Agent 授权、权限持久化、Proactive 默认快照、模型审批严格格式/失败拒绝/取消、等待审批时撤权、斜杠修改命令、API 校验及 WebUI 配置交互。
+群聊上下文感知：214 项 pytest、26 项 Vitest、Ruff、核心 Pyright、TypeScript / Vite 构建及 Prettier 检查通过。覆盖开关控制的群消息记录、触发消息去重、条数/字符预算、注入不入档、查询工具的群隔离与分页、Chat 模式多步调用基础工具及 WebUI 配置。
+
+
+会话权限更新：203 项 pytest、26 项 Vitest、Ruff、核心 Pyright、TypeScript / Vite 构建及 Prettier 检查通过。覆盖预设矩阵、逐工具覆盖、Chat 仅基础对话工具、群聊 Agent 授权、权限持久化、Proactive 默认快照、模型审批严格格式/失败拒绝/取消、等待审批时撤权、斜杠修改命令、API 校验及 WebUI 配置交互。
 
 本次 WebUI 合并验证：12 项 Vitest 前端交互测试、TypeScript / Vite 构建和 Prettier 格式检查通过；后端 pytest 为 77 项通过、2 项跳过。保留邮件插件的配置模板，补齐类型化表单，并验证已有凭据保留、模板填入和多个通知收件人的逐行输入。
 

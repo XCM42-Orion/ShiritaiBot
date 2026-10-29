@@ -245,7 +245,10 @@ def test_tool_catalog_and_session_policy_api(tmp_path):
         cfg["policy"]["sessions"]["group:qq:123"]["mode"] = "chat"
         assert client.put("/api/config", json=cfg).status_code == 200
         selected = client.get("/api/tools", params={"session": "group:qq:123"}).json()
-        assert all(tool["decision"] == "deny" for tool in selected["tools"])
+        assert {t["name"] for t in selected["tools"] if t["decision"] != "deny"} == {
+            "artifact_read",
+            "current_time",
+        }
         cfg["policy"]["sessions"]["group:qq:123"]["tools"]["shell"] = "unknown"
         assert client.put("/api/config", json=cfg).status_code == 422
         cfg["policy"]["sessions"] = {"background:x": {"mode": "agent"}}

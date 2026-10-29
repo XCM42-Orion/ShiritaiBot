@@ -181,6 +181,7 @@ def create_app(
                     "plugin": tool.plugin,
                     "risk": tool.risk,
                     "safe": tool.safe,
+                    "chat": tool.chat,
                     "permission": runtime.permissions.configured(ctx, tool),
                     "decision": runtime.permissions.decision(ctx, tool),
                 }

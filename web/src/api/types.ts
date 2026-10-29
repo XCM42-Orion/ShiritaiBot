@@ -89,6 +89,13 @@ export interface ContextConfig {
   keep_recent_turns: number;
 }
 
+export interface GroupContextConfig {
+  enabled: boolean;
+  inject_messages: number;
+  inject_chars: number;
+  query_tool: boolean;
+}
+
 export type ToolPermission = "deny" | "manual" | "auto" | "allow";
 export type PermissionPreset =
   "all_manual" | "safe_manual" | "safe_auto" | "full_access";
@@ -108,6 +115,8 @@ export interface ToolInfo {
   plugin: string;
   risk: string;
   safe: boolean;
+  /** Basic conversation tool, also offered in Chat mode. */
+  chat: boolean;
   permission: ToolPermission;
   decision: string;
 }
@@ -162,6 +171,7 @@ export interface Settings {
   wake_keywords: string[];
   private_require_keyword: boolean;
   context: ContextConfig;
+  group_context: GroupContextConfig;
 }
 
 export interface Health {

@@ -180,7 +180,7 @@ async def command(runtime, ctx, text):
                     for tool in sorted(runtime.registry.tools.values(), key=lambda tool: tool.name)
                 )
             if profile.mode == "chat":
-                answer += "\nChat 模式仅对话，不调用工具。"
+                answer += "\nChat 模式仅开放基础对话工具，扩展功能需切换为 Agent。"
             if argument:
                 answer += "\n已保存。模式从下一轮生效，工具权限立即应用。"
         elif name == "tasks":

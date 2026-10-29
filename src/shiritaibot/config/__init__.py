@@ -143,6 +143,14 @@ class ContextConfig(Model):
         return self
 
 
+class GroupContextConfig(Model):
+    enabled: bool = False
+    # 0 disables injection; the Bot can still query when the tool is enabled.
+    inject_messages: int = Field(default=20, ge=0, le=200)
+    inject_chars: int = Field(default=4000, ge=200, le=100000)
+    query_tool: bool = True
+
+
 ToolPermission = Literal["deny", "manual", "auto", "allow"]
 PermissionPreset = Literal["all_manual", "safe_manual", "safe_auto", "full_access"]
 
@@ -226,6 +234,7 @@ class Settings(Model):
     wake_keywords: list[str] = Field(default_factory=list)
     private_require_keyword: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
+    group_context: GroupContextConfig = Field(default_factory=GroupContextConfig)
 
     @field_validator("wake_keywords")
     @classmethod

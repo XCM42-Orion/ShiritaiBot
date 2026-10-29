@@ -13,6 +13,13 @@ from shiritaibot.store.statistics import statistics, tokens
 from shiritaibot.tools import schema
 from shiritaibot.web import create_app
 
+# Basic conversation tools remain available in Chat mode (web_search needs a Tavily key).
+CHAT_TOOLS = ["artifact_read", "current_time"]
+
+
+def tool_names(specs):
+    return [spec["function"]["name"] for spec in specs]
+
 
 def test_inline_credentials_roundtrip_and_dashboard_api(tmp_path):
     with TestClient(create_app(tmp_path, token="admin")) as client:
@@ -270,10 +277,10 @@ async def test_tools_command_edits_permissions_modes_and_presets(app):
     await app.runtime.submit(ctx, "/tools preset full_access")
     assert app.permissions.decision(ctx, app.registry.tools["shell"]) == "allow"
     await app.runtime.submit(ctx, "/mode chat")
-    assert app.registry.specs(ctx) == []
+    assert tool_names(app.registry.specs(ctx)) == CHAT_TOOLS
     await app.runtime.submit(ctx, "/tools")
     answer = (await app.store.list("reply"))[0]["text"]
-    assert "shell" in answer and "Chat 模式仅对话" in answer
+    assert "shell" in answer and "Chat 模式仅开放基础对话工具" in answer
     await app.runtime.submit(ctx, "/tools mode agent")
     assert app.permissions.decision(ctx, app.registry.tools["shell"]) == "allow"
     await app.runtime.submit(ctx, "/tools shell invalid")

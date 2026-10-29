@@ -25,7 +25,7 @@ self.context.register_tool("read_status", "读取状态", schema({}), self.read_
 self.context.register_tool("send_notice", "对外发送", parameters, self.send_notice, risk="sensitive")
 ```
 
-Plugin Manager 在替换旧实例前验证所有工具的安全等级和 Schema，插件列表 API 暴露每个已注册工具的 `name/risk/safe`；WebUI 的工具目录展示来源和安全性。每个 Agent 会话可将单个工具设为禁止、人工审批、模型自动审批或无需审批。工具安全等级仅决定预设的默认权限，不能替代执行层授权。
+Plugin Manager 在替换旧实例前验证所有工具的安全等级和 Schema，插件列表 API 暴露每个已注册工具的 `name/risk/safe`；WebUI 的工具目录展示来源和安全性。每个 Agent 会话可将单个工具设为禁止、人工审批、模型自动审批或无需审批。工具安全等级仅决定预设的默认权限，不能替代执行层授权。插件工具默认仅在 Agent 模式可用；只读、属于基本对话能力的工具可在 `register_tool(..., chat=True)` 中声明，使其也出现在 Chat 会话中，仍受同样的权限控制。
 
 OneLearn 的 `learn_query` 声明 safe，`learn_download` 声明 normal。部署环境的飞书只读查询工具声明 safe；清华登录 / 短信验证工具声明 sensitive，并保留主人私聊的业务校验。邮件插件目前只注册事件轮询和通知通道，没有模型可调用工具，不需要虚构工具声明；这些生命周期任务不受模型工具审批控制。
 
