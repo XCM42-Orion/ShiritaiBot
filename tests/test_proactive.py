@@ -8,7 +8,7 @@ from test_permissions import OWNER, eventually
 from shiritaibot.agent import repair_history
 from shiritaibot.config import PersonaConfig
 from shiritaibot.core import Context, ExternalEvent, Reply, now
-from shiritaibot.proactive import PREPARE_SESSION, Decision, grade
+from shiritaibot.proactive import PREPARE_SESSION, Decision, grade, parse_loop_result
 from shiritaibot.web import create_app
 
 MAIL = ExternalEvent(
@@ -273,3 +273,25 @@ def test_http_ingress_batch_dedup_status_and_validation(tmp_path):
             ).status_code
             == 422
         )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"notify":true,"message":"第一行\n第二行","reason":"r"}',
+        '核查完成。\n\n{"notify": true, "message": "第一行\\n第二行", "reason": "r"}',
+        '{"additionalProperties":false,"message":"第一行\n第二行","notify":true,"reason":"r"}',
+        '{"notify":true,"message":"存进你"户口"了\n第二行","reason":"r"}',
+    ],
+)
+def test_parse_loop_result_tolerates_near_json(text):
+    result = parse_loop_result(text)
+    assert (
+        result.notify and result.message.startswith(("第一行", "存进你")) and "\n" in result.message
+    )
+
+
+def test_parse_loop_result_defaults_reason_and_rejects_prose():
+    assert parse_loop_result('{"notify":false,"message":"m"}').reason
+    with pytest.raises(ValueError):
+        parse_loop_result("只有分析文字")
