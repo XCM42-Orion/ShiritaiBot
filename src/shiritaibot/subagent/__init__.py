@@ -44,6 +44,19 @@ class SubagentManager:
         self.tasks: dict[str, asyncio.Task] = {}
         self.semaphore = asyncio.Semaphore(3)
 
+    def instances(self) -> list[dict]:
+        """Describe enabled instances from live config without exposing CLI arguments."""
+        return [
+            {
+                "id": instance.id,
+                "kind": instance.kind,
+                "model": instance.model,
+                "permission": instance.permission,
+            }
+            for instance in self.config.value.subagents
+            if instance.enabled
+        ]
+
     async def start(self, ctx: Context, instance: str, prompt: str) -> dict:
         config = next(
             (x for x in self.config.value.subagents if x.id == instance and x.enabled), None

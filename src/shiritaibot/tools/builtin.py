@@ -103,6 +103,9 @@ async def register_builtin(app) -> None:
     async def routine_create(ctx, args):
         return await app.routine.create(RoutineItem.model_validate(args))
 
+    async def subagent_instances(ctx, args):
+        return app.subagents.instances()
+
     async def subagent_start(ctx, args):
         return await app.subagents.start(ctx, args["instance"], args["prompt"])
 
@@ -253,8 +256,18 @@ async def register_builtin(app) -> None:
             risk="normal",
         ),
         Tool(
+            "subagent_instances",
+            "查询当前已启用、可供 subagent_start 委派的子代理实例，返回 id、kind、model、permission。"
+            "model 为空表示使用 CLI 默认模型；permission 为 read_only（只读）或 edit（可编辑）。"
+            "空列表表示没有已启用实例；此查询不会启动子代理或探测 CLI 是否安装。",
+            schema({}),
+            subagent_instances,
+            risk="safe",
+        ),
+        Tool(
             "subagent_start",
-            "启动已配置的外部 Agent 实例，返回任务 ID",
+            "启动已配置的外部 Agent 实例，返回任务 ID；先用 subagent_instances 查询可用实例，"
+            "将返回的 id 作为 instance 参数。",
             schema({"instance": TEXT, "prompt": TEXT}, ["instance", "prompt"]),
             subagent_start,
             risk="dangerous",
