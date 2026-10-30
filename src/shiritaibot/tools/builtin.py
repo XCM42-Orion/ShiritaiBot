@@ -20,7 +20,13 @@ async def register_builtin(app) -> None:
     registry.remove_plugin("builtin")
 
     async def current_time(ctx, args):
-        return {"utc": now().isoformat(), "timezone": app.config.value.proactive.timezone}
+        zone = app.config.value.proactive.timezone
+        local = now().astimezone(ZoneInfo(zone))
+        return {
+            "local_time": local.isoformat(timespec="seconds"),
+            "weekday": "周" + "一二三四五六日"[local.weekday()],
+            "timezone": zone,
+        }
 
     async def search(ctx, args):
         token = await app.vault.resolve(app.config.value.tavily_key)

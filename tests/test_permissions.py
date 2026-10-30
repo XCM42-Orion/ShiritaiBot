@@ -351,4 +351,4 @@ async def test_all_manual_requires_approval_even_for_safe_tools(app):
     rows = await eventually(lambda: app.store.list("approval"))
     assert not task.done()
     await app.permissions.resolve(rows[0]["id"], True)
-    assert "utc" in json.loads(await task)
+    assert "local_time" in json.loads(await task)
