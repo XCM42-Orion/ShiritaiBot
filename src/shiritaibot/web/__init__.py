@@ -29,6 +29,10 @@ class SecretInput(Model):
     value: str = Field(min_length=1, max_length=10000)
 
 
+class LogLevelInput(Model):
+    level: str = Field(pattern=r"^(debug|info|warning|error)$")
+
+
 class MessageInput(Model):
     text: str = Field(min_length=1, max_length=32000)
     session: str = Field(default="web:owner", pattern=r"^web:[a-zA-Z0-9_-]{1,80}$")
@@ -68,7 +72,7 @@ def create_app(
     home: Path,
     token: str | None = None,
     allowed_hosts: list[str] | None = None,
-    log_level: str = "INFO",
+    log_level: str | None = None,
 ) -> FastAPI:
     runtime = Application(home)
     manager = logs.LogManager(home, log_level)
@@ -238,6 +242,21 @@ def create_app(
     async def structured_logs(limit: int = 500, level: str = "", source: str = "", q: str = ""):
         limit = max(1, min(limit, 5000))
         return await asyncio.to_thread(manager.entries, limit, level[:10], source[:200], q[:200])
+
+    @api.get("/api/logs/level", dependencies=protected)
+    async def log_level_get():
+        return {"level": manager.level_name}
+
+    @api.put("/api/logs/level", dependencies=protected)
+    async def log_level_set(body: LogLevelInput):
+        before = manager.level_name
+        # Announce at whichever of the two levels still lets a LOG line through.
+        if body.level in {"warning", "error"}:
+            web_log.log(f"日志级别 {before.upper()} → {body.level.upper()}")
+        level = await asyncio.to_thread(manager.set_level, body.level)
+        if body.level not in {"warning", "error"}:
+            web_log.log(f"日志级别 {before.upper()} → {level.upper()}")
+        return {"level": level}
 
     @api.get("/api/history", dependencies=protected)
     async def history(session: str = "web:owner"):

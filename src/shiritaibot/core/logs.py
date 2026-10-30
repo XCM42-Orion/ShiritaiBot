@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any
 
 LOG_NAME = "shiritaibot.log"
+# The level chosen in the WebUI, kept across restarts.
+LEVEL_NAME = "level"
+CHOICES = ("debug", "info", "warning", "error")
 FEED_NAME = "shiritaibot.jsonl"
 ROOT = "shiritaibot"
 # uvicorn's own logger does not propagate to root, so it is attached separately.
@@ -194,8 +197,14 @@ def get_logger(source: str, *tags: Any) -> Logger:
 class LogManager:
     """Owns the handlers: colored terminal, rolling text file and rolling JSON feed."""
 
-    def __init__(self, home: Path, level: str | int = "INFO", console: bool = True):
+    def __init__(self, home: Path, level: str | int | None = None, console: bool = True):
+        """An explicit level (the CLI flag) wins for this run; otherwise the saved one."""
         self.directory = home / "logs"
+        if level is None:
+            try:
+                level = (self.directory / LEVEL_NAME).read_text(encoding="utf-8").strip()
+            except OSError:
+                level = "INFO"
         self.level = level_number(level)
         self.console = console
         self.handlers: list[tuple[str, logging.Handler]] = []
@@ -227,6 +236,21 @@ class LogManager:
         for name, handler in self.handlers:
             logging.getLogger(name).addHandler(handler)
         return self
+
+    @property
+    def level_name(self) -> str:
+        return logging.getLevelName(self.level).lower()
+
+    def set_level(self, level: str) -> str:
+        """Switch the bot's level live for terminal, file and WebUI feed, and save it."""
+        name = level.strip().lower()
+        if name not in CHOICES:
+            raise ValueError("日志级别只能是 debug、info、warning 或 error")
+        self.level = level_number(name)
+        logging.getLogger(ROOT).setLevel(self.level)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        (self.directory / LEVEL_NAME).write_text(name, encoding="utf-8")
+        return name
 
     @staticmethod
     def _colorful(stream) -> bool:

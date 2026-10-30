@@ -49,6 +49,8 @@ export interface ApiClient {
   history(session: string): Promise<HistoryMessage[]>;
   rawLogs(lines: number, query: string): Promise<{ lines: string[] }>;
   logs(filter: LogFilter): Promise<LogFeed>;
+  logLevel(): Promise<{ level: string }>;
+  setLogLevel(level: string): Promise<{ level: string }>;
   sendMessage(text: string, session: string): Promise<unknown>;
   resolveApproval(id: string, allow: boolean): Promise<unknown>;
   memories(): Promise<MemoryRecord[]>;
@@ -142,6 +144,9 @@ export function createClient(getToken: () => string): ApiClient {
             q: query,
           }).toString(),
       ),
+    logLevel: () => request<{ level: string }>("/logs/level"),
+    setLogLevel: (level) =>
+      request<{ level: string }>("/logs/level", "PUT", { level }),
     sendMessage: (text, session) =>
       request("/messages", "POST", { text, session }),
     resolveApproval: (id, allow) =>

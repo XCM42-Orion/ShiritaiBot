@@ -1,21 +1,63 @@
 import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "../components/EmptyState";
 import { formatTime } from "../lib/utils";
 import type { PageProps } from "./common";
 
 const LINE_OPTIONS = [200, 500, 1000, 2000];
 const LEVEL_OPTIONS = [
-  ["", "全部级别"],
-  ["log", "LOG 及以上"],
-  ["warning", "WARNING 及以上"],
-  ["error", "仅 ERROR"],
+  ["", "显示全部"],
+  ["log", "只看 LOG 及以上"],
+  ["warning", "只看 WARNING 及以上"],
+  ["error", "只看 ERROR"],
 ] as const;
+const RECORD_LEVELS = [
+  ["debug", "DEBUG（全部细节）"],
+  ["info", "LOG（默认）"],
+  ["warning", "WARNING"],
+  ["error", "ERROR"],
+] as const;
+
+function RecordLevel({ client, act }: PageProps) {
+  const queryClient = useQueryClient();
+  const current = useQuery({
+    queryKey: ["log-level"],
+    queryFn: () => client.logLevel(),
+  });
+  return (
+    <label
+      className="raw-log-follow"
+      title="立即生效：终端、日志文件和本页同时按此级别记录"
+    >
+      记录级别
+      <select
+        aria-label="记录级别"
+        value={current.data?.level ?? "info"}
+        disabled={!current.data}
+        onChange={(event) => {
+          const level = event.target.value;
+          void act(async () => {
+            queryClient.setQueryData(
+              ["log-level"],
+              await client.setLogLevel(level),
+            );
+          }, "日志级别已更新，立即生效");
+        }}
+      >
+        {RECORD_LEVELS.map(([value, label]) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 type Tab = "runtime" | "activity" | "raw";
 
-function RunLog({ client }: Pick<PageProps, "client">) {
+function RunLog({ client, act }: PageProps) {
   const [limit, setLimit] = useState(500);
   const [level, setLevel] = useState("");
   const [source, setSource] = useState("");
@@ -38,6 +80,7 @@ function RunLog({ client }: Pick<PageProps, "client">) {
   return (
     <>
       <div className="inline raw-log-toolbar">
+        <RecordLevel client={client} act={act} />
         <input
           aria-label="过滤运行日志"
           placeholder="过滤关键词…"
@@ -45,7 +88,7 @@ function RunLog({ client }: Pick<PageProps, "client">) {
           onChange={(event) => setQuery(event.target.value)}
         />
         <select
-          aria-label="日志级别"
+          aria-label="筛选级别"
           value={level}
           onChange={(event) => setLevel(event.target.value)}
         >
@@ -115,8 +158,8 @@ function RunLog({ client }: Pick<PageProps, "client">) {
         !feed.error && <EmptyState text="暂无运行日志。" />
       )}
       <p className="muted raw-log-hint">
-        终端同步彩色输出；文件：data/logs/shiritaibot.log。启动时加 --log-level
-        debug 可查看更详细的调试信息。
+        「记录级别」决定终端、日志文件和本页记录哪些日志，修改后立即生效并在重启后保留；
+        「筛选级别」只影响本页显示。文件：data/logs/shiritaibot.log。
       </p>
     </>
   );
@@ -210,7 +253,7 @@ function RawLog({ client }: Pick<PageProps, "client">) {
   );
 }
 
-export function LogsPage({ client }: PageProps) {
+export function LogsPage({ client, act }: PageProps) {
   const [tab, setTab] = useState<Tab>("runtime");
   return (
     <section className="panel">
@@ -242,7 +285,7 @@ export function LogsPage({ client }: PageProps) {
           ))}
         </div>
       </div>
-      {tab === "runtime" && <RunLog client={client} />}
+      {tab === "runtime" && <RunLog client={client} act={act} />}
       {tab === "activity" && <ActivityLog client={client} />}
       {tab === "raw" && <RawLog client={client} />}
     </section>

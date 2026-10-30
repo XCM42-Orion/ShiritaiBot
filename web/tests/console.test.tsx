@@ -116,6 +116,8 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     records: vi.fn().mockResolvedValue([]),
     rawLogs: vi.fn().mockResolvedValue({ lines: [] }),
     logs: vi.fn().mockResolvedValue({ entries: [], sources: [] }),
+    logLevel: vi.fn().mockResolvedValue({ level: "info" }),
+    setLogLevel: vi.fn().mockResolvedValue({ level: "debug" }),
     stats: vi.fn().mockResolvedValue({
       hours: 24,
       timezone: "Asia/Shanghai",
@@ -655,7 +657,7 @@ it("shows the runtime log by default with level and source filters", async () =>
     screen.getByText("分诊模型输出无效").closest(".level-warning"),
   ).toBeTruthy();
   const user = userEvent.setup();
-  await user.selectOptions(screen.getByLabelText("日志级别"), "warning");
+  await user.selectOptions(screen.getByLabelText("筛选级别"), "warning");
   await user.selectOptions(screen.getByLabelText("日志来源"), "qq");
   await waitFor(() =>
     expect(client.logs).toHaveBeenLastCalledWith({
@@ -665,6 +667,19 @@ it("shows the runtime log by default with level and source filters", async () =>
       query: "",
     }),
   );
+});
+
+it("switches the record level from the runtime log tab", async () => {
+  const client = fakeClient();
+  render(withQuery(<LogsPage client={client} act={act} />));
+  const select = (await screen.findByLabelText(
+    "记录级别",
+  )) as HTMLSelectElement;
+  await waitFor(() => expect(select.disabled).toBe(false));
+  expect(select.value).toBe("info");
+  await userEvent.setup().selectOptions(select, "debug");
+  expect(client.setLogLevel).toHaveBeenCalledWith("debug");
+  await waitFor(() => expect(select.value).toBe("debug"));
 });
 
 it("shows the raw rolling log with a keyword filter", async () => {

@@ -82,6 +82,30 @@ def test_plugin_context_exposes_logger(tmp_path):
     assert context.logger.source == "插件:demo"
 
 
+def test_level_switches_live_and_persists(tmp_path):
+    with TestClient(create_app(tmp_path, token="admin")) as client:
+        client.headers["Authorization"] = "Bearer admin"
+        assert client.get("/api/logs/level").json() == {"level": "info"}
+        get_logger("live").debug("before switch")
+        assert client.put("/api/logs/level", json={"level": "verbose"}).status_code == 422
+        assert client.put("/api/logs/level", json={"level": "debug"}).json() == {"level": "debug"}
+        get_logger("live").debug("after switch")
+        messages = [e["message"] for e in client.get("/api/logs").json()["entries"]]
+        assert "after switch" in messages and "before switch" not in messages
+        assert "日志级别 INFO → DEBUG" in messages
+    # A restart without the CLI flag keeps the WebUI choice; the flag overrides it.
+    assert LogManager(tmp_path).level_name == "debug"
+    assert LogManager(tmp_path, "warning").level_name == "warning"
+    with TestClient(create_app(tmp_path, token="admin")) as client:
+        client.headers["Authorization"] = "Bearer admin"
+        assert client.get("/api/logs/level").json() == {"level": "debug"}
+        client.put("/api/logs/level", json={"level": "warning"})
+        get_logger("live").log("quiet now")
+        messages = [e["message"] for e in client.get("/api/logs").json()["entries"]]
+        assert "quiet now" not in messages
+        assert "日志级别 DEBUG → WARNING" in messages
+
+
 def test_structured_log_endpoint(tmp_path):
     with TestClient(create_app(tmp_path, token="admin")) as client:
         assert client.get("/api/logs").status_code == 401
