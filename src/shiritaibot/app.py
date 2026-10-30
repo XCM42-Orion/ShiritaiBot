@@ -13,6 +13,7 @@ from shiritaibot.core.logs import get_logger
 from shiritaibot.llm import ProviderManager
 from shiritaibot.memory import MemoryManager, ShortTermMemory
 from shiritaibot.memory.extract import MemoryExtractor
+from shiritaibot.memory.maintenance import MemoryMaintenance
 from shiritaibot.plugin.core import PluginManager
 from shiritaibot.proactive import PREPARE_SESSION, ProactiveEngine
 from shiritaibot.routine import RoutineManager
@@ -58,6 +59,7 @@ class Application:
         self.extractor = MemoryExtractor(self.memory, self.store, self.config, self.llm)
         await self.extractor.open()
         self.proactive.memory_sink = self.extractor.enqueue_event
+        self.maintenance = MemoryMaintenance(self.memory, self.store, self.proactive.emit)
         self.routine = RoutineManager(self.store, self.proactive.emit)
         self.subagents = SubagentManager(self.config, self.store, self.home, self.proactive.emit)
         self.plugins = PluginManager(
@@ -86,6 +88,7 @@ class Application:
             asyncio.create_task(self.short_term.run()),
             asyncio.create_task(self.memory.run()),
             asyncio.create_task(self.extractor.run()),
+            asyncio.create_task(self.maintenance.run()),
         ]
         cfg = self.config.value
         log.log(

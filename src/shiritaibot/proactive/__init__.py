@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 
 from shiritaibot.core import Context, ExternalEvent, Model, RuntimePort, canonical, fingerprint, now
 from shiritaibot.core.logs import brief, get_logger
+from shiritaibot.memory.judge import remember_question
 
 PREPARE_SESSION = "background:proactive:"
 log = get_logger("Proactive")
@@ -29,6 +30,8 @@ class Decision(Model):
     reason: str = Field(min_length=1, max_length=2000)
     urgency: Literal["low", "normal", "high", "critical"] = "normal"
     prepare: str = Field(default="", max_length=2000)
+    # Decision model's P(worth remembering), asked alongside triage for memory extraction.
+    remember: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -333,6 +336,8 @@ class ProactiveEngine:
                         "ignore": "忽略",
                     },
                 },
+                # Same state, one more question: whether memory should read this event.
+                "remember": remember_question("the event in the state"),
             },
         )
         if answers is None:
@@ -343,7 +348,10 @@ class ProactiveEngine:
             levels = answers["importance"]["probabilities"]
             importance = int(max(levels, key=lambda level: levels[level]))
             choice = answers["decision"]
+            # Optional: a bad memory answer must not cost the triage itself.
+            remember = (answers.get("remember") or {}).get("noul")
             return Decision(
+                remember=float(remember) if isinstance(remember, (int, float)) else None,
                 importance=importance,
                 decision="notify" if importance == 4 else choice["choice"],
                 message=event.title,
@@ -361,6 +369,8 @@ class ProactiveEngine:
             key, "received", event.title, source=event.source, kind=event.kind, title=event.title
         )
         scheduled = event.source == "routine" and event.kind in {"routine.reminder", "routine.job"}
+        # Memory's own questions for the owner are never discarded, but never urgent either.
+        internal = event.source == "memory"
         if not self.config.value.proactive.enabled and not scheduled:
             event_log(key).log("主动性引擎未启用，事件仅记录")
             row.update(status="processed", action="record", reason="主动性引擎未启用")
@@ -376,6 +386,10 @@ class ProactiveEngine:
                     "decision": "notify",
                     "message": decision.message or event.title,
                 }
+            )
+        if internal:
+            decision = decision.model_copy(
+                update={"importance": max(1, min(2, decision.importance)), "decision": "digest"}
             )
         decision = decision.model_copy(
             update={"urgency": ("low", "low", "normal", "high", "critical")[decision.importance]}

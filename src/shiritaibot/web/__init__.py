@@ -219,6 +219,8 @@ def create_app(
             "short_term",
             "proactive_trace",
             "memory_summary",
+            "memory_judgment",
+            "memory_extract",
             "subagent_run",
             "outbox",
             "reply",
