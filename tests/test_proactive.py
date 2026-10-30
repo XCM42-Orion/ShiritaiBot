@@ -315,3 +315,39 @@ def test_judge_reply_tolerates_code_fence():
     from shiritaibot.proactive import first_object
 
     assert first_object('```json\n{"importance": 3, "reason": "r"}\n```')["importance"] == 3
+
+
+class Reporter(Agent):
+    async def complete(self, route, system, messages, tools, **kwargs):
+        self.inputs.append((list(messages), tools))
+        self.systems.append(system)
+        return Reply(
+            text="",
+            calls=[
+                {
+                    "id": "done",
+                    "type": "function",
+                    "function": {
+                        "name": "proactive_report",
+                        "arguments": json.dumps(
+                            {"notify": True, "message": "作业周五截止哦", "reason": "有截止"},
+                            ensure_ascii=False,
+                        ),
+                    },
+                }
+            ],
+        )
+
+
+async def test_proactive_prompt_is_prose_and_result_comes_from_report_tool(loop):
+    loop.runtime.llm = Reporter()
+    key = await loop.proactive.emit(MAIL)
+    await loop.proactive.tick()
+    row = await finished(loop, key)
+    assert row["result"]["message"] == "作业周五截止哦" and row["notification_queued"]
+    messages, tools = loop.runtime.llm.inputs[0]
+    prompt = messages[-1]["content"].split("\n<context")[0]
+    assert "{" not in prompt and "作业截止提醒" in prompt and "deadline: 周五" in prompt
+    assert "重要性 3/4" in prompt
+    assert any(t["function"]["name"] == "proactive_report" for t in tools)
+    assert len(loop.runtime.llm.inputs) == 1

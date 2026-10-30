@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections import Counter, deque
 from dataclasses import replace
 from datetime import datetime
@@ -9,6 +10,13 @@ from zoneinfo import ZoneInfo
 from shiritaibot.agent.commands import command
 from shiritaibot.agent.context import ContextManager, context_chars
 from shiritaibot.core import Context, PublicError, canonical, fingerprint, now, uid
+from shiritaibot.proactive import (
+    PREPARE_SESSION,
+    REPORT_SPEC,
+    REPORT_TOOL,
+    LoopResult,
+    parse_loop_result,
+)
 
 
 def repair_history(messages: list[dict], max_chars: int | None) -> list[dict]:
@@ -76,6 +84,22 @@ def local_clock(zone: ZoneInfo) -> str:
     local = now().astimezone(zone)
     weekday = "一二三四五六日"[local.weekday()]
     return local.strftime(f"%Y-%m-%d %H:%M 周{weekday}")
+
+
+def _is_loop_result(text: str) -> bool:
+    try:
+        parse_loop_result(text)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def _report(arguments: str | dict) -> tuple[LoopResult | None, str]:
+    try:
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+        return LoopResult.model_validate(args), canonical({"ok": True})
+    except (ValueError, TypeError):
+        return None, canonical({"error": "参数无效：需要 notify、message、reason"})
 
 
 class SessionActor:
@@ -295,6 +319,11 @@ class AgentRuntime:
                 # Persist the original input even if context compression fails.
                 await self.store.append(ctx.session, ctx.turn, user)
                 tools = self.registry.specs(ctx)
+                # Proactive turns report their conclusion through an internal tool.
+                proactive = ctx.background and ctx.session.startswith(PREPARE_SESSION)
+                if proactive:
+                    tools = [*tools, REPORT_SPEC]
+                nudged = False
                 # Group chat is supplied per turn and never archived into the session history.
                 ambient = await self.group_context(ctx, cfg, tools)
                 current = {**user, "content": ambient + user["content"]} if ambient else user
@@ -341,6 +370,12 @@ class AgentRuntime:
                     await self.store.append(ctx.session, ctx.turn, message)
                     history.append(message)
                     if not reply.calls:
+                        if proactive and not nudged and not _is_loop_result(reply.text):
+                            nudged = True
+                            item = {"role": "user", "content": "请调用 proactive_report 提交结论。"}
+                            await self.store.append(ctx.session, ctx.turn, item)
+                            history.append(item)
+                            continue
                         await self.deliver(ctx.session, reply.text or "模型没有返回可显示的内容。")
                         body["status"] = "completed"
                         return
@@ -348,18 +383,26 @@ class AgentRuntime:
                     # deliver only their final structured notification decision.
                     if not ctx.background and reply.text.strip():
                         await self.deliver(ctx.session, reply.text)
+                    report = None
                     for call in reply.calls:
                         function = call["function"]
                         sig = fingerprint(function)
                         repetitions[sig] += 1
                         if repetitions[sig] >= 5:
                             raise PublicError("重复调用同一工具已达上限")
-                        output = await self.registry.execute(
-                            ctx, function["name"], function["arguments"]
-                        )
+                        if proactive and function["name"] == REPORT_TOOL:
+                            report, output = _report(function["arguments"])
+                        else:
+                            output = await self.registry.execute(
+                                ctx, function["name"], function["arguments"]
+                            )
                         result = {"role": "tool", "tool_call_id": call["id"], "content": output}
                         await self.store.append(ctx.session, ctx.turn, result)
                         history.append(result)
+                    if report is not None:
+                        await self.deliver(ctx.session, canonical(report.model_dump()))
+                        body["status"] = "completed"
+                        return
                     body["steps"] = step + 1
                     await self.store.put("turn", ctx.turn, body, ctx.session)
                 raise PublicError("已达到本轮步数限制")
