@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { createClient } from "../api/client";
 
 export function LoginView({
@@ -29,7 +29,7 @@ export function LoginView({
   return (
     <div className="login">
       <div className="brand-mark">
-        <Sparkles size={28} aria-hidden="true" />
+        <img src="/icon.png" alt="" />
       </div>
       <h1>ShiritaiBot</h1>
       <p className="muted">输入本机管理令牌，进入控制台。</p>

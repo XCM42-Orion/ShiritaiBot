@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronRight, Sparkles } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { PAGES, pageMeta } from "../navigation";
 import type { PageId } from "../navigation";
 
@@ -33,7 +33,7 @@ export function AppShell({
           }}
         >
           <span className="brand-mark">
-            <Sparkles size={20} aria-hidden="true" />
+            <img src="/icon.png" alt="" />
           </span>
           <span>
             ShiritaiBot<small>个人控制台</small>

@@ -50,6 +50,14 @@ aside {
   border-radius: 10px 10px 10px 2px;
   background: linear-gradient(135deg, #ec4899, var(--accent));
   color: var(--accent-ink);
+  overflow: hidden;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
 }
 
 .workspace {
