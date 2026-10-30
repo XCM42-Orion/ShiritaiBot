@@ -7,6 +7,7 @@ import math
 
 from shiritaibot.core import Context, fingerprint, now
 from shiritaibot.core.logs import describe_session, get_logger
+from shiritaibot.memory.judge import INSTRUCTS, RECALL, RELEVANT
 from shiritaibot.memory.longterm import (
     LABELS,
     MemoryManager,
@@ -23,6 +24,7 @@ EVENT_HALF_LIFE = 90 * 86400
 # Below these, keyword and vector hits alone do not justify injecting anything.
 VECTOR_GATE, VECTOR_KEEP = 0.55, 0.4
 ASK_AGAIN = 7 * 86400
+RERANK = 20
 SECTIONS = ("人物", "事物", "知识", "事件", "待确认")
 HEADER = (
     "以下是记忆库中与本轮相关的历史记录，可能过时；与当前对话冲突时以当前对话为准。"
@@ -34,8 +36,14 @@ class MemoryRecall:
     def __init__(self, memory: MemoryManager):
         self.memory = memory
 
-    async def candidates(self, text: str) -> tuple[dict[str, float], set[str]]:
-        """Fused scores, and refs that came from direct entity links (always kept)."""
+    async def candidates(
+        self, text: str, hint: float | None = None
+    ) -> tuple[dict[str, float], set[str]]:
+        """Fused scores, and refs that came from direct entity links (always kept).
+
+        `hint` is the decision model's P(the message relies on the past), when the router
+        already asked it; otherwise it is asked here if a decision model serves memory.
+        """
         memory = self.memory
         scores: dict[str, float] = {}
 
@@ -57,15 +65,30 @@ class MemoryRecall:
         strong = [key for key, matched in hits if matched >= need]
         vectors = [(k, s) for k, s in await memory.vectors.search(text) if s >= VECTOR_KEEP]
         if not linked and not strong and not any(s >= VECTOR_GATE for _, s in vectors):
-            return {}, set()
+            # A decision model can still open the gate: "那件事后来怎么样了" names nothing.
+            if hint is None and memory.judge.available():
+                hint = await memory.judge.recall(text)
+            if hint is None or hint < RECALL:
+                return {}, set()
         add([key for key, matched in hits if matched >= 1][:10])
         add([key for key, _ in vectors][:10])
+        if not scores:
+            # Only the decision model saw a reference to the past: offer recent events and
+            # let its rerank keep the relevant ones.
+            rows = await memory.rows(
+                "SELECT id FROM mem_event WHERE status='active' "
+                "ORDER BY COALESCE(occurred_at,created) DESC LIMIT 10"
+            )
+            add([ref("v", row["id"]) for row in rows])
         return scores, pinned
 
-    async def render(self, ctx: Context, text: str, budget: int) -> str:
+    async def render(self, ctx: Context, text: str, budget: int, hint: float | None = None) -> str:
         """The <memory> block for this turn, or an empty string."""
         memory = self.memory
-        scores, pinned = await self.candidates(text)
+        scores, pinned = await self.candidates(text, hint)
+        if not scores:
+            return ""
+        await self.rerank(text, scores, pinned)
         if not scores:
             return ""
         items = await memory.load(list(scores))
@@ -134,6 +157,26 @@ class MemoryRecall:
         return "\n".join(
             [f'<memory retrieved_at="{minute(stamp, memory.zone)}">', HEADER, *body, "</memory>"]
         )
+
+    async def rerank(self, text: str, scores: dict[str, float], pinned: set[str]) -> None:
+        """Blend in the decision model's relevance; drop off-topic or instructive items."""
+        judge = self.memory.judge
+        if not judge.available():
+            return
+        top = sorted(scores, key=lambda k: -scores[k])[:RERANK]
+        items = await self.memory.load(top)
+        refs = [key for key in top if key in items]
+        answers = await judge.rerank(text, [self.memory.plain(items[k]) for k in refs])
+        if answers is None:
+            return
+        best = max(scores[k] for k in refs)
+        for key, (relevant, instructs) in zip(refs, answers):
+            if key not in pinned and (relevant < RELEVANT or instructs > INSTRUCTS):
+                del scores[key]
+            else:
+                scores[key] = 0.5 * scores[key] / best + 0.5 * relevant
+        for key in set(scores) - set(refs):
+            scores[key] = 0.5 * scores[key] / best  # Not reranked: below every reranked item.
 
     async def corrections(self, refs: list[str]) -> dict[str, list[str]]:
         """Items that replaced something, so the model drops what it saw earlier."""

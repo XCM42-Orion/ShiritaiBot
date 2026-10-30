@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from shiritaibot.core import PublicError, canonical, now
 from shiritaibot.core.logs import brief, describe_session, get_logger
+from shiritaibot.memory.judge import DECIDED, GATE_SKIP, SAME_EVENT
 from shiritaibot.memory.longterm import (
     LABELS,
     MemoryManager,
@@ -150,6 +151,14 @@ def items(data: dict, key: str, model: type[Loose]) -> list:
     return result
 
 
+def open_questions(questions: dict, facts: list, events: list) -> dict:
+    """The judge questions still open after the decision model."""
+    return {
+        "facts": [q for q in questions["facts"] if facts[q["i"]] is not None],
+        "events": [q for q in questions["events"] if events[q["i"]] is not None],
+    }
+
+
 class MemoryExtractor:
     def __init__(self, memory: MemoryManager, store, config, llm):
         self.memory, self.store, self.config, self.llm = memory, store, config, llm
@@ -178,6 +187,8 @@ class MemoryExtractor:
 
     async def enqueue_event(self, row: dict) -> None:
         """Called by the Proactive Engine once an event is handled; reading happens later."""
+        if row["event"]["source"] == "memory":
+            return  # Memory's own questions to the owner are not new information.
         await self.store.insert(
             "memory_extract",
             "event:" + row["id"],
@@ -368,7 +379,9 @@ class MemoryExtractor:
                 continue
             chars += len(line.text)
             lines.append(line)
-        await self.process(await self.window(lines, list(catalog.items()), f"事件 {key[:8]}"))
+        hint = (row.get("decision") or {}).get("remember")
+        window = await self.window(lines, list(catalog.items()), f"事件 {key[:8]}")
+        await self.process(window, hint)
 
     async def window(
         self, lines: list[Line], actors: list[tuple[str, Entry]], label: str
@@ -442,8 +455,18 @@ class MemoryExtractor:
 
     # ---- processing ----------------------------------------------------------
 
-    async def process(self, window: Window) -> dict:
+    async def process(self, window: Window, hint: float | None = None) -> dict:
         """Extract, check, align and merge one window; returns counts for logs and tests."""
+        judge = self.memory.judge
+        if hint is None:
+            hint = await judge.gate(self.render(window))
+        elif judge.available():
+            await judge.record(
+                "gate", [{"jev": hint, "final": hint >= GATE_SKIP, "from": "triage"}]
+            )
+        if hint is not None and hint < GATE_SKIP:
+            log.debug(f"判断模型认为没有值得记住的内容（{hint:.2f}），跳过抽取", window.label)
+            return {"facts": 0, "events": 0, "dropped": 0, "skipped": True}
         data = await self.ask(EXTRACT_PROMPT, self.render(window))
         entities = {e.ref: e for e in items(data, "entities", EntityOut)}
         stats = {"facts": 0, "events": 0, "dropped": 0}
@@ -462,6 +485,7 @@ class MemoryExtractor:
                 events.append((event, checked))
             else:
                 stats["dropped"] += 1
+        facts, events = await self.verify(window, facts, events, stats)
         used = {
             *(f.subject for f, _ in facts if f.subject),
             *(p for e, _ in events for p in e.participants),
@@ -501,7 +525,7 @@ class MemoryExtractor:
                     ],
                 }
             )
-            pending_facts.append((subject, fact, proof, extra, existing))
+            pending_facts.append((subject, fact, proof, extra, existing, None))
         for event, (proof, extra) in events:
             people = [resolved[p] for p in event.participants if p in resolved]
             occurred, granularity = extra
@@ -519,36 +543,49 @@ class MemoryExtractor:
                     ],
                 }
             )
-            pending_events.append((event, proof, occurred, granularity, people, existing))
-        if pending_facts or pending_events:
-            answer = await self.ask(JUDGE_PROMPT, canonical(questions))
+            pending_events.append((event, proof, occurred, granularity, people, existing, None))
+        await self.decide_merges(pending_facts, pending_events, questions, stats)
+        if any(pending_facts) or any(pending_events):
+            answer = await self.ask(
+                JUDGE_PROMPT, canonical(open_questions(questions, pending_facts, pending_events))
+            )
             for decision in answer.get("facts") or []:
                 index, target, relation = self.decision(decision, pending_facts)
                 if index is None:
                     continue
-                subject, fact, proof, extra, existing = pending_facts[index]  # type: ignore[misc]
+                subject, fact, proof, extra, existing, jev = pending_facts[index]  # type: ignore[misc]
                 pending_facts[index] = None
                 old = next((r for r in existing if ref("f", r["id"]) == target), None)
                 await self.merge_fact(subject, fact, proof, extra, old, relation)
                 stats["facts"] += 1
+                if jev is not None:
+                    await self.memory.judge.record(
+                        "merge",
+                        [{"candidate": brief(fact.content, 60), "jev": jev, "fallback": relation}],
+                    )
             for decision in answer.get("events") or []:
                 index, target, _ = self.decision(decision, pending_events, key="same_as")
                 if index is None:
                     continue
-                event, proof, occurred, granularity, people, existing = pending_events[index]  # type: ignore[misc]
+                event, proof, occurred, granularity, people, existing, jev = pending_events[index]  # type: ignore[misc]
                 pending_events[index] = None
                 same = next((r["id"] for r in existing if ref("v", r["id"]) == target), None)
                 await self.write_event(event, proof, occurred, granularity, people, same)
                 stats["events"] += 1
+                if jev is not None:
+                    await self.memory.judge.record(
+                        "event",
+                        [{"candidate": brief(event.content, 60), "jev": jev, "fallback": target}],
+                    )
             # Unanswered questions default to keeping the new item alongside the old.
             for pending in pending_facts:
                 if pending is not None:
-                    subject, fact, proof, extra, _ = pending
+                    subject, fact, proof, extra, *_ = pending
                     await self.memory.write_fact(subject, fact.content, proof, valid_from=extra)
                     stats["facts"] += 1
             for pending in pending_events:
                 if pending is not None:
-                    event, proof, occurred, granularity, people, _ = pending
+                    event, proof, occurred, granularity, people, *_ = pending
                     await self.write_event(event, proof, occurred, granularity, people)
                     stats["events"] += 1
         await self.memory.load_aliases()
@@ -558,6 +595,94 @@ class MemoryExtractor:
             window.label,
         )
         return stats
+
+    async def verify(self, window: Window, facts: list, events: list, stats: dict):
+        """Drop items the decision model finds unsupported or instructive; grade the rest."""
+        checked = [*facts, *events]
+        if not checked or not self.memory.judge.available():
+            return facts, events
+        cited = sorted({item.evidence_line for item, _ in checked})
+        lines = {f"L{n}": window.lines[n - 1].text for n in cited}
+        verdicts = await self.memory.judge.verify(
+            lines, [(f"L{item.evidence_line}", item.content) for item, _ in checked]
+        )
+        kept: list = []
+        for (item, (proof, extra)), verdict in zip(checked, verdicts):
+            if verdict is None:
+                kept.append((item, (proof, extra)))
+            elif not verdict.supported:
+                stats["dropped"] += 1
+                self.drop(window, item, "判断模型认为原文不支持，或这是对助手的指令")
+            elif verdict.verified:
+                kept.append((item, (replace(proof, verdict="verified"), extra)))
+            else:
+                # Supported but not confidently: kept, marked, and trusted a little less.
+                weak = replace(proof, verdict="unverified", confidence=proof.weight * 0.8)
+                kept.append((item, (weak, extra)))
+        return (
+            [pair for pair in kept if isinstance(pair[0], FactOut)],
+            [pair for pair in kept if isinstance(pair[0], EventOut)],
+        )
+
+    async def decide_merges(self, facts: list, events: list, questions: dict, stats: dict):
+        """Settle merges the decision model is sure about; leave the rest pending."""
+        judge = self.memory.judge
+        if not judge.available():
+            return
+        pairs, owners = [], []
+        for index, pending in enumerate(facts):
+            for row in pending[4]:
+                pairs.append((pending[1].content, row["content"]))
+                owners.append((index, row))
+        answers = await judge.relations(pairs) if pairs else []
+        grouped: dict[int, list] = {}
+        for (index, row), answer in zip(owners, answers):
+            grouped.setdefault(index, []).append((row, answer))
+        logged = []
+        for index, results in grouped.items():
+            subject, fact, proof, extra, existing, _ = facts[index]
+            sure = [(row, a) for row, a in results if a is not None and a[1] >= DECIDED]
+            chosen = next(
+                (
+                    (row, a[0])
+                    for rank in ("same", "newer_state", "contradicts")
+                    for row, a in sure
+                    if a[0] == rank
+                ),
+                None,
+            )
+            raw = [(ref("f", row["id"]), a) for row, a in results]
+            if chosen is None and len(sure) < len(results):
+                facts[index] = (subject, fact, proof, extra, existing, raw)
+                continue  # Not sure about every pair: the text model decides.
+            old, relation = chosen if chosen else (None, "compatible")
+            await self.merge_fact(subject, fact, proof, extra, old, relation)
+            stats["facts"] += 1
+            facts[index] = None
+            logged.append({"candidate": brief(fact.content, 60), "jev": raw, "final": relation})
+        pairs, owners = [], []
+        for index, pending in enumerate(events):
+            for row in pending[5]:
+                pairs.append((pending[0].content, row["content"]))
+                owners.append((index, row))
+        answers = await judge.same_events(pairs) if pairs else []
+        grouped = {}
+        for (index, row), answer in zip(owners, answers):
+            grouped.setdefault(index, []).append((row, answer))
+        for index, results in grouped.items():
+            event, proof, occurred, granularity, people, existing, _ = events[index]
+            same = next(
+                (row["id"] for row, p in results if p is not None and p >= SAME_EVENT[1]), None
+            )
+            raw = [(ref("v", row["id"]), p) for row, p in results]
+            if same is None and not all(p is not None and p <= SAME_EVENT[0] for _, p in results):
+                events[index] = (event, proof, occurred, granularity, people, existing, raw)
+                continue
+            await self.write_event(event, proof, occurred, granularity, people, same)
+            stats["events"] += 1
+            events[index] = None
+            logged.append({"candidate": brief(event.content, 60), "jev": raw, "final": same})
+        await judge.record("merge", logged)
 
     @staticmethod
     def decision(raw, pending: list, key: str = "target") -> tuple[int | None, str | None, str]:
@@ -734,10 +859,13 @@ class MemoryExtractor:
             pending.append((value, kind, names, entry, list(cards)))
         if not questions:
             return resolved
-        answer = await self.ask(JUDGE_PROMPT, canonical({"entities": questions}))
-        decisions = {
-            d["i"]: d for d in answer.get("entities") or [] if isinstance(d, dict) and "i" in d
-        }
+        decisions = await self.decide_entities(questions)
+        unsure = [q for q in questions if q["i"] not in decisions]
+        if unsure:
+            answer = await self.ask(JUDGE_PROMPT, canonical({"entities": unsure}))
+            for raw in answer.get("entities") or []:
+                if isinstance(raw, dict) and raw.get("i") in {q["i"] for q in unsure}:
+                    decisions[raw["i"]] = raw
         for index, (value, kind, names, entry, options) in enumerate(pending):
             decision = decisions.get(index, {})
             target = decision.get("target") if decision.get("target") in options else None
@@ -762,6 +890,37 @@ class MemoryExtractor:
                         + LABELS.get(kind, "事物"),
                     )
         return resolved
+
+    async def decide_entities(self, questions: list[dict]) -> dict[int, dict]:
+        """Alignment answers the decision model is sure about, keyed by question index."""
+        judge = self.memory.judge
+        if not judge.available():
+            return {}
+        pairs = [(q["new"], e["card"]) for q in questions for e in q["existing"]]
+        answers = await judge.same_entities(pairs)
+        decided, logged, position = {}, [], 0
+        for question in questions:
+            results = []
+            for existing in question["existing"]:
+                results.append((existing["id"], answers[position]))
+                position += 1
+            sure = [(key, a) for key, a in results if a is not None and a[1] >= DECIDED]
+            same = next((key for key, a in sure if a[0] == "same"), None)
+            maybe = next((key for key, a in sure if a[0] == "maybe_same"), None)
+            if same:
+                decided[question["i"]] = {"target": same, "relation": "same"}
+            elif len(sure) == len(results):
+                decided[question["i"]] = (
+                    {"target": maybe, "relation": "maybe_same"}
+                    if maybe
+                    else {"target": None, "relation": "different"}
+                )
+            if question["i"] in decided:
+                logged.append(
+                    {"new": question["new"], "jev": results, "final": decided[question["i"]]}
+                )
+        await judge.record("align", logged)
+        return decided
 
     def similar(self, names: list[str]) -> list[int]:
         """Entities whose name contains, or is contained in, one of these names."""

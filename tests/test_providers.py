@@ -225,11 +225,17 @@ async def test_router_uses_jev_probabilities(app, chat, expected):
     async def handle(req):
         answer = {"type": "choice", "choice": "chat", "confidence": chat}
         answer["probabilities"] = {"chat": chat, "work": 1 - chat}
-        return httpx.Response(200, json={"answers": {"route": answer}, "usage": {}})
+        # The owner's private turns also ask whether memory is needed, in the same request.
+        assert json.loads(req.content)["questions"]["recall"]["type"] == "noul"
+        recall = {"type": "noul", "noul": 0.9}
+        return httpx.Response(
+            200, json={"answers": {"route": answer, "recall": recall}, "usage": {}}
+        )
 
     await use_transport(app, handle)
-    ctx = Context("web:owner", "owner", "agent", True)
+    ctx = Context("web:owner", "owner", "agent", True, turn="r1")
     assert await app.runtime.route(ctx, app.config.value, "今天心情不好") == expected
+    assert app.runtime.recall_hints == {"r1": 0.9}
 
 
 async def test_triage_uses_jev_most_probable_level(app):
@@ -251,6 +257,7 @@ async def test_triage_uses_jev_most_probable_level(app):
                         "probabilities": {"0": 0.05, "1": 0.05, "2": 0.1, "3": 0.2, "4": 0.6},
                     },
                     "decision": {"type": "choice", "choice": "digest", "confidence": 0.7},
+                    "remember": {"type": "noul", "noul": 0.15},
                 },
                 "usage": {},
             },
@@ -261,3 +268,4 @@ async def test_triage_uses_jev_most_probable_level(app):
     decision = await app.proactive.judge(event)
     assert (decision.importance, decision.decision, decision.message) == (4, "notify", "服务器宕机")
     assert "Jev" in decision.reason
+    assert decision.remember == 0.15  # Kept for memory extraction's gate.

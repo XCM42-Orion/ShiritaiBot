@@ -12,6 +12,7 @@ from shiritaibot.agent.commands import command
 from shiritaibot.agent.context import ContextManager, context_chars
 from shiritaibot.core import Context, PublicError, canonical, fingerprint, now, uid
 from shiritaibot.core.logs import Logger, brief, describe_session, get_logger
+from shiritaibot.memory.judge import recall_question
 from shiritaibot.memory.recall import MemoryRecall
 from shiritaibot.proactive import (
     PREPARE_SESSION,
@@ -311,6 +312,8 @@ class AgentRuntime:
         self.config, self.store, self.llm = config, store, llm
         self.registry, self.memory, self.deliver = registry, memory, deliver
         self.recall = MemoryRecall(memory) if memory is not None else None
+        # Turn -> P(the message relies on the past), from the router's decision model.
+        self.recall_hints: dict[str, float] = {}
         self.short_term = short_term
         self.actors: dict[str, SessionActor] = {}
         self.submit_locks: dict[str, asyncio.Lock] = {}
@@ -419,23 +422,25 @@ class AgentRuntime:
         material = (
             ("最近对话：\n" + "\n".join(lines) + "\n\n" if lines else "") + "新消息：" + text[:2000]
         )
-        answers = await self.llm.decide(
-            "router",
-            material,
-            {
-                "route": {
-                    "type": "choice",
-                    "instructions": "判断新消息该交给哪类模型处理。",
-                    "criteria": {
-                        "work": "需要动手完成的任务：查资料、用工具、写代码、处理文件、邮件、"
-                        "日程、提醒、多步骤执行或延续之前未完成的任务",
-                        "chat": "日常聊天、情感交流、知识问答、观点讨论、简单寒暄，不需要执行任务",
-                    },
-                }
-            },
-            settings=cfg,
-        )
+        questions: dict = {
+            "route": {
+                "type": "choice",
+                "instructions": "判断新消息该交给哪类模型处理。",
+                "criteria": {
+                    "work": "需要动手完成的任务：查资料、用工具、写代码、处理文件、邮件、"
+                    "日程、提醒、多步骤执行或延续之前未完成的任务",
+                    "chat": "日常聊天、情感交流、知识问答、观点讨论、简单寒暄，不需要执行任务",
+                },
+            }
+        }
+        if ctx.owner and not ctx.group and cfg.memory.inject:
+            # Asked in the same request, so memory recall gets its gate for free.
+            questions["recall"] = recall_question("the new message (新消息) in the state")
+        answers = await self.llm.decide("router", material, questions, settings=cfg)
         if answers is not None:
+            recall = answers.get("recall")
+            if isinstance(recall, dict) and isinstance(recall.get("noul"), (int, float)):
+                self.recall_hints[ctx.turn] = float(recall["noul"])
             # Calibrated probabilities: only a clear Chat verdict leaves the Work route.
             answer = answers["route"] if isinstance(answers["route"], dict) else {}
             chat = (answer.get("probabilities") or {}).get("chat", 0)
@@ -511,7 +516,12 @@ class AgentRuntime:
                 if ctx.owner and ctx.mode == "agent" and not ctx.group:
                     if self.recall is not None and cfg.memory.inject:
                         recalled.append(
-                            await self.recall.render(ctx, text, cfg.memory.inject_chars)
+                            await self.recall.render(
+                                ctx,
+                                text,
+                                cfg.memory.inject_chars,
+                                self.recall_hints.pop(ctx.turn, None),
+                            )
                         )
                     if self.short_term:
                         recalled.append(recent_lines(await self.short_term.recent(limit=5), zone))

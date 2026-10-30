@@ -13,6 +13,7 @@ import jieba
 
 from shiritaibot.core import Context, PublicError, fingerprint, now
 from shiritaibot.core.logs import brief, get_logger
+from shiritaibot.memory.judge import MemoryJudge
 from shiritaibot.memory.times import month, parse_bound, parse_time, relative_words, render_time
 from shiritaibot.memory.vectors import VectorIndex
 
@@ -65,7 +66,12 @@ class Proof:
     source: str
     quote: str
     observed: float
-    verdict: str = "quoted"
+    verdict: str = "quoted"  # quoted (code-checked) | verified | unverified (decision model)
+    confidence: float | None = None  # Overrides the authority default when set.
+
+    @property
+    def weight(self) -> float:
+        return self.confidence if self.confidence is not None else CONFIDENCE[self.authority]
 
 
 def is_live(item: dict) -> bool:
@@ -97,6 +103,7 @@ class MemoryManager:
     def __init__(self, store, config, llm=None):
         self.store, self.config, self.llm = store, config, llm
         self.vectors = VectorIndex(store, llm)
+        self.judge = MemoryJudge(llm, config, store)
         self.aliases: dict[str, set[int]] = {}
         self.wake = asyncio.Event()
 
@@ -688,7 +695,7 @@ class MemoryManager:
                 (
                     proof.observed,
                     stronger,
-                    CONFIDENCE[proof.authority],
+                    proof.weight,
                     now().timestamp(),
                     row["id"],
                 ),
@@ -799,7 +806,7 @@ class MemoryManager:
                 await db.execute(
                     "UPDATE mem_fact SET as_of=MAX(as_of,?),authority=?,"
                     "confidence=MAX(confidence,?),updated=? WHERE id=?",
-                    (proof.observed, stronger, CONFIDENCE[proof.authority], stamp, key),
+                    (proof.observed, stronger, proof.weight, stamp, key),
                 )
                 await self.add_evidence(db, ref("f", key), proof)
                 result = "已存在，已刷新确认时间"
@@ -816,7 +823,7 @@ class MemoryManager:
                         proof.observed if history else None,
                         proof.observed,
                         proof.authority,
-                        CONFIDENCE[proof.authority],
+                        proof.weight,
                         status,
                         old["id"] if history and old else None,
                         stamp,
