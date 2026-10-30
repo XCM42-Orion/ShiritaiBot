@@ -12,11 +12,33 @@ import {
 import { uniqueId } from "../lib/utils";
 import type { ConfigPageProps } from "./common";
 
-const ROUTE_LABELS: Record<string, string> = {
-  agent: "Agent 私人助手",
-  chat: "Chat 群聊",
-  light: "主动事件分诊",
-};
+const ROUTES: { key: string; label: string; help: string }[] = [
+  {
+    key: "chat",
+    label: "Chat 默认模型",
+    help: "Chat 模式会话（如群聊）使用。",
+  },
+  {
+    key: "agent",
+    label: "Agent Work 模型",
+    help: "执行 Main Loop 与 Proactive Loop 的长程工作任务，建议配置适合长程 Agent 任务执行的模型。未启用分流时，Agent 模式全部使用此模型。",
+  },
+  {
+    key: "agent_chat",
+    label: "Agent Chat 模型",
+    help: "Agent 模式下日常的询问与对话，建议配置世界知识丰富、适合情感陪伴的模型（例如 Gemini、Grok）。",
+  },
+  {
+    key: "router",
+    label: "工作/对话分流模型",
+    help: "建议使用 RPS 高的小模型。Agent 模式下新消息进入时判断属于 Work 还是 Chat，分流给对应模型。",
+  },
+  {
+    key: "light",
+    label: "主动事件分诊模型",
+    help: "为外部事件评估重要性，决定是否交给 Proactive Loop。",
+  },
+];
 
 export function ModelsPage({
   client,
@@ -185,74 +207,109 @@ export function ModelsPage({
           <>
             <h2>模型路由</h2>
             <p className="muted">
-              从上到下依次尝试。添加首个模型时，会自动设为三条路由的默认模型。
+              每条路由从上到下依次尝试。添加首个模型时，会自动设为 Chat、Agent
+              Work 和分诊路由的默认模型。
             </p>
-            {Object.entries(config.routes).map(([key, route]) => (
-              <div className="route-block" key={key}>
-                <h3>{ROUTE_LABELS[key] ?? key}</h3>
-                {route.map((id, position) => (
-                  <div className="inline" key={id + position}>
-                    <span>
-                      {position + 1}. {id}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={"上移 " + id}
-                      disabled={position === 0}
-                      onClick={() => {
-                        const next = [...route];
-                        [next[position - 1], next[position]] = [
-                          next[position],
-                          next[position - 1],
-                        ];
-                        setConfig({
-                          ...config,
-                          routes: { ...config.routes, [key]: next },
-                        });
-                      }}
-                    >
-                      上移
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={"移除路由 " + id}
-                      onClick={() =>
-                        setConfig({
-                          ...config,
-                          routes: {
-                            ...config.routes,
-                            [key]: route.filter((_, item) => item !== position),
-                          },
-                        })
-                      }
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-                <select
-                  aria-label={"添加 " + key + " 路由模型"}
-                  value=""
-                  onChange={(event) => {
-                    if (!event.target.value) return;
-                    setConfig({
-                      ...config,
-                      routes: {
-                        ...config.routes,
-                        [key]: [...route, event.target.value],
-                      },
-                    });
-                  }}
-                >
-                  <option value="">＋ 添加模型</option>
-                  {config.models
-                    .filter((model) => !route.includes(model.id))
-                    .map((model) => (
-                      <option key={model.id}>{model.id}</option>
-                    ))}
-                </select>
+            <div className="field field-toggle route-split">
+              <div>
+                <span className="field-name">启用 Agent Work/Chat 分流</span>
+                <small className="field-help">
+                  开启后由分流模型判断每条新消息属于 Work 还是 Chat；关闭时
+                  Agent 模式统一使用 Agent Work 模型。
+                </small>
               </div>
-            ))}
+              <input
+                aria-label="启用 Agent Work/Chat 分流"
+                type="checkbox"
+                checked={Boolean(config.agent_split)}
+                onChange={(event) =>
+                  setConfig({ ...config, agent_split: event.target.checked })
+                }
+              />
+            </div>
+            {[
+              ...ROUTES,
+              ...Object.keys(config.routes)
+                .filter((key) => !ROUTES.some((item) => item.key === key))
+                .map((key) => ({ key, label: key, help: "" })),
+            ].map(({ key, label, help }) => {
+              const route = config.routes[key] ?? [];
+              const inactive =
+                !config.agent_split &&
+                (key === "agent_chat" || key === "router");
+              return (
+                <div
+                  className={"route-block" + (inactive ? " inactive" : "")}
+                  key={key}
+                >
+                  <h3>{label}</h3>
+                  {help && <p className="muted route-help">{help}</p>}
+                  {route.map((id, position) => (
+                    <div className="inline" key={id + position}>
+                      <span>
+                        {position + 1}. {id}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={"上移 " + id}
+                        disabled={position === 0}
+                        onClick={() => {
+                          const next = [...route];
+                          [next[position - 1], next[position]] = [
+                            next[position],
+                            next[position - 1],
+                          ];
+                          setConfig({
+                            ...config,
+                            routes: { ...config.routes, [key]: next },
+                          });
+                        }}
+                      >
+                        上移
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={"移除路由 " + id}
+                        onClick={() =>
+                          setConfig({
+                            ...config,
+                            routes: {
+                              ...config.routes,
+                              [key]: route.filter(
+                                (_, item) => item !== position,
+                              ),
+                            },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <select
+                    aria-label={"添加 " + key + " 路由模型"}
+                    value=""
+                    onChange={(event) => {
+                      if (!event.target.value) return;
+                      setConfig({
+                        ...config,
+                        routes: {
+                          ...config.routes,
+                          [key]: [...route, event.target.value],
+                        },
+                      });
+                    }}
+                  >
+                    <option value="">＋ 添加模型</option>
+                    {config.models
+                      .filter((model) => !route.includes(model.id))
+                      .map((model) => (
+                        <option key={model.id}>{model.id}</option>
+                      ))}
+                  </select>
+                </div>
+              );
+            })}
           </>
         ) : provider ? (
           <>

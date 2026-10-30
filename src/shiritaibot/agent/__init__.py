@@ -86,6 +86,11 @@ def local_clock(zone: ZoneInfo) -> str:
     return local.strftime(f"%Y-%m-%d %H:%M 周{weekday}")
 
 
+def _plain(message: dict) -> str:
+    content = message.get("_original_content", message.get("content"))
+    return content.split("\n<context")[0].strip() if isinstance(content, str) else ""
+
+
 def _is_loop_result(text: str) -> bool:
     try:
         parse_loop_result(text)
@@ -268,6 +273,41 @@ class AgentRuntime:
             )
         return block + "\n</group_context>\n"
 
+    async def route(self, ctx: Context, cfg, text: str) -> str:
+        """Pick the model route: Chat, Agent Work, or (when split) Agent Chat."""
+        if ctx.mode != "agent":
+            return "chat"
+        if ctx.background or not cfg.agent_split or not cfg.routes.get("agent_chat"):
+            return "agent"
+        if not cfg.routes.get("router"):
+            return "agent"
+        recent = await self.store.history(ctx.session, limit=4, include_commands=False)
+        lines = [
+            f"{'用户' if m['role'] == 'user' else '助手'}：{_plain(m)[:300]}"
+            for m in recent
+            if m.get("role") in {"user", "assistant"} and _plain(m)
+        ]
+        material = (
+            ("最近对话：\n" + "\n".join(lines) + "\n\n" if lines else "") + "新消息：" + text[:2000]
+        )
+        try:
+            reply = await self.llm.complete(
+                "router",
+                "你是消息分流器，判断用户的新消息该交给哪类模型处理。"
+                "work：需要动手完成的任务，例如查资料、用工具、写代码、处理文件、邮件、日程、"
+                "提醒、多步骤执行或延续之前未完成的任务。"
+                "chat：日常聊天、情感交流、知识问答、观点讨论、简单寒暄，不需要执行任务。"
+                "拿不准时选 work。只输出一个词：work 或 chat。",
+                [{"role": "user", "content": material}],
+                [],
+                settings=cfg,
+            )
+        except Exception as exc:
+            await self.store.activity("router.failed", type(exc).__name__, ctx.session)
+            return "agent"
+        answer = reply.text.strip().lower()
+        return "agent_chat" if "chat" in answer and "work" not in answer else "agent"
+
     async def turn(self, actor: SessionActor, ctx: Context, text: str) -> None:
         async with self.context_locks.setdefault(ctx.session, asyncio.Lock()):
             await self._turn(actor, ctx, text)
@@ -280,9 +320,10 @@ class AgentRuntime:
             selected_persona.get("persona", "") if selected_persona else "",
             owner=ctx.owner,
         )
+        route = await self.route(ctx, cfg, text)
         selected = await self.store.get("session_model", ctx.session)
         if selected and selected.get("model"):
-            cfg.routes["agent" if ctx.mode == "agent" else "chat"] = [selected["model"]]
+            cfg.routes[route] = [selected["model"]]
         body = {
             "status": "running",
             "actor": ctx.actor,
@@ -292,6 +333,7 @@ class AgentRuntime:
             if ctx.owner and ctx.mode == "agent" and not ctx.group
             else ctx.session,
             "loop": "proactive" if ctx.background else "main",
+            "route": route,
             "assistant_name": cfg.assistant_name,
             "owner_name": cfg.owner_name,
         }
@@ -353,7 +395,7 @@ class AgentRuntime:
                     if context_chars(history) > cfg.policy.max_context_chars * 2:
                         raise PublicError("本轮上下文达到限制，请开启新会话或减少输入")
                     reply = await self.llm.complete(
-                        "agent" if ctx.mode == "agent" else "chat",
+                        route,
                         system,
                         history,
                         tools,

@@ -213,12 +213,17 @@ class ProactiveConfig(Model):
         return value
 
 
+ROUTE_KEYS = ("chat", "agent", "agent_chat", "router", "light")
+
+
 class Settings(Model):
     providers: list[ProviderConfig] = Field(default_factory=list)
     models: list[ModelConfig] = Field(default_factory=list)
-    routes: dict[str, list[str]] = Field(
-        default_factory=lambda: {"agent": [], "chat": [], "light": []}
-    )
+    # chat: Chat 默认；agent: Agent Work（长程任务，含 Main/Proactive Loop）；
+    # agent_chat: Agent 模式日常对话；router: Work/Chat 分流；light: 主动事件分诊。
+    routes: dict[str, list[str]] = Field(default_factory=lambda: {k: [] for k in ROUTE_KEYS})
+    # When off, every Agent-mode turn uses the Agent Work route.
+    agent_split: bool = False
     adapters: list[AdapterConfig] = Field(default_factory=list)
     subagents: list[SubagentConfig] = Field(default_factory=list)
     plugins: list[PluginConfig] = Field(default_factory=list)
@@ -235,6 +240,11 @@ class Settings(Model):
     private_require_keyword: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
     group_context: GroupContextConfig = Field(default_factory=GroupContextConfig)
+
+    @field_validator("routes")
+    @classmethod
+    def routes_complete(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        return {**{k: [] for k in ROUTE_KEYS}, **value}
 
     @field_validator("wake_keywords")
     @classmethod

@@ -41,6 +41,7 @@ function baseConfig(): Settings {
     ],
     models: [],
     routes: { agent: [], chat: [], light: [] },
+    agent_split: false,
     adapters: [],
     subagents: [],
     plugins: [],

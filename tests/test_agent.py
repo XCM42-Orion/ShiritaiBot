@@ -192,3 +192,37 @@ async def test_session_mode_overrides_transport_and_controls_tool_exposure(app, 
     app.runtime.llm = LLM()
     await app.runtime.submit(Context("group:qq:mode", "member", "chat", group=True), "hello")
     await asyncio.wait_for(done.wait(), 3)
+
+
+class RoutedLLM:
+    def __init__(self, verdict):
+        self.verdict, self.routes = verdict, []
+
+    async def complete(self, route, system, messages, tools, **kwargs):
+        self.routes.append(route)
+        return Reply(text=self.verdict if route == "router" else "好")
+
+
+@pytest.mark.parametrize(
+    ("split", "verdict", "expected"),
+    [
+        (True, "chat", ["router", "agent_chat"]),
+        (True, "work", ["router", "agent"]),
+        (False, "chat", ["agent"]),
+    ],
+)
+async def test_agent_work_chat_split(app, split, verdict, expected):
+    from shiritaibot.config import ModelConfig, ProviderConfig
+
+    cfg = app.config.value
+    cfg.providers = [ProviderConfig(id="p", base_url="http://x")]
+    cfg.models = [ModelConfig(id=m, provider="p", model=m) for m in ("w", "c", "r")]
+    cfg.routes.update(agent=["w"], agent_chat=["c"], router=["r"])
+    cfg.agent_split = split
+    llm = RoutedLLM(verdict)
+    app.runtime.llm = llm
+    await app.runtime.submit(Context("web:owner", "owner", "agent", True), "今天心情不好")
+    await eventually(lambda: app.store.list("reply"))
+    assert llm.routes == expected
+    turn = (await app.store.list("turn"))[0]
+    assert turn["route"] == expected[-1]

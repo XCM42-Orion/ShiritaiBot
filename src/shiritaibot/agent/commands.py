@@ -108,8 +108,19 @@ async def command(runtime, ctx, text):
                 )
             selected = await runtime.store.get("session_model", ctx.session)
             model = selected.get("model") if selected else None
-            route = cfg.routes.get("agent" if ctx.mode == "agent" else "chat", [])
-            answer = f"会话：{ctx.session}\n模式：{ctx.mode}\n模型：{model or ' → '.join(route) or '未配置'}"
+            if model:
+                models = model
+            elif ctx.mode != "agent":
+                models = " → ".join(cfg.routes.get("chat", [])) or "未配置"
+            else:
+                models = " → ".join(cfg.routes.get("agent", [])) or "未配置"
+                if cfg.agent_split and cfg.routes.get("agent_chat"):
+                    models = (
+                        f"Work {models}；Chat "
+                        + " → ".join(cfg.routes["agent_chat"])
+                        + "（按消息自动分流）"
+                    )
+            answer = f"会话：{ctx.session}\n模式：{ctx.mode}\n模型：{models}"
             if argument:
                 answer += "\n模型设置从下一轮开始生效。"
             if name == "status":

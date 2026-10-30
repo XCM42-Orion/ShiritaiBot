@@ -156,6 +156,7 @@ export interface Settings {
   providers: ProviderConfig[];
   models: ModelConfig[];
   routes: Record<string, string[]>;
+  agent_split: boolean;
   adapters: AdapterConfig[];
   subagents: SubagentConfig[];
   plugins: PluginConfig[];

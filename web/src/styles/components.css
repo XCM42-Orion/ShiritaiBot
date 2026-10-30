@@ -538,6 +538,19 @@
   margin-top: 22px;
 }
 
+.route-block.inactive {
+  opacity: 0.55;
+}
+
+.route-help {
+  margin: 4px 0 8px;
+  font-size: 0.86em;
+}
+
+.route-split {
+  margin-top: 16px;
+}
+
 .route-block .inline {
   padding: 6px 0;
 }
