@@ -5,7 +5,9 @@ import type {
   Health,
   HistoryMessage,
   LogFeed,
+  MemoryDetail,
   MemoryRecord,
+  MemoryStatus,
   ModelConfig,
   ModelTestResult,
   PluginInfo,
@@ -53,9 +55,9 @@ export interface ApiClient {
   setLogLevel(level: string): Promise<{ level: string }>;
   sendMessage(text: string, session: string): Promise<unknown>;
   resolveApproval(id: string, allow: boolean): Promise<unknown>;
-  memories(): Promise<MemoryRecord[]>;
-  addMemory(content: string): Promise<unknown>;
-  archiveMemory(id: string): Promise<unknown>;
+  memories(kind?: string, query?: string): Promise<MemoryRecord[]>;
+  memory(id: string): Promise<MemoryDetail>;
+  memoryStatus(): Promise<MemoryStatus>;
   createRoutine(draft: RoutineDraft): Promise<RoutineRecord>;
   setRoutineStatus(id: string, status: string): Promise<RoutineRecord>;
   cancelSubagent(id: string): Promise<unknown>;
@@ -151,10 +153,12 @@ export function createClient(getToken: () => string): ApiClient {
       request("/messages", "POST", { text, session }),
     resolveApproval: (id, allow) =>
       request("/approvals/" + encodeURIComponent(id), "POST", { allow }),
-    memories: () => request<MemoryRecord[]>("/memory"),
-    addMemory: (content) => request("/memory", "POST", { content }),
-    archiveMemory: (id) =>
-      request("/memory/" + encodeURIComponent(id) + "/archive", "POST"),
+    memories: (kind = "", query = "") =>
+      request<MemoryRecord[]>(
+        "/memory?" + new URLSearchParams({ kind, q: query }).toString(),
+      ),
+    memory: (id) => request<MemoryDetail>("/memory/" + encodeURIComponent(id)),
+    memoryStatus: () => request<MemoryStatus>("/memory/status"),
     createRoutine: (draft) =>
       request<RoutineRecord>("/routines", "POST", draft),
     setRoutineStatus: (id, status) =>

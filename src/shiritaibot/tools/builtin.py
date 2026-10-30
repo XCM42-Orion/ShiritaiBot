@@ -11,6 +11,7 @@ import httpx
 
 from shiritaibot.core import PublicError, Tool, now
 from shiritaibot.core.process import run_process
+from shiritaibot.memory.tools import memory_tools
 from shiritaibot.routine import RoutineItem
 from shiritaibot.tools import TEXT, schema
 
@@ -53,12 +54,6 @@ async def register_builtin(app) -> None:
             workspace,
             timeout=args.get("timeout", 60),
         )
-
-    async def memory_search(ctx, args):
-        return await app.memory.search(ctx, args["query"])
-
-    async def memory_write(ctx, args):
-        return await app.memory.add(ctx, args["content"], args.get("kind", "knowledge"))
 
     async def history_query(ctx, args):
         # Ignore context epochs/checkpoints: these are the original records.
@@ -279,20 +274,6 @@ async def register_builtin(app) -> None:
             timeout=130,
         ),
         Tool(
-            "memory_search",
-            "检索主人的长期记忆",
-            schema({"query": TEXT}, ["query"]),
-            memory_search,
-            risk="safe",
-        ),
-        Tool(
-            "memory_write",
-            "记录主人明确要求记住的事实",
-            schema({"content": TEXT, "kind": TEXT}, ["content"]),
-            memory_write,
-            risk="normal",
-        ),
-        Tool(
             "proactive_recall",
             "查询短期记忆：最近 7 天 Main / Proactive Loop 的模型压缩摘要，"
             "包括请求、事件、工具结果、最终答复和未完成事项；可按关键词过滤",
@@ -359,6 +340,7 @@ async def register_builtin(app) -> None:
             timeout=180,
         ),
     ]
+    entries += memory_tools(app.memory)
     if await app.vault.resolve(app.config.value.tavily_key):
         entries.append(
             Tool(

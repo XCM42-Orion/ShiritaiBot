@@ -36,7 +36,7 @@ async def test_private_capabilities_cannot_escape_into_chat(app, ctx):
     for tool in [
         "shell",
         "memory_search",
-        "memory_write",
+        "memory_save",
         "routine_create",
         "subagent_start",
         "qq_file_download",
@@ -44,10 +44,12 @@ async def test_private_capabilities_cannot_escape_into_chat(app, ctx):
         assert app.permissions.decision(ctx, app.registry.tools[tool]) == "deny"
     assert tool_names(app.registry.specs(ctx)) == CHAT_TOOLS
     result = json.loads(
-        await app.registry.execute(ctx, "memory_write", {"content": "must not be stored"})
+        await app.registry.execute(
+            ctx, "memory_save", {"kind": "fact", "content": "must not", "evidence": "must not"}
+        )
     )
     assert "error" in result
-    assert await app.memory.list() == []
+    assert await app.store.query("SELECT id FROM mem_fact") == []
 
 
 @pytest.mark.parametrize("allow", [False, True])
@@ -95,7 +97,7 @@ async def test_cancel_pending_approval_cannot_later_execute(app):
 
 async def test_scope_policy_intersects_and_background_uses_default(app):
     app.config.value.policy.scope_tools = {"web:*": ["memory_*"], "web:owner": ["memory_search"]}
-    assert app.permissions.decision(OWNER, app.registry.tools["memory_write"]) == "deny"
+    assert app.permissions.decision(OWNER, app.registry.tools["memory_save"]) == "deny"
     assert app.permissions.decision(OWNER, app.registry.tools["memory_search"]) == "allow"
     background = Context("background:test", "owner", "agent", True, background=True)
     assert app.permissions.decision(background, app.registry.tools["routine_create"]) == "approve"
@@ -129,7 +131,7 @@ async def test_preset_matrix_includes_shell_and_new_tools(app, preset, safe, uns
 
     app.config.value.policy.sessions[OWNER.session] = SessionPolicy(preset=preset)
     assert app.permissions.decision(OWNER, app.registry.tools["current_time"]) == safe
-    for name in ("shell", "routine_create", "memory_write", "subagent_start"):
+    for name in ("shell", "routine_create", "memory_save", "subagent_start"):
         assert app.permissions.decision(OWNER, app.registry.tools[name]) == unsafe
     # Registration after selecting a preset still follows its declared safety.
     tool = Tool("new_plugin_tool", "", schema({}), lambda *_: None, risk="sensitive")

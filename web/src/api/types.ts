@@ -30,6 +30,9 @@ export interface ModelConfig extends Instance {
   modalities: ("text" | "image" | "audio" | "video")[];
   // API accepts an object or JSON editor text and returns a normalized object.
   extra_body: Record<string, unknown> | string;
+  // embedding models only serve the embedding route; dims 0 keeps the default.
+  kind: "text" | "embedding";
+  dims: number;
 }
 
 export interface AdapterConfig extends Instance {
@@ -87,6 +90,11 @@ export interface ContextConfig {
   max_turns: number;
   compression_model: string;
   keep_recent_turns: number;
+}
+
+export interface MemoryConfig {
+  inject: boolean;
+  inject_chars: number;
 }
 
 export interface GroupContextConfig {
@@ -177,6 +185,7 @@ export interface Settings {
   private_require_keyword: boolean;
   context: ContextConfig;
   group_context: GroupContextConfig;
+  memory: MemoryConfig;
 }
 
 export interface Health {
@@ -351,14 +360,48 @@ export interface HistoryMessage {
   _speaker?: string;
 }
 
+export type MemoryKind = "entity" | "fact" | "event" | "conflict";
+
+// One rendered line of the long-term memory store (memory/longterm.py).
 export interface MemoryRecord {
   id: string;
-  scope?: string;
-  visibility: "private" | "public";
-  kind: string;
-  content: string;
-  status: "active" | "archived";
-  created: number;
+  type: MemoryKind;
+  status: string;
+  text: string;
+}
+
+export interface MemoryEvidence {
+  source: string;
+  quote: string;
+  recorded: string;
+  verdict: string;
+}
+
+// memory_get output; fields depend on the item type.
+export interface MemoryDetail {
+  id: string;
+  type: MemoryKind;
+  status: string;
+  text?: string;
+  name?: string;
+  aliases?: string[];
+  summary?: string;
+  facts?: string[];
+  events?: string[];
+  history?: string[];
+  items?: string[];
+  note?: string;
+  resolution?: string;
+  authority?: string;
+  evidence?: MemoryEvidence[];
+  superseded_by?: string;
+  replaced?: string[];
+}
+
+export interface MemoryStatus {
+  model: string | null;
+  indexed: number;
+  pending: number;
 }
 
 export interface RoutineDraft {

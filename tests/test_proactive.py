@@ -118,7 +118,7 @@ async def test_tool_loop_final_message_handoff_and_model_summary(loop):
     repaired = repair_history(history, 10000)
     assert repaired[0]["role"] == "user" and repaired[1:] == history
     tools = [t["function"]["name"] for t in loop.runtime.llm.inputs[0][1]]
-    assert {"routine_list", "shell", "memory_write"} <= set(tools)
+    assert {"routine_list", "shell", "memory_save"} <= set(tools)
     snapshot = (await loop.store.list("session"))[0]["tool_policy"]
     assert snapshot["preset"] == "safe_manual"
 

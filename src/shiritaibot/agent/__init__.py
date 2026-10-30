@@ -12,6 +12,7 @@ from shiritaibot.agent.commands import command
 from shiritaibot.agent.context import ContextManager, context_chars
 from shiritaibot.core import Context, PublicError, canonical, fingerprint, now, uid
 from shiritaibot.core.logs import Logger, brief, describe_session, get_logger
+from shiritaibot.memory.recall import MemoryRecall
 from shiritaibot.proactive import (
     PREPARE_SESSION,
     REPORT_SPEC,
@@ -108,6 +109,13 @@ def localize(rows: list[dict], zone: ZoneInfo) -> list[dict]:
             row[key] = stamp.strftime("%Y-%m-%d %H:%M")
         result.append(row)
     return result
+
+
+def recent_lines(rows: list[dict], zone: ZoneInfo) -> str:
+    """Recent per-turn summaries as readable lines with absolute local times."""
+    return "\n".join(
+        f"[近期摘要] {row['created']} {row['summary']}" for row in localize(rows, zone)
+    )
 
 
 def local_clock(zone: ZoneInfo) -> str:
@@ -302,6 +310,7 @@ class AgentRuntime:
     def __init__(self, config, store, llm, registry, memory, deliver, short_term=None):
         self.config, self.store, self.llm = config, store, llm
         self.registry, self.memory, self.deliver = registry, memory, deliver
+        self.recall = MemoryRecall(memory) if memory is not None else None
         self.short_term = short_term
         self.actors: dict[str, SessionActor] = {}
         self.submit_locks: dict[str, asyncio.Lock] = {}
@@ -496,22 +505,23 @@ class AgentRuntime:
         await self.store.put("turn", ctx.turn, body, ctx.session)
         try:
             async with asyncio.timeout(cfg.policy.max_turn_seconds):
-                # Chat never calls the private memory interface, even for the owner in a group.
-                memory = (
-                    await self.memory.search(ctx, text)
-                    if ctx.owner and ctx.mode == "agent" and not ctx.group
-                    else []
-                )
-                if self.short_term and ctx.owner and ctx.mode == "agent" and not ctx.group:
-                    memory += await self.short_term.recent(limit=5)
                 zone = ZoneInfo(cfg.proactive.timezone)
+                recalled = []
+                # Chat never calls the private memory interface, even for the owner in a group.
+                if ctx.owner and ctx.mode == "agent" and not ctx.group:
+                    if self.recall is not None and cfg.memory.inject:
+                        recalled.append(
+                            await self.recall.render(ctx, text, cfg.memory.inject_chars)
+                        )
+                    if self.short_term:
+                        recalled.append(recent_lines(await self.short_term.recent(limit=5), zone))
                 user = {
                     "role": "user",
                     "_speaker": cfg.owner_name if ctx.owner else ctx.actor,
                     "_original_content": text,
                     "content": text
                     + f"\n<context local_time='{local_clock(zone)}' timezone='{cfg.proactive.timezone}'>\n"
-                    + canonical(localize(memory, zone))
+                    + "\n".join(block for block in recalled if block)
                     + "\n</context>",
                 }
                 # Persist the original input even if context compression fails.

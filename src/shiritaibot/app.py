@@ -45,7 +45,8 @@ class Application:
         self.registry = ToolRegistry(self.permissions, self.store)
         self.llm = ProviderManager(self.config, self.vault, self.store)
         self.permissions.llm = self.llm
-        self.memory = MemoryManager(self.store)
+        self.memory = MemoryManager(self.store, self.config, self.llm)
+        await self.memory.open()
         self.short_term = ShortTermMemory(self.store, self.llm, config=self.config)
         await self.short_term.recover()
         self.adapters = AdapterHub(self.config, self.vault, self.store)
@@ -78,6 +79,7 @@ class Application:
             asyncio.create_task(self.routine.run()),
             asyncio.create_task(self.proactive.run()),
             asyncio.create_task(self.short_term.run()),
+            asyncio.create_task(self.memory.run()),
         ]
         cfg = self.config.value
         log.log(

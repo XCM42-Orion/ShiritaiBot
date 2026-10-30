@@ -27,10 +27,9 @@ class Store:
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.execute("PRAGMA busy_timeout=5000")
-        sql = await asyncio.to_thread(
-            (Path(__file__).parent / "migrations/001.sql").read_text, encoding="utf-8"
-        )
-        await self.db.executescript(sql)
+        # Every migration is idempotent (IF NOT EXISTS) and runs in file order.
+        for path in sorted((Path(__file__).parent / "migrations").glob("*.sql")):
+            await self.db.executescript(await asyncio.to_thread(path.read_text, encoding="utf-8"))
         await self.db.commit()
         for kind in ["turn", "subagent_run", "approval"]:
             while rows := await self.with_status(

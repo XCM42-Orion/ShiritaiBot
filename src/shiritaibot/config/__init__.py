@@ -64,6 +64,9 @@ class ModelConfig(Instance):
         default_factory=lambda: ["text"], min_length=1
     )
     extra_body: dict[str, JsonValue] = Field(default_factory=dict)
+    # embedding models only serve the embedding route; dims 0 keeps the model default.
+    kind: Literal["text", "embedding"] = "text"
+    dims: int = Field(default=0, ge=0, le=16384)
 
     @field_validator("extra_body", mode="before")
     @classmethod
@@ -144,6 +147,12 @@ class ContextConfig(Model):
         if self.keep_recent_turns >= self.max_turns:
             raise ValueError("keep_recent_turns must be less than max_turns")
         return self
+
+
+class MemoryConfig(Model):
+    # Long-term memory recall for owner Agent sessions and Proactive loops.
+    inject: bool = True
+    inject_chars: int = Field(default=1500, ge=200, le=20000)
 
 
 class GroupContextConfig(Model):
@@ -238,16 +247,19 @@ class ProactiveConfig(Model):
         return value
 
 
-ROUTE_KEYS = ("chat", "agent", "agent_chat", "router", "light")
+ROUTE_KEYS = ("chat", "agent", "agent_chat", "router", "light", "memory", "embedding")
 # Routes whose callers can use a decision model; other candidates still serve text calls.
-DECISION_ROUTES = ("router", "light")
+DECISION_ROUTES = ("router", "light", "memory")
+# Protocols with an embeddings endpoint (OpenAI-compatible /embeddings or Gemini).
+EMBEDDING_PROTOCOLS = ("chat_completions", "responses", "gemini")
 
 
 class Settings(Model):
     providers: list[ProviderConfig] = Field(default_factory=list)
     models: list[ModelConfig] = Field(default_factory=list)
     # chat: Chat 默认；agent: Agent Work（长程任务，含 Main/Proactive Loop）；
-    # agent_chat: Agent 模式日常对话；router: Work/Chat 分流；light: 主动事件分诊。
+    # agent_chat: Agent 模式日常对话；router: Work/Chat 分流；light: 主动事件分诊；
+    # memory: 记忆抽取与判断（空则用 light）；embedding: 记忆向量。
     routes: dict[str, list[str]] = Field(default_factory=lambda: {k: [] for k in ROUTE_KEYS})
     # When off, every Agent-mode turn uses the Agent Work route.
     agent_split: bool = False
@@ -267,6 +279,7 @@ class Settings(Model):
     private_require_keyword: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
     group_context: GroupContextConfig = Field(default_factory=GroupContextConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
     @field_validator("routes")
     @classmethod
@@ -331,8 +344,25 @@ class Settings(Model):
             if key not in (*DECISION_ROUTES, "test")
             for m in route
         ):
-            raise ValueError("decision models can only be used in the router and light routes")
-        if {self.context.compression_model, self.policy.approval_model} & decision:
+            raise ValueError(
+                "decision models can only be used in the router, light and memory routes"
+            )
+        embedding = {m.id for m in self.models if m.kind == "embedding"}
+        if any(
+            (m in embedding) != (key == "embedding")
+            for key, route in self.routes.items()
+            if key != "test"
+            for m in route
+        ):
+            raise ValueError("embedding models can only be used in the embedding route, alone")
+        if any(
+            p.id == m.provider and p.protocol not in EMBEDDING_PROTOCOLS
+            for m in self.models
+            if m.kind == "embedding"
+            for p in self.providers
+        ):
+            raise ValueError("embedding models need an OpenAI-compatible or Gemini provider")
+        if {self.context.compression_model, self.policy.approval_model} & (decision | embedding):
             raise ValueError("compression and approval models must generate text")
         if self.default_persona and not any(
             p.id == self.default_persona and p.enabled for p in self.personas

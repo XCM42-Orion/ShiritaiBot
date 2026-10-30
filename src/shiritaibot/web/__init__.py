@@ -42,12 +42,6 @@ class ApprovalInput(Model):
     allow: bool
 
 
-class MemoryInput(Model):
-    content: str = Field(min_length=1, max_length=16000)
-    kind: str = "knowledge"
-    visibility: str = "private"
-
-
 class ModelTestInput(Model):
     provider: ProviderConfig
     model: ModelConfig
@@ -277,20 +271,18 @@ def create_app(
         await runtime.permissions.resolve(key, body.allow)
         return {"ok": True}
 
+    # Read-only: the Agent maintains memory through tools (DESIGN.md §1.1).
     @api.get("/api/memory", dependencies=protected)
-    async def memories():
-        return await runtime.memory.list()
+    async def memories(kind: str = "", q: str = ""):
+        return await runtime.memory.browse(kind[:20], q[:200])
 
-    @api.post("/api/memory", dependencies=protected)
-    async def memory(body: MemoryInput):
-        return await runtime.memory.add(
-            Context("web:owner", "owner", "agent", True), body.content, body.kind, body.visibility
-        )
+    @api.get("/api/memory/status", dependencies=protected)
+    async def memory_status():
+        return await runtime.memory.vectors.status(await runtime.memory.documents())
 
-    @api.post("/api/memory/{key}/archive", dependencies=protected)
-    async def archive_memory(key: str):
-        await runtime.memory.archive(key)
-        return {"ok": True}
+    @api.get("/api/memory/{key}", dependencies=protected)
+    async def memory_detail(key: str):
+        return await runtime.memory.get(key)
 
     @api.post("/api/routines", dependencies=protected)
     async def routine(body: RoutineItem):
@@ -386,6 +378,9 @@ def create_app(
             raise PublicError(
                 "请检查提供商地址和模型配置；地址须为不含账号和查询参数的 HTTP(S) 地址"
             ) from None
+        if model.kind == "embedding":
+            _, vectors = await runtime.llm.embed(["Connection test"], settings=cfg, route="test")
+            return {"text": f"向量维度 {len(vectors[0])}", "usage": {}}
         if provider.protocol == "systemone":
             answers = await runtime.llm.decide(
                 "test",

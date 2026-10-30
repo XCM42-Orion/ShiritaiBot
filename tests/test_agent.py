@@ -163,8 +163,9 @@ def test_history_repairs_dangling_calls_and_trims_complete_pairs():
 
 
 async def test_private_memory_does_not_enter_chat_prompt(app):
-    owner = Context("web:owner", "owner", "agent", True)
-    await app.memory.add(owner, "我最喜欢的密码提示是银河")
+    owner = Context("web:owner", "owner", "agent", True, turn="t1")
+    await app.store.append("web:owner", "t1", {"role": "user", "content": "我的密码提示是银河"})
+    await app.memory.save_fact(owner, "主人的密码提示是银河", "密码提示是银河", "主人")
     group = Context("group:qq:1", "owner", "chat", True, True)
     llm = ToolLLM()
     app.runtime.llm = llm
