@@ -7,6 +7,9 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
 from shiritaibot.core import Context, PublicError, Tool, canonical, uid
+from shiritaibot.core.logs import describe_session, get_logger
+
+log = get_logger("工具")
 
 
 class ToolRegistry:
@@ -60,6 +63,11 @@ class ToolRegistry:
         except TimeoutError:
             return canonical({"error": "工具超时，执行已中止"})
         except Exception as exc:
+            log.error(
+                f"工具 {name} 抛出异常（{type(exc).__name__}）",
+                describe_session(ctx.session),
+                exc=exc,
+            )
             await self.store.activity("tool.failed", f"{name}: {type(exc).__name__}", ctx.session)
             return canonical({"error": f"工具失败 ({type(exc).__name__})，请检查配置或连接"})
 

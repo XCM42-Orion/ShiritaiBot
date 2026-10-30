@@ -31,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from shiritaibot.plugin_api import ExternalEvent, Plugin, PublicError
+from shiritaibot.plugin_api import ExternalEvent, Plugin, PublicError, brief
 
 Security = Literal["ssl", "starttls", "none"]
 
@@ -239,6 +239,14 @@ class Entry(Plugin):
                 temp.replace(self.state_path)
 
             await asyncio.to_thread(save)
+            if mails:
+                self.context.logger.log(
+                    f"收到 {len(mails)} 封新邮件："
+                    + "、".join(brief(mail["subject"] or "（无主题）", 40) for _, mail in mails[:3])
+                    + (" 等" if len(mails) > 3 else "")
+                )
+            else:
+                self.context.logger.debug("收件完成，没有新邮件")
             return len(mails)
 
     def cutoff(self, state: dict | None) -> datetime | None:
@@ -326,6 +334,7 @@ class Entry(Plugin):
             try:
                 await self.sync_once()
             except Exception as exc:
+                self.context.logger.warning(f"收件失败（{type(exc).__name__}）")
                 await self.context.emit(
                     ExternalEvent(
                         source="email",
@@ -349,6 +358,9 @@ class Entry(Plugin):
         message["Message-ID"] = make_msgid(domain=cfg.smtp_host)
         message.set_content(f"{text}\n\n-- \n来源：{source}\n")
         await asyncio.to_thread(self.deliver, message, password)
+        self.context.logger.log(
+            f"已通过邮件转发通知给 {len(cfg.notify_to)} 个收件人：{headline[:60]}"
+        )
 
     def deliver(self, message: EmailMessage, password: str) -> None:
         cfg = self.settings

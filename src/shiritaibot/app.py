@@ -9,6 +9,7 @@ from shiritaibot.agent import AgentRuntime
 from shiritaibot.auth import Permissions, Vault
 from shiritaibot.config import ConfigService, Settings
 from shiritaibot.core import EventBus
+from shiritaibot.core.logs import get_logger
 from shiritaibot.llm import ProviderManager
 from shiritaibot.memory import MemoryManager, ShortTermMemory
 from shiritaibot.plugin.core import PluginManager
@@ -18,6 +19,8 @@ from shiritaibot.store import Store
 from shiritaibot.subagent import SubagentManager
 from shiritaibot.tools import ToolRegistry
 from shiritaibot.tools.builtin import register_builtin
+
+log = get_logger("ShiritaiBot")
 
 
 class Application:
@@ -30,6 +33,7 @@ class Application:
         self.configure_lock = asyncio.Lock()
 
     async def start(self) -> None:
+        log.log(f"正在启动，数据目录 {self.home}")
         await self.config.load()
         await self.store.open()
         self.vault = Vault(self.home, self.store)
@@ -75,6 +79,12 @@ class Application:
             asyncio.create_task(self.proactive.run()),
             asyncio.create_task(self.short_term.run()),
         ]
+        cfg = self.config.value
+        log.log(
+            f"启动完成：{len(self.registry.tools)} 个工具，{len(self.plugins.loaded)} 个插件，"
+            f"{len(self.adapters.instances)} 个协议端；主动性引擎"
+            + ("已启用" if cfg.proactive.enabled else "未启用")
+        )
 
     async def deliver(self, session: str, text: str) -> None:
         if session.startswith(PREPARE_SESSION):
@@ -87,6 +97,7 @@ class Application:
 
     async def reconfigure(self, settings: Settings) -> None:
         async with self.configure_lock:
+            log.log("配置已更新，正在重载协议端、内置工具与插件")
             settings = await self.vault.protect_settings(settings, await self.plugins.schemas())
             await self.config.save(settings)
             await self.adapters.close()
@@ -95,6 +106,7 @@ class Application:
             await self.plugins.reload_all()
 
     async def close(self) -> None:
+        log.log("正在关闭…")
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
@@ -104,3 +116,4 @@ class Application:
         await self.adapters.close()
         await self.llm.close()
         await self.store.close()
+        log.log("已关闭")

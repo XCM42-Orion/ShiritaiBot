@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import time
 from copy import deepcopy
 from typing import Any
 
 import httpx
 
 from shiritaibot.core import PublicError, Reply, canonical, uid
+from shiritaibot.core.logs import get_logger
+
+log = get_logger("模型")
 
 
 def plain(message: dict) -> dict:
@@ -414,6 +418,7 @@ class ProviderManager:
                     and estimated_tokens(body) + reserved_output > model.max_context
                 ):
                     context_skipped = True
+                    log.warning(f"{model.id} 的估算上下文超过上限 {model.max_context}，跳过", route)
                     await self.store.activity("provider.context_limit", model.id)
                     continue
                 ref = provider.api_key
@@ -427,6 +432,7 @@ class ProviderManager:
                     headers["x-goog-api-key"] = token
                 elif token:
                     headers["Authorization"] = f"Bearer {token}"
+                started = time.monotonic()
                 try:
                     response = await self._request(
                         provider,
@@ -441,8 +447,17 @@ class ProviderManager:
                         uid(),
                         {"model": model.id, "protocol": provider.protocol, "usage": reply.usage},
                     )
+                    log.debug(
+                        f"{model.id} 应答，用时 {time.monotonic() - started:.1f}s"
+                        + (f"，请求调用 {len(reply.calls)} 个工具" if reply.calls else ""),
+                        route,
+                    )
                     return reply
                 except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+                    log.warning(
+                        f"{model.id} 调用失败（{failure(provider.id, exc)}），尝试下一个候选模型",
+                        route,
+                    )
                     await self.store.activity("provider.failed", failure(provider.id, exc))
         if context_skipped:
             raise PublicError(
@@ -496,5 +511,6 @@ class ProviderManager:
                 )
                 return answers
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                log.warning(f"决策模型 {model.id} 调用失败（{failure(provider.id, exc)}）", route)
                 await self.store.activity("provider.failed", failure(provider.id, exc))
         return None

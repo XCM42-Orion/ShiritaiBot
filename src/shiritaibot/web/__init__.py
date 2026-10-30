@@ -29,6 +29,10 @@ class SecretInput(Model):
     value: str = Field(min_length=1, max_length=10000)
 
 
+class LogLevelInput(Model):
+    level: str = Field(pattern=r"^(debug|info|warning|error)$")
+
+
 class MessageInput(Model):
     text: str = Field(min_length=1, max_length=32000)
     session: str = Field(default="web:owner", pattern=r"^web:[a-zA-Z0-9_-]{1,80}$")
@@ -65,14 +69,19 @@ def ensure_token(home: Path) -> str:
 
 
 def create_app(
-    home: Path, token: str | None = None, allowed_hosts: list[str] | None = None
+    home: Path,
+    token: str | None = None,
+    allowed_hosts: list[str] | None = None,
+    log_level: str | None = None,
 ) -> FastAPI:
     runtime = Application(home)
+    manager = logs.LogManager(home, log_level)
+    web_log = logs.get_logger("WebUI")
 
     @asynccontextmanager
     async def lifespan(api):
         api.state.token = token or await asyncio.to_thread(ensure_token, home)
-        handler = await asyncio.to_thread(logs.install, home)
+        await asyncio.to_thread(manager.install)
         try:
             await runtime.start()
             try:
@@ -80,7 +89,7 @@ def create_app(
             finally:
                 await runtime.close()
         finally:
-            logs.uninstall(handler)
+            manager.uninstall()
 
     api = FastAPI(title="ShiritaiBot", version="0.1.0", lifespan=lifespan)
     api.state.runtime = runtime
@@ -227,7 +236,27 @@ def create_app(
     @api.get("/api/logs/raw", dependencies=protected)
     async def raw_logs(lines: int = 500, q: str = ""):
         lines = max(1, min(lines, 5000))
-        return {"lines": await asyncio.to_thread(logs.tail, home, lines, q[:200])}
+        return {"lines": await asyncio.to_thread(manager.tail, lines, q[:200])}
+
+    @api.get("/api/logs", dependencies=protected)
+    async def structured_logs(limit: int = 500, level: str = "", source: str = "", q: str = ""):
+        limit = max(1, min(limit, 5000))
+        return await asyncio.to_thread(manager.entries, limit, level[:10], source[:200], q[:200])
+
+    @api.get("/api/logs/level", dependencies=protected)
+    async def log_level_get():
+        return {"level": manager.level_name}
+
+    @api.put("/api/logs/level", dependencies=protected)
+    async def log_level_set(body: LogLevelInput):
+        before = manager.level_name
+        # Announce at whichever of the two levels still lets a LOG line through.
+        if body.level in {"warning", "error"}:
+            web_log.log(f"日志级别 {before.upper()} → {body.level.upper()}")
+        level = await asyncio.to_thread(manager.set_level, body.level)
+        if body.level not in {"warning", "error"}:
+            web_log.log(f"日志级别 {before.upper()} → {level.upper()}")
+        return {"level": level}
 
     @api.get("/api/history", dependencies=protected)
     async def history(session: str = "web:owner"):
@@ -235,6 +264,8 @@ def create_app(
 
     @api.post("/api/messages", dependencies=protected)
     async def message(body: MessageInput):
+        where = "" if body.session == "web:owner" else body.session
+        web_log.log(logs.brief(body.text, 200), where, "主人")
         return {
             "status": await runtime.runtime.submit(
                 Context(body.session, "owner", "agent", True), body.text

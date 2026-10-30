@@ -198,6 +198,22 @@ class Entry(Plugin):
         return {"answer": "hello"}
 ```
 
-`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册和主动通知通道注册。学校适配插件可继承公共 API 导出的 `OneLearnPlugin`，只补充自己的适配进程入口。插件退出时必须在 `close()` 中取消自建任务。
+`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册、主动通知通道注册和日志。
+
+## 日志
+
+`self.context.logger` 是宿主 `LogManager` 的 `Logger`，来源固定为 `插件:<id>`。它同时输出到彩色终端、滚动日志文件 `data/logs/shiritaibot.log` 和 WebUI「日志 → 运行日志」：
+
+```python
+log = self.context.logger
+log.debug("仅在 --log-level debug 时显示")
+log.log("收到 3 封新邮件")             # [LOG][时间][插件:email]: 收到 3 封新邮件
+log.warning("收件失败（TimeoutError）", "INBOX")  # 额外参数是附加标签：[插件:email][INBOX]
+log.error("同步出错", exc=exc)          # exc 会把堆栈写入日志文件
+```
+
+需要更多来源时可用 `get_logger("名称")` 或 `logger.bind("标签")`；`brief(value, limit)` 把字符串、字典或列表压成一行可读文本。请写人话摘要，不要直接记录原始 JSON、凭据或完整正文。
+
+学校适配插件可继承公共 API 导出的 `OneLearnPlugin`，只补充自己的适配进程入口。插件退出时必须在 `close()` 中取消自建任务。
 
 手动热重载会先验证新入口和工具 schema，再替换旧实例；失败时保留原实例。正在执行的同插件工具通过锁与重载互斥。主程序重构不要求插件导入内部服务。

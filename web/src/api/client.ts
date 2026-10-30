@@ -4,6 +4,7 @@ import type {
   DiscoveredModel,
   Health,
   HistoryMessage,
+  LogFeed,
   MemoryRecord,
   ModelConfig,
   ModelTestResult,
@@ -28,6 +29,13 @@ export class ApiError extends Error {
   }
 }
 
+export interface LogFilter {
+  limit: number;
+  level: string;
+  source: string;
+  query: string;
+}
+
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export interface ApiClient {
@@ -40,6 +48,9 @@ export interface ApiClient {
   commands(): Promise<CommandInfo[]>;
   history(session: string): Promise<HistoryMessage[]>;
   rawLogs(lines: number, query: string): Promise<{ lines: string[] }>;
+  logs(filter: LogFilter): Promise<LogFeed>;
+  logLevel(): Promise<{ level: string }>;
+  setLogLevel(level: string): Promise<{ level: string }>;
   sendMessage(text: string, session: string): Promise<unknown>;
   resolveApproval(id: string, allow: boolean): Promise<unknown>;
   memories(): Promise<MemoryRecord[]>;
@@ -123,6 +134,19 @@ export function createClient(getToken: () => string): ApiClient {
       request<{ lines: string[] }>(
         "/logs/raw?lines=" + lines + "&q=" + encodeURIComponent(query),
       ),
+    logs: ({ limit, level, source, query }) =>
+      request<LogFeed>(
+        "/logs?" +
+          new URLSearchParams({
+            limit: String(limit),
+            level,
+            source,
+            q: query,
+          }).toString(),
+      ),
+    logLevel: () => request<{ level: string }>("/logs/level"),
+    setLogLevel: (level) =>
+      request<{ level: string }>("/logs/level", "PUT", { level }),
     sendMessage: (text, session) =>
       request("/messages", "POST", { text, session }),
     resolveApproval: (id, allow) =>

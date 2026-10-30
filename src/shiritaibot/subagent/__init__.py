@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 
 from shiritaibot.core import Context, ExternalEvent, PublicError, uid
+from shiritaibot.core.logs import brief, get_logger
 from shiritaibot.core.process import run_process
+
+log = get_logger("子代理")
 
 
 def command_for(config, workspace: Path) -> list[str]:
@@ -78,6 +81,7 @@ class SubagentManager:
             self.run(key, ctx, config.model_copy(deep=True), workspace, prompt)
         )
         self.tasks[key] = task
+        log.log(f"已排队 {instance}（{config.kind}）：{brief(prompt, 80)}", key[:8])
         task.add_done_callback(lambda _: self.tasks.pop(key, None))
         return row
 
@@ -87,6 +91,7 @@ class SubagentManager:
             async with self.semaphore:
                 row["status"] = "running"
                 await self.store.put("subagent_run", key, row, ctx.session)
+                log.log(f"{config.id} 开始运行", key[:8])
                 result = await run_process(
                     command_for(config, workspace), workspace, prompt, config.timeout, limit=256000
                 )
@@ -120,10 +125,18 @@ class SubagentManager:
                 # Raw stderr is deliberately not written into the activity feed.
         except asyncio.CancelledError:
             row["status"] = "cancelled"
+            log.log(f"{config.id} 已取消", key[:8])
             raise
         except Exception as exc:
             row.update(status="failed", error=type(exc).__name__)
+            log.error(f"{config.id} 运行失败（{type(exc).__name__}）", key[:8])
         finally:
+            if row["status"] in {"completed", "failed"} and "error" not in row:
+                (log.log if row["status"] == "completed" else log.warning)(
+                    f"{config.id} {'完成' if row['status'] == 'completed' else '失败'}"
+                    f"（退出码 {row.get('exit_code')}）：{brief(row.get('result', ''), 100)}",
+                    key[:8],
+                )
             await self.store.put("subagent_run", key, row, ctx.session)
             await self.emit(
                 ExternalEvent(

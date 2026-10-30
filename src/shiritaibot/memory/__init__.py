@@ -8,6 +8,9 @@ import jieba
 
 from shiritaibot.agent.context import transcript
 from shiritaibot.core import Context, PublicError, canonical, now, uid
+from shiritaibot.core.logs import brief, describe_session, get_logger
+
+log = get_logger("记忆")
 
 
 class MemoryManager:
@@ -36,6 +39,7 @@ class MemoryManager:
             except BaseException:
                 await self.store.db.rollback()
                 raise
+        log.log(f"写入长期记忆（{kind}，{visibility}）：{brief(content, 100)}")
         return {"id": key, "content": content, "visibility": visibility, "kind": kind}
 
     async def search(self, ctx: Context, query: str) -> list[dict]:
@@ -57,6 +61,7 @@ class MemoryManager:
 
     async def archive(self, key: str) -> None:
         await self.store.execute("UPDATE memory SET status='archived' WHERE id=?", (key,))
+        log.log(f"长期记忆 {key[:8]} 已归档")
 
 
 class ShortTermMemory:
@@ -186,6 +191,7 @@ class ShortTermMemory:
             row["memory_scope"],
         )
         await self.store.delete("memory_summary", row["id"])
+        log.debug(f"短期记忆已生成：{brief(summary, 100)}", describe_session(row["session"]))
 
     async def tick(self) -> None:
         async with self.lock:
@@ -195,6 +201,10 @@ class ShortTermMemory:
                 try:
                     await self.compress(row)
                 except Exception as exc:
+                    log.warning(
+                        f"短期记忆摘要失败（{type(exc).__name__}），60 秒后重试",
+                        describe_session(row["session"]),
+                    )
                     row.update(retry_at=now().timestamp() + 60, error=type(exc).__name__)
                     await self.store.put("memory_summary", row["id"], row)
             await self.store.execute(
@@ -208,6 +218,7 @@ class ShortTermMemory:
             try:
                 await self.tick()
             except Exception as exc:
+                log.error(f"短期记忆循环出错（{type(exc).__name__}）", exc=exc)
                 await self.store.activity("memory.summary_failed", type(exc).__name__)
             try:
                 await asyncio.wait_for(self.wake.wait(), timeout=10)

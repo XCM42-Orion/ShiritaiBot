@@ -9,6 +9,11 @@ from croniter import croniter
 from pydantic import AwareDatetime, Field, model_validator
 
 from shiritaibot.core import ExternalEvent, Model, now, uid
+from shiritaibot.core.logs import brief, get_logger
+
+log = get_logger("日程")
+
+KINDS = {"todo": "待办", "event": "日程", "reminder": "提醒", "job": "定时任务"}
 
 
 class RoutineItem(Model):
@@ -51,6 +56,15 @@ class RoutineManager:
             "next_fire": next_fire,
         }
         result = await self.store.put("routine", key, body, "owner")
+        log.log(
+            f"新建{KINDS[item.kind]}「{brief(item.title, 60)}」"
+            + (f"，cron {item.cron}" if item.cron else "")
+            + (
+                f"，时间 {item.due.astimezone(ZoneInfo(item.timezone)):%Y-%m-%d %H:%M}"
+                if item.due
+                else ""
+            )
+        )
         self.wake.set()
         return result
 
@@ -61,6 +75,9 @@ class RoutineManager:
         if not row:
             raise ValueError("routine not found")
         row.update(status=status, next_fire=None)
+        log.log(
+            f"{KINDS.get(row['kind'], row['kind'])}「{brief(row['title'], 60)}」状态改为 {status}"
+        )
         self.wake.set()
         return await self.store.put("routine", key, row, "owner")
 
@@ -86,6 +103,10 @@ class RoutineManager:
                     "late_seconds": delay,
                 },
             )
+            log.log(
+                f"{KINDS.get(row['kind'], row['kind'])}触发：{brief(row['title'], 80)}"
+                + (f"（延迟 {delay:.0f} 秒）" if delay > 60 else "")
+            )
             await self.emit(event)
             if row["kind"] == "job":
                 row["next_fire"] = (
@@ -104,6 +125,7 @@ class RoutineManager:
             try:
                 delay = await self.tick()
             except Exception as exc:
+                log.error(f"日程调度出错（{type(exc).__name__}），5 秒后重试", exc=exc)
                 await self.store.activity("scheduler.failed", type(exc).__name__)
                 delay = 5
             try:

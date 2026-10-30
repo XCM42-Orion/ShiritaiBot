@@ -13,9 +13,12 @@ from jsonschema import Draft202012Validator
 
 from shiritaibot.config import PluginConfig
 from shiritaibot.core import PublicError, uid
+from shiritaibot.core.logs import get_logger
 from shiritaibot.plugin_api import PluginContext
 
 from .packages import install_archive, remove_directory
+
+log = get_logger("插件")
 
 
 class PluginManager:
@@ -167,6 +170,7 @@ class PluginManager:
             if any(p["id"] == key for p in await self.discover()):
                 raise PublicError("同名插件已存在，请先移除或手动更新后重载")
             await asyncio.to_thread(install_archive, self.home / "plugins", key, archive)
+            log.log(f"已安装插件 {key}")
             await self.sync_config()
             try:
                 await self.reload(key)
@@ -195,6 +199,7 @@ class PluginManager:
                 settings.plugins = [p for p in settings.plugins if p.id != key]
                 await self.config.save(settings)
                 self.errors.pop(key, None)
+                log.log(f"已移除插件 {key}")
                 await self.store.activity("plugin.removed", key)
             await self.sync_config()
             return await self.listing()
@@ -224,6 +229,9 @@ class PluginManager:
                 else f"插件加载失败（{type(exc).__name__}）"
             )
             self.errors[key] = message
+            log.error(f"插件 {key} 加载失败：{message}")
+            # Tracebacks may quote plugin settings, so they only appear at debug level.
+            log.debug(f"插件 {key} 加载失败详情", exc=exc)
             await self.store.activity("plugin.failed", f"{key}: {type(exc).__name__}")
             raise
 
@@ -241,6 +249,7 @@ class PluginManager:
                 self.unregister(key)
                 if old:
                     await old.close()
+                    log.log(f"插件 {key} 已停用")
                 self._forget_modules(key)
                 return
             if metadata["error"]:
@@ -330,6 +339,11 @@ class PluginManager:
                 self.notifiers[key] = [guard(handler) for handler in context.notifiers]
             self.loaded[key] = plugin
             self._forget_modules(key, keep=module_name)
+            log.log(
+                f"插件 {metadata['name']}（{key}）已{'重新' if old else ''}加载："
+                f"{len(context.tools)} 个工具"
+                + (f"，{len(context.notifiers)} 个通知渠道" if context.notifiers else "")
+            )
             await self.store.activity("plugin.loaded", key)
 
     async def start(self) -> None:

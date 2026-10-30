@@ -9,10 +9,13 @@ from .base import (
     TEXT,
     Context,
     ExternalEvent,
+    Logger,
     Plugin,
     PluginContext,
     PublicError,
     Tool,
+    brief,
+    get_logger,
     run_process,
     schema,
 )
@@ -27,6 +30,9 @@ __all__ = [
     "TEXT",
     "schema",
     "run_process",
+    "Logger",
+    "get_logger",
+    "brief",
     "OneLearnPlugin",
 ]
 

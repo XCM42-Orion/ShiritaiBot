@@ -9,6 +9,7 @@ import re
 from websockets.asyncio.client import connect
 
 from shiritaibot.core import ApprovalPort, Context, PublicError, RuntimePort, canonical, now, uid
+from shiritaibot.core.logs import brief, get_logger
 
 
 def segments(value) -> list[dict]:
@@ -54,6 +55,7 @@ class OneBot:
         self.status = "disconnected"
         self.self_id = config.self_id
         self.events: asyncio.Queue = asyncio.Queue(maxsize=256)
+        self.log = get_logger(config.id)
 
     async def call(self, action: str, params: dict) -> dict:
         if not self.ws:
@@ -77,6 +79,7 @@ class OneBot:
             try:
                 await self.sink(self, data)
             except Exception as exc:
+                self.log.error(f"处理 OneBot 事件失败（{type(exc).__name__}）", exc=exc)
                 await self.store.activity(
                     "adapter.event_failed", f"{self.config.id}: {type(exc).__name__}"
                 )
@@ -85,16 +88,22 @@ class OneBot:
         result = await self.call("get_login_info", {})
         actual = str(result.get("user_id", ""))
         if self.config.self_id and actual != self.config.self_id:
+            self.log.error(
+                f"登录账号 {actual} 与配置的 self_id {self.config.self_id} 不一致，已断开"
+            )
             if self.ws:
                 await self.ws.close(code=1008, reason="self_id mismatch")
             return
         self.self_id = actual
         self.status = "connected"
+        self.log.log(f"已连接 OneBot，登录账号 {result.get('nickname') or actual}（{actual}）")
 
     async def run(self) -> None:
         delay = 1
+        warned = False
         while True:
             try:
+                self.log.debug(f"正在连接 {self.config.url}")
                 token = await self.vault.resolve(self.config.token)
                 async with connect(
                     self.config.url,
@@ -105,7 +114,7 @@ class OneBot:
                 ) as ws:
                     self.ws = ws
                     self.status = "connecting"
-                    delay = 1
+                    delay, warned = 1, False
                     async with asyncio.TaskGroup() as group:
                         consumer = group.create_task(self.consume())
                         identity = group.create_task(self.identify())
@@ -121,6 +130,7 @@ class OneBot:
                                     try:
                                         self.events.put_nowait(data)
                                     except asyncio.QueueFull:
+                                        self.log.warning("事件队列已满，丢弃一条 OneBot 事件")
                                         await self.store.activity(
                                             "adapter.overflow", self.config.id
                                         )
@@ -130,6 +140,10 @@ class OneBot:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                # Only the first failure of a reconnect streak is a warning; retries stay quiet.
+                message = f"连接断开或无法连接（{type(exc).__name__}），约 {delay} 秒后重连"
+                (self.log.debug if warned else self.log.warning)(message)
+                warned = True
                 await self.store.activity(
                     "adapter.disconnected", f"{self.config.id}: {type(exc).__name__}"
                 )
@@ -153,6 +167,7 @@ class AdapterHub:
     async def start(self) -> None:
         for cfg in self.config.value.adapters:
             if cfg.enabled:
+                get_logger(cfg.id).log(f"启动协议端（OneBot 11 → {cfg.url}）")
                 bot = OneBot(cfg, self.vault, self.store, self.receive)
                 self.instances[cfg.id] = bot
                 self.tasks.append(asyncio.create_task(bot.run()))
@@ -175,9 +190,13 @@ class AdapterHub:
             return
         group = event.get("message_type") == "group"
         target = str(event.get("group_id")) if group else user
+        sender = event.get("sender") or {}
+        speaker = f"{sender.get('card') or sender.get('nickname') or user}({user})"
         if group and target not in cfg.groups:
+            bot.log.debug(f"忽略未启用群 {target} 的消息", speaker)
             return
         if not group and user != cfg.owner_id and user not in cfg.friends:
+            bot.log.debug("忽略非好友名单用户的私聊", speaker)
             return
         session = f"{'group' if group else 'private'}:{cfg.id}:{target}"
         parts = segments(event.get("message", []))
@@ -190,8 +209,12 @@ class AdapterHub:
         settings = self.config.value
         keyword = any(word in text for word in settings.wake_keywords)
         message_id = f"{cfg.id}:{event.get('message_id')}"
+        where = f"群 {target}" if group else "私聊"
+        # Untriggered group chatter is only context, so it stays at debug level.
+        (bot.log.log if not group or mentioned or keyword else bot.log.debug)(
+            brief(describe(parts), 200) or "[空消息]", where, speaker
+        )
         if group and settings.group_context.enabled:
-            sender = event.get("sender") or {}
             await self.store.record_group(
                 session,
                 message_id,
@@ -215,6 +238,7 @@ class AdapterHub:
             and not keyword
             and not control
         ):
+            bot.log.debug("私聊未包含唤醒词，不处理", speaker)
             return
         for word in sorted(settings.wake_keywords, key=len, reverse=True):
             if text.startswith(word):
@@ -223,14 +247,17 @@ class AdapterHub:
         if not await self.store.execute(
             "INSERT OR IGNORE INTO seen_messages VALUES(?,?)", (message_id, now().timestamp())
         ):
+            bot.log.debug("重复消息，已跳过", speaker)
             return
         if not group and user == cfg.owner_id:
             match = re.fullmatch(r"(同意|拒绝)\s+([a-f0-9]{10})", text)
             if match:
                 try:
                     await self.permissions.resolve(match[2], match[1] == "同意")
+                    bot.log.log(f"主人{match[1]}了审批 {match[2]}", where)
                     await self.enqueue(session, "审批已处理。")
                 except PublicError as exc:
+                    bot.log.warning(f"审批 {match[2]} 处理失败：{exc}", where)
                     await self.enqueue(session, str(exc))
                 return
         for part in parts:
@@ -289,6 +316,9 @@ class AdapterHub:
                 bot = self.instances.get(adapter_id)
                 if row["expires"] < now().timestamp():
                     row["status"] = "expired"
+                    get_logger(adapter_id).warning(
+                        f"消息超过 24 小时仍未发出，已放弃：{brief(row['text'], 60)}"
+                    )
                 elif not bot or bot.status != "connected":
                     continue
                 else:
@@ -301,6 +331,10 @@ class AdapterHub:
                             },
                         )
                         row.update(status="sent", receipt=receipt)
+                        bot.log.debug(
+                            f"已发送：{brief(row['text'], 80)}",
+                            f"→ {'群' if kind == 'group' else '私聊'} {target}",
+                        )
                         if kind == "group" and self.config.value.group_context.enabled:
                             await self.store.record_group(
                                 row["scope"],
@@ -310,9 +344,14 @@ class AdapterHub:
                                 row["text"],
                                 False,
                             )
-                    except Exception:
+                    except Exception as exc:
                         # An unacknowledged send may have succeeded. Do not automatically duplicate it.
                         row["status"] = "uncertain"
+                        bot.log.warning(
+                            f"发送未确认（{type(exc).__name__}），为避免重复不再重试："
+                            f"{brief(row['text'], 60)}",
+                            f"→ {'群' if kind == 'group' else '私聊'} {target}",
+                        )
                     await asyncio.sleep(0.7)
                 await self.store.put("outbox", row["id"], row, row["scope"])
             await asyncio.sleep(1)

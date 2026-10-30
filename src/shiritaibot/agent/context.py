@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 
 from shiritaibot.core import PublicError, canonical
+from shiritaibot.core.logs import describe_session, get_logger
+
+log = get_logger("上下文")
 
 
 def context_chars(messages: list[dict]) -> int:
@@ -129,6 +132,10 @@ class ContextManager:
                             ]
                         )
                     summary = await summarize(material)
+                    log.log(
+                        f"上下文已压缩：{split} 轮旧对话合并为 {len(summary)} 字摘要",
+                        describe_session(session),
+                    )
             else:
                 summary = ""
                 split = max(0, len(groups) + 1 - cfg.context.max_turns)

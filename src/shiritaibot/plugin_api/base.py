@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from shiritaibot.core import Context, ExternalEvent, PublicError, Tool
+from shiritaibot.core.logs import Logger, brief, get_logger
 from shiritaibot.core.process import run_process
 from shiritaibot.tools import TEXT, schema
 
@@ -21,6 +22,11 @@ class PluginContext:
     tools: list[Tool] = field(default_factory=list)
     notifiers: list[Callable[[str, str], Awaitable[None]]] = field(default_factory=list)
     get_event: Callable[[str], Awaitable[dict | None]] | None = None
+    # Colored terminal + rolling file + WebUI feed, tagged with this plugin's id.
+    logger: Logger = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.logger = get_logger(f"插件:{self.id}")
 
     async def emit_many(self, events: list[ExternalEvent]) -> list[str]:
         """Submit a batch through the same ingress and deduplication as emit."""
@@ -77,4 +83,7 @@ __all__ = [
     "TEXT",
     "schema",
     "run_process",
+    "Logger",
+    "get_logger",
+    "brief",
 ]
