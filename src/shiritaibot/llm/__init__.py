@@ -303,6 +303,12 @@ class ProviderManager:
             headers = {"x-goog-api-key": token}
         elif token:
             headers = {"Authorization": f"Bearer {token}"}
+        if provider.protocol == "systemone":
+            # TypeSafe publishes model routes instead of a listing endpoint.
+            return [
+                {"id": key, "name": key, "max_output": 4096}
+                for key in ("jev-latest", "jev-preview")
+            ]
         base = provider.base_url.rstrip("/")
         params, found, cursors = {}, {}, set()
         try:
@@ -360,7 +366,7 @@ class ProviderManager:
         if not candidates:
             raise PublicError(f"尚未配置 {route} 模型路由，请在 WebUI 配置 Provider、模型和路由")
         async with self.semaphore:
-            context_skipped = False
+            context_skipped = decision_only = False
             for model_id in candidates:
                 model = next((m for m in cfg.models if m.id == model_id and m.enabled), None)
                 provider = next(
@@ -368,6 +374,9 @@ class ProviderManager:
                     None,
                 )
                 if not model or not provider:
+                    continue
+                if provider.protocol == "systemone":
+                    decision_only = True
                     continue
                 path, body = request_payload(
                     provider.protocol, model.model, system, messages, tools, model.max_output
@@ -430,4 +439,53 @@ class ProviderManager:
             raise PublicError(
                 "候选模型调用失败，部分模型的估算上下文超过上限，请减少输入或调整模型上下文配置"
             )
+        if decision_only:
+            raise PublicError(
+                f"{route} 路由的候选模型调用失败；Jev 等决策模型不生成文本，请再添加一个文本模型"
+            )
         raise PublicError("所有候选模型调用失败，请检查 Provider 地址、凭据与模型名称")
+
+    async def decide(
+        self, route: str, state: str | dict, questions: dict, settings=None
+    ) -> dict | None:
+        """Ask the route's System One decision models; None lets callers fall back to text."""
+        cfg = settings or self.config.value
+        for model_id in cfg.routes.get(route, []):
+            model = next((m for m in cfg.models if m.id == model_id and m.enabled), None)
+            provider = next(
+                (
+                    p
+                    for p in cfg.providers
+                    if model and p.id == model.provider and p.enabled and p.protocol == "systemone"
+                ),
+                None,
+            )
+            if not model or not provider:
+                continue
+            ref = provider.api_key
+            token = await self.vault.resolve(ref) if ref.startswith(("env:", "secret:")) else ref
+            headers = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            try:
+                async with self.semaphore:
+                    response = await self._request(
+                        provider,
+                        "POST",
+                        provider.base_url.rstrip("/") + "/systemone",
+                        json={"model": model.model, "state": state, "questions": questions},
+                        headers=headers,
+                    )
+                data = response.json()
+                answers = data["answers"]
+                if not isinstance(answers, dict) or answers.keys() != questions.keys():
+                    raise ValueError("incomplete answers")
+                await self.store.put(
+                    "usage",
+                    uid(),
+                    {"model": model.id, "protocol": "systemone", "usage": data.get("usage", {})},
+                )
+                return answers
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                await self.store.activity("provider.failed", f"{provider.id}: {type(exc).__name__}")
+        return None

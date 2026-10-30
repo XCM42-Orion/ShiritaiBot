@@ -42,6 +42,7 @@ uv run shiritaibot token
 - `proxy` 支持 `http://`、`https://`、`socks5://`、`socks5h://`，同时用于模型列表、当前配置测试和正式调用。留空沿用进程默认网络环境（包括环境变量代理）；填写后使用该提供商的独立代理。
 - 模型的 `extra_body` 支持 JSON 对象，例如 `{"temperature":0.7,"top_p":0.9}`。使用协议原生字段，Gemini 示例为 `{"generationConfig":{"temperature":0.7}}`。嵌套对象递归合并，其他值覆盖默认值；不能替换模型、对话、工具定义或开启流式响应。Chat Completions 指定 `max_tokens` 时会移除默认的 `max_completion_tokens`，避免字段冲突。界面保留未完成的 JSON 并提示错误，非法 JSON 不能测试或保存。为保留 `null`，写入 TOML 时该字段编码为 JSON 字符串，读取时恢复成对象。
 - `max_context` 表示输入与预留输出合计的 token 上限；默认 0（未指定），非零时须大于最大输出。当前采用 ASCII 约 4 字符/token、其他字符约 1 字符/token 的估算，包含系统提示、工具和不透明推理状态，不等同于各模型的精确 tokenizer。估算超限会跳过该模型并尝试路由中的下一项，不截断工具调用历史。
+- 接口协议 `systemone` 用于 [TypeSafe Jev](https://docs.typesafe.ai/api) 等决策模型（地址 `https://api.typesafe.ai/v1`，模型 `jev-latest` 或 `jev-preview`，Bearer 鉴权）。决策模型只返回带校准概率的分类，不生成文本，只能放在 `router` 和 `light` 路由，也不能作为压缩或审批模型。分流时 Jev 判定 Chat 的概率不低于 0.6 才走 Agent Chat，否则走 Work；分诊时取概率最高的重要性等级（0–4，4 必定通知）和通知建议，事件标题作为摘要。Jev 调用失败或路由中没有决策模型时回退到原有 LLM 提示词流程；文本调用（记忆、压缩、审批等）会跳过路由里的决策模型，因此 `light` 中请在 Jev 之后再放一个文本模型。
 - `modalities` 记录输入模态：`text`、`image`、`audio`、`video`，至少一项，默认仅文本。这是能力配置；当前消息传输仍以文本为主，不会因勾选而自动开启媒体处理。
 
 以上参数均可在 **模型与服务** 中编辑并保存。**测试当前配置**使用未保存的参数，测试过程中显示转圈并禁用按钮，成功或失败后均恢复。旧配置缺省值自动兼容，无需迁移。

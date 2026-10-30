@@ -23,7 +23,10 @@ class Instance(Model):
 
 class ProviderConfig(Instance):
     id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{1,128}$")
-    protocol: Literal["chat_completions", "responses", "anthropic", "gemini"] = "chat_completions"
+    # systemone: TypeSafe decision models (e.g. Jev); they classify and never generate text.
+    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "systemone"] = (
+        "chat_completions"
+    )
     base_url: str = "https://api.openai.com/v1"
     api_key: str = "env:OPENAI_API_KEY"
     timeout: int = Field(default=120, ge=5, le=600)
@@ -236,6 +239,8 @@ class ProactiveConfig(Model):
 
 
 ROUTE_KEYS = ("chat", "agent", "agent_chat", "router", "light")
+# Routes whose callers can use a decision model; other candidates still serve text calls.
+DECISION_ROUTES = ("router", "light")
 
 
 class Settings(Model):
@@ -314,6 +319,21 @@ class Settings(Model):
             raise ValueError("model references unknown provider")
         if any(m not in models for route in self.routes.values() for m in route):
             raise ValueError("route references unknown model")
+        decision = {
+            m.id
+            for m in self.models
+            for p in self.providers
+            if p.id == m.provider and p.protocol == "systemone"
+        }
+        if any(
+            m in decision
+            for key, route in self.routes.items()
+            if key not in (*DECISION_ROUTES, "test")
+            for m in route
+        ):
+            raise ValueError("decision models can only be used in the router and light routes")
+        if {self.context.compression_model, self.policy.approval_model} & decision:
+            raise ValueError("compression and approval models must generate text")
         if self.default_persona and not any(
             p.id == self.default_persona and p.enabled for p in self.personas
         ):

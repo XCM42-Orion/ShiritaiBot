@@ -18,6 +18,9 @@ from shiritaibot.proactive import (
     parse_loop_result,
 )
 
+# Minimum Jev probability for Chat; the LLM router is likewise told to prefer Work.
+ROUTER_CHAT_THRESHOLD = 0.6
+
 
 def repair_history(messages: list[dict], max_chars: int | None) -> list[dict]:
     """Keep complete request/result pairs, including after interrupted turns."""
@@ -370,6 +373,27 @@ class AgentRuntime:
         material = (
             ("最近对话：\n" + "\n".join(lines) + "\n\n" if lines else "") + "新消息：" + text[:2000]
         )
+        answers = await self.llm.decide(
+            "router",
+            material,
+            {
+                "route": {
+                    "type": "choice",
+                    "instructions": "判断新消息该交给哪类模型处理。",
+                    "criteria": {
+                        "work": "需要动手完成的任务：查资料、用工具、写代码、处理文件、邮件、"
+                        "日程、提醒、多步骤执行或延续之前未完成的任务",
+                        "chat": "日常聊天、情感交流、知识问答、观点讨论、简单寒暄，不需要执行任务",
+                    },
+                }
+            },
+            settings=cfg,
+        )
+        if answers is not None:
+            # Calibrated probabilities: only a clear Chat verdict leaves the Work route.
+            answer = answers["route"] if isinstance(answers["route"], dict) else {}
+            chat = (answer.get("probabilities") or {}).get("chat", 0)
+            return "agent_chat" if chat >= ROUTER_CHAT_THRESHOLD else "agent"
         try:
             reply = await self.llm.complete(
                 "router",

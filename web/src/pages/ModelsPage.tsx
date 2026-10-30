@@ -31,14 +31,17 @@ const ROUTES: { key: string; label: string; help: string }[] = [
   {
     key: "router",
     label: "工作/对话分流模型",
-    help: "建议使用 RPS 高的小模型。Agent 模式下新消息进入时判断属于 Work 还是 Chat，分流给对应模型。",
+    help: "建议使用 RPS 高的小模型或 Jev 决策模型。Agent 模式下新消息进入时判断属于 Work 还是 Chat，分流给对应模型。",
   },
   {
     key: "light",
     label: "主动事件分诊模型",
-    help: "为外部事件评估重要性，决定是否交给 Proactive Loop。",
+    help: "为外部事件评估重要性，决定是否交给 Proactive Loop。可优先放 Jev 决策模型；记忆摘要、上下文压缩和自动审批也使用此路由，会跳过 Jev，因此请再添加一个文本模型。",
   },
 ];
+
+// Decision models (systemone) classify only, so they fit just these routes.
+const DECISION_ROUTES = ["router", "light"];
 
 export function ModelsPage({
   client,
@@ -108,7 +111,8 @@ export function ModelsPage({
       extra_body: {},
     };
     const routes = { ...config.routes };
-    for (const key of ["agent", "chat", "light"]) {
+    const decision = provider.protocol === "systemone";
+    for (const key of decision ? ["light"] : ["agent", "chat", "light"]) {
       if (!routes[key]?.length) routes[key] = [id];
     }
     setConfig({ ...config, models: [...config.models, model], routes });
@@ -303,6 +307,13 @@ export function ModelsPage({
                     <option value="">＋ 添加模型</option>
                     {config.models
                       .filter((model) => !route.includes(model.id))
+                      .filter(
+                        (model) =>
+                          DECISION_ROUTES.includes(key) ||
+                          config.providers.find(
+                            (item) => item.id === model.provider,
+                          )?.protocol !== "systemone",
+                      )
                       .map((model) => (
                         <option key={model.id}>{model.id}</option>
                       ))}

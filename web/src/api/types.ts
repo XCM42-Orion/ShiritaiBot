@@ -2,7 +2,7 @@
 // Keep this file in sync with config/__init__.py, core/__init__.py and web/__init__.py.
 
 export type Protocol =
-  "chat_completions" | "responses" | "anthropic" | "gemini";
+  "chat_completions" | "responses" | "anthropic" | "gemini" | "systemone";
 export type Permission = "read_only" | "edit";
 export type SubagentKind = "codex" | "claude_code" | "generic";
 export type RoutineKind = "todo" | "event" | "reminder" | "job";

@@ -30,6 +30,9 @@ class Judge:
         self.systems.append(system)
         return Reply(text=json.dumps(self.decision, ensure_ascii=False))
 
+    async def decide(self, *args, **kwargs):
+        return None
+
 
 class Agent:
     def __init__(self, notify=True):
@@ -209,6 +212,9 @@ async def test_priority_order_and_timeout_fallback_survives_late_result(loop):
             return "queued"
 
     class Classifier:
+        async def decide(self, *args, **kwargs):
+            return None
+
         async def complete(self, route, system, messages, tools, **kwargs):
             event = json.loads(messages[0]["content"])
             return Reply(

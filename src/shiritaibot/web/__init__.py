@@ -17,7 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from shiritaibot.agent.commands import COMMANDS
 from shiritaibot.app import Application
 from shiritaibot.config import ModelConfig, ProviderConfig, Settings
-from shiritaibot.core import Context, ExternalEvent, Model, PublicError, logs
+from shiritaibot.core import Context, ExternalEvent, Model, PublicError, canonical, logs
 from shiritaibot.core.process import run_process
 from shiritaibot.plugin.core.packages import MAX_ARCHIVE, download_github, validate_id
 from shiritaibot.routine import RoutineItem
@@ -355,6 +355,16 @@ def create_app(
             raise PublicError(
                 "请检查提供商地址和模型配置；地址须为不含账号和查询参数的 HTTP(S) 地址"
             ) from None
+        if provider.protocol == "systemone":
+            answers = await runtime.llm.decide(
+                "test",
+                "Connection test",
+                {"ok": {"type": "noul", "instructions": "Is this a connection test?"}},
+                settings=cfg,
+            )
+            if answers is None:
+                raise PublicError("决策模型调用失败，请检查 Provider 地址、凭据与模型名称")
+            return {"text": canonical(answers)[:1000], "usage": {}}
         reply = await runtime.llm.complete(
             "test",
             "Reply with OK.",

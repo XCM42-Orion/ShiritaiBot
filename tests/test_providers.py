@@ -118,3 +118,130 @@ async def test_provider_fallback_and_usage(app):
     assert reply.text == "worked"
     assert [r["model"] for r in requests] == ["bad", "good"]
     assert (await app.store.list("usage"))[0]["usage"]["prompt_tokens"] == 10
+
+
+def jev_config(app, routes):
+    app.config.value.providers = [
+        ProviderConfig(id="ts", protocol="systemone", base_url="https://jev.test/v1", api_key="k"),
+        ProviderConfig(id="p", base_url="https://fake.test/v1", api_key=""),
+    ]
+    app.config.value.models = [
+        ModelConfig(id="jev", provider="ts", model="jev-latest"),
+        ModelConfig(id="text", provider="p", model="text"),
+    ]
+    app.config.value.routes.update(routes)
+
+
+async def use_transport(app, handle):
+    await app.llm.client.aclose()
+    app.llm.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+
+
+async def test_decision_models_answer_decide_and_are_skipped_for_text(app):
+    jev_config(app, {"light": ["jev", "text"]})
+    requests = []
+
+    async def handle(req):
+        body = json.loads(req.content)
+        requests.append((str(req.url), req.headers.get("authorization"), body))
+        if req.url.host == "jev.test":
+            return httpx.Response(
+                200,
+                json={
+                    "model": "jev-latest",
+                    "answers": {"q": {"type": "noul", "noul": 0.9}},
+                    "usage": {"input_tokens": 5},
+                },
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": "summary"}}]})
+
+    await use_transport(app, handle)
+    questions = {"q": {"type": "noul", "instructions": "?"}}
+    assert await app.llm.decide("light", "state", questions) == {"q": {"type": "noul", "noul": 0.9}}
+    reply = await app.llm.complete("light", "sys", [{"role": "user", "content": "hi"}], [])
+    assert reply.text == "summary"
+    assert requests[0] == (
+        "https://jev.test/v1/systemone",
+        "Bearer k",
+        {"model": "jev-latest", "state": "state", "questions": questions},
+    )
+    assert [url for url, *_ in requests[1:]] == ["https://fake.test/v1/chat/completions"]
+
+
+async def test_decide_returns_none_without_decision_model_or_on_failure(app):
+    jev_config(app, {"light": ["text"], "router": ["jev"]})
+
+    async def handle(req):
+        return httpx.Response(200, json={"answers": {}})
+
+    await use_transport(app, handle)
+    questions = {"q": {"type": "noul", "instructions": "?"}}
+    assert await app.llm.decide("light", "s", questions) is None
+    assert await app.llm.decide("router", "s", questions) is None
+    with pytest.raises(Exception, match="决策模型不生成文本"):
+        await app.llm.complete("router", "sys", [{"role": "user", "content": "hi"}], [])
+
+
+def test_decision_models_are_limited_to_decision_routes():
+    from shiritaibot.config import Settings
+
+    providers = [ProviderConfig(id="ts", protocol="systemone", base_url="https://jev.test/v1")]
+    models = [ModelConfig(id="jev", provider="ts", model="jev-latest")]
+    Settings(providers=providers, models=models, routes={"router": ["jev"], "light": ["jev"]})
+    with pytest.raises(ValueError, match="decision models"):
+        Settings(providers=providers, models=models, routes={"agent": ["jev"]})
+    with pytest.raises(ValueError, match="must generate text"):
+        Settings(
+            providers=providers,
+            models=models,
+            routes={"light": ["jev"]},
+            policy={"approval_model": "jev"},
+        )
+
+
+@pytest.mark.parametrize(("chat", "expected"), [(0.8, "agent_chat"), (0.55, "agent")])
+async def test_router_uses_jev_probabilities(app, chat, expected):
+    from shiritaibot.core import Context
+
+    jev_config(app, {"router": ["jev"], "agent": ["text"], "agent_chat": ["text"]})
+    app.config.value.agent_split = True
+
+    async def handle(req):
+        answer = {"type": "choice", "choice": "chat", "confidence": chat}
+        answer["probabilities"] = {"chat": chat, "work": 1 - chat}
+        return httpx.Response(200, json={"answers": {"route": answer}, "usage": {}})
+
+    await use_transport(app, handle)
+    ctx = Context("web:owner", "owner", "agent", True)
+    assert await app.runtime.route(ctx, app.config.value, "今天心情不好") == expected
+
+
+async def test_triage_uses_jev_most_probable_level(app):
+    from shiritaibot.core import ExternalEvent
+
+    jev_config(app, {"light": ["jev"]})
+
+    async def handle(req):
+        questions = json.loads(req.content)["questions"]
+        assert questions["importance"]["type"] == "score"
+        return httpx.Response(
+            200,
+            json={
+                "answers": {
+                    "importance": {
+                        "type": "score",
+                        "score": 2.9,
+                        "confidence": 0.5,
+                        "probabilities": {"0": 0.05, "1": 0.05, "2": 0.1, "3": 0.2, "4": 0.6},
+                    },
+                    "decision": {"type": "choice", "choice": "digest", "confidence": 0.7},
+                },
+                "usage": {},
+            },
+        )
+
+    await use_transport(app, handle)
+    event = ExternalEvent(source="email", kind="email.received", dedup_key="a", title="服务器宕机")
+    decision = await app.proactive.judge(event)
+    assert (decision.importance, decision.decision, decision.message) == (4, "notify", "服务器宕机")
+    assert "Jev" in decision.reason

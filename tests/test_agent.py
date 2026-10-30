@@ -202,6 +202,9 @@ class RoutedLLM:
         self.routes.append(route)
         return Reply(text=self.verdict if route == "router" else "好")
 
+    async def decide(self, *args, **kwargs):
+        return None
+
 
 @pytest.mark.parametrize(
     ("split", "verdict", "expected"),
