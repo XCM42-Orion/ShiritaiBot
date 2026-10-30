@@ -301,3 +301,19 @@ async def test_nonowner_cannot_escalate_tools_but_owner_can_configure_group(app)
     assert app.permissions.decision(group, app.registry.tools["shell"]) == "allow"
     await app.runtime.submit(group, "/mode chat")
     assert app.config.value.policy.sessions[group.session].mode == "agent"
+
+
+def test_raw_rolling_log_tail_and_filter(tmp_path):
+    with TestClient(create_app(tmp_path, token="admin")) as client:
+        assert client.get("/api/logs/raw").status_code == 401
+        client.headers["Authorization"] = "Bearer admin"
+        import logging
+
+        logging.getLogger("uvicorn.error").info("uvicorn says hi")
+        logging.getLogger("shiritaibot.test").warning("raw-log-marker")
+        lines = client.get("/api/logs/raw").json()["lines"]
+        assert any("raw-log-marker" in line and "WARNING" in line for line in lines)
+        assert any("uvicorn says hi" in line for line in lines)
+        filtered = client.get("/api/logs/raw", params={"q": "marker"}).json()["lines"]
+        assert filtered and all("marker" in line for line in filtered)
+        assert len(client.get("/api/logs/raw", params={"lines": 1}).json()["lines"]) == 1

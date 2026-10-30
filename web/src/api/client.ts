@@ -39,6 +39,7 @@ export interface ApiClient {
   stats(hours: number): Promise<Statistics>;
   commands(): Promise<CommandInfo[]>;
   history(session: string): Promise<HistoryMessage[]>;
+  rawLogs(lines: number, query: string): Promise<{ lines: string[] }>;
   sendMessage(text: string, session: string): Promise<unknown>;
   resolveApproval(id: string, allow: boolean): Promise<unknown>;
   memories(): Promise<MemoryRecord[]>;
@@ -117,6 +118,10 @@ export function createClient(getToken: () => string): ApiClient {
     history: (session) =>
       request<HistoryMessage[]>(
         "/history?session=" + encodeURIComponent(session),
+      ),
+    rawLogs: (lines, query) =>
+      request<{ lines: string[] }>(
+        "/logs/raw?lines=" + lines + "&q=" + encodeURIComponent(query),
       ),
     sendMessage: (text, session) =>
       request("/messages", "POST", { text, session }),

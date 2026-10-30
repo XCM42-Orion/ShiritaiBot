@@ -17,7 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from shiritaibot.agent.commands import COMMANDS
 from shiritaibot.app import Application
 from shiritaibot.config import ModelConfig, ProviderConfig, Settings
-from shiritaibot.core import Context, ExternalEvent, Model, PublicError
+from shiritaibot.core import Context, ExternalEvent, Model, PublicError, logs
 from shiritaibot.core.process import run_process
 from shiritaibot.plugin.core.packages import MAX_ARCHIVE, download_github, validate_id
 from shiritaibot.routine import RoutineItem
@@ -72,11 +72,15 @@ def create_app(
     @asynccontextmanager
     async def lifespan(api):
         api.state.token = token or await asyncio.to_thread(ensure_token, home)
-        await runtime.start()
+        handler = await asyncio.to_thread(logs.install, home)
         try:
-            yield
+            await runtime.start()
+            try:
+                yield
+            finally:
+                await runtime.close()
         finally:
-            await runtime.close()
+            logs.uninstall(handler)
 
     api = FastAPI(title="ShiritaiBot", version="0.1.0", lifespan=lifespan)
     api.state.runtime = runtime
@@ -219,6 +223,11 @@ def create_app(
         }:
             raise HTTPException(404)
         return await runtime.store.list(kind)
+
+    @api.get("/api/logs/raw", dependencies=protected)
+    async def raw_logs(lines: int = 500, q: str = ""):
+        lines = max(1, min(lines, 5000))
+        return {"lines": await asyncio.to_thread(logs.tail, home, lines, q[:200])}
 
     @api.get("/api/history", dependencies=protected)
     async def history(session: str = "web:owner"):

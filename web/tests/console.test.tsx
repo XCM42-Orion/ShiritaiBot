@@ -15,6 +15,7 @@ import type { PluginInfo, Settings } from "../src/api/types";
 import { Dashboard } from "../src/pages/Dashboard";
 import { ModelsPage } from "../src/pages/ModelsPage";
 import { ChatPage } from "../src/pages/ChatPage";
+import { LogsPage } from "../src/pages/LogsPage";
 import { PluginsPage } from "../src/pages/PluginsPage";
 import { SettingsPage } from "../src/pages/SettingsPage";
 import { SecretField } from "../src/components/SecretField";
@@ -113,6 +114,7 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     }),
     saveConfig: vi.fn().mockResolvedValue({ ok: true, version: 2 }),
     records: vi.fn().mockResolvedValue([]),
+    rawLogs: vi.fn().mockResolvedValue({ lines: [] }),
     stats: vi.fn().mockResolvedValue({
       hours: 24,
       timezone: "Asia/Shanghai",
@@ -622,6 +624,20 @@ it("renders an Agent Loop as text and collapsible tool calls", async () => {
   expect(screen.getByText("汇丰")).toBeTruthy();
   expect(screen.getByText("完成")).toBeTruthy();
   expect(screen.queryByText(/tool_call_id/)).toBeNull();
+});
+
+it("shows the raw rolling log with a keyword filter", async () => {
+  const client = fakeClient();
+  client.rawLogs = vi
+    .fn()
+    .mockResolvedValue({ lines: ["2026-10-30 08:00:01 INFO  x: notify.sent"] });
+  render(withQuery(<LogsPage client={client} act={act} />));
+  const user = userEvent.setup();
+  await user.click(screen.getByText("原始日志"));
+  expect(await screen.findByLabelText("原始日志")).toBeTruthy();
+  expect(screen.getByText(/notify\.sent/)).toBeTruthy();
+  await user.type(screen.getByLabelText("过滤原始日志"), "n");
+  await waitFor(() => expect(client.rawLogs).toHaveBeenCalledWith(500, "n"));
 });
 
 function NoticeControls() {

@@ -384,3 +384,43 @@
     width: 100%;
   }
 }
+
+/* Raw log */
+
+.raw-log-toolbar {
+  margin: 4px 0 12px;
+  flex-wrap: wrap;
+}
+
+.raw-log-toolbar input[type="search"],
+.raw-log-toolbar input:not([type]) {
+  flex: 1;
+  min-width: 180px;
+}
+
+.raw-log-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.raw-log {
+  max-height: 70vh;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.raw-log-hint {
+  margin-top: 8px;
+  font-size: 11px;
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import aiosqlite
 
 from shiritaibot.core import EventBus, canonical, now, uid
 
+log = logging.getLogger("shiritaibot.activity")
 GROUP_MESSAGES_KEPT = 2000
 
 
@@ -154,6 +156,7 @@ class Store:
         return rows[::-1]
 
     async def activity(self, kind: str, detail: str, scope: str = "") -> None:
+        log.info("%s %s%s", kind, detail, f" [{scope}]" if scope else "")
         await self.put(
             "activity", uid(), {"kind": kind, "detail": detail, "at": now().isoformat()}, scope
         )
