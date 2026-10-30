@@ -295,3 +295,23 @@ def test_parse_loop_result_defaults_reason_and_rejects_prose():
     assert parse_loop_result('{"notify":false,"message":"m"}').reason
     with pytest.raises(ValueError):
         parse_loop_result("只有分析文字")
+
+
+async def test_quiet_hours_deferral_is_logged_once(loop, monkeypatch):
+    monkeypatch.setattr("shiritaibot.proactive.quiet_hours", lambda *args: True)
+    key = await loop.proactive.emit(MAIL)
+    await loop.proactive.tick()
+    await finished(loop, key)
+    await loop.proactive.tick()
+    await loop.proactive.tick()
+    assert (await loop.store.get("notification", key))["status"] == "pending"
+    deferred = [r for r in await loop.store.list("activity") if r["kind"] == "notify.deferred"]
+    assert len(deferred) == 1
+    steps = (await loop.store.get("proactive_trace", key))["steps"]
+    assert [s["stage"] for s in steps].count("deferred") == 1
+
+
+def test_judge_reply_tolerates_code_fence():
+    from shiritaibot.proactive import first_object
+
+    assert first_object('```json\n{"importance": 3, "reason": "r"}\n```')["importance"] == 3

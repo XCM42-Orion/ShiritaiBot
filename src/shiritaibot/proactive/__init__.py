@@ -92,6 +92,18 @@ def parse_loop_result(text: str) -> LoopResult:
     raise ValueError("no LoopResult JSON found")
 
 
+def first_object(text: str) -> dict:
+    """First JSON object in a reply, tolerating code fences and surrounding prose."""
+    for match in re.finditer(r"\{", text):
+        try:
+            data, _ = _DECODER.raw_decode(text, match.start())
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    raise ValueError("no JSON object found")
+
+
 def grade(decision: Decision) -> Literal["drop", "run"]:
     return "drop" if decision.importance == 0 else "run"
 
@@ -155,7 +167,7 @@ class ProactiveEngine:
                     messages,
                     [],
                 )
-                return Decision.model_validate(json.loads(reply.text))
+                return Decision.model_validate(first_object(reply.text))
             except Exception:
                 messages.append(
                     {"role": "user", "content": "输出无效，请返回符合 schema 的 JSON。"}
@@ -221,7 +233,8 @@ class ProactiveEngine:
         )
         if row["event"]["source"] == "routine" and row["event"]["kind"] == "routine.job":
             prompt += (
-                "\n这是主人保存的定时任务，请在本任务工具权限内执行任务要求：" + row["event"]["title"]
+                "\n这是主人保存的定时任务，请在本任务工具权限内执行任务要求："
+                + row["event"]["title"]
             )
         row.update(status="running", loop_started=now().timestamp())
         await self.store.put("event", key, row)
@@ -316,6 +329,16 @@ class ProactiveEngine:
         for note in pending:
             if note["urgency"] != "critical":
                 if quiet_hours(cfg.quiet_start, cfg.quiet_end, local):
+                    if not note.get("deferred"):
+                        # Log once so a held notification is visible instead of silently waiting.
+                        note["deferred"] = True
+                        await self.store.put("notification", note["id"], note)
+                        detail = (
+                            f"免打扰时段（{cfg.quiet_start}–{cfg.quiet_end} {cfg.timezone}），"
+                            f"通知延后到 {cfg.quiet_end} 发送"
+                        )
+                        await self.short_term.record(note["id"], "deferred", detail)
+                        await self.store.activity("notify.deferred", f"{note['source']}: {detail}")
                     continue
                 if note["decision"] == "digest" and now().timestamp() - note["created"] < max(
                     60, cfg.throttle_seconds
@@ -336,6 +359,7 @@ class ProactiveEngine:
                 note["status"] = "sent"
                 await self.store.put("notification", note["id"], note)
                 await self.short_term.record(note["id"], "notified", "已交给协议端通知主人")
+            await self.store.activity("notify.sent", f"{source}: {len(notes)} 条通知已发送给主人")
             await self.store.put("notify_last", source, {"at": now().timestamp()})
             await self.broadcast(source, text)
 

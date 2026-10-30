@@ -51,6 +51,33 @@ def repair_history(messages: list[dict], max_chars: int | None) -> list[dict]:
     return result
 
 
+def localize(rows: list[dict], zone: ZoneInfo) -> list[dict]:
+    """Render stored UTC timestamps as owner-local wall time so the model never reads UTC."""
+    result = []
+    for row in rows:
+        row = dict(row)
+        for key in ("created", "updated"):
+            value = row.get(key)
+            try:
+                if isinstance(value, (int, float)):
+                    stamp = datetime.fromtimestamp(value, zone)
+                elif isinstance(value, str):
+                    stamp = datetime.fromisoformat(value).astimezone(zone)
+                else:
+                    continue
+            except (ValueError, OverflowError, OSError):
+                continue
+            row[key] = stamp.strftime("%Y-%m-%d %H:%M")
+        result.append(row)
+    return result
+
+
+def local_clock(zone: ZoneInfo) -> str:
+    local = now().astimezone(zone)
+    weekday = "一二三四五六日"[local.weekday()]
+    return local.strftime(f"%Y-%m-%d %H:%M 周{weekday}")
+
+
 class SessionActor:
     def __init__(self, runtime, session: str):
         self.runtime, self.session = runtime, session
@@ -255,13 +282,14 @@ class AgentRuntime:
                 )
                 if self.short_term and ctx.owner and ctx.mode == "agent" and not ctx.group:
                     memory += await self.short_term.recent(limit=5)
+                zone = ZoneInfo(cfg.proactive.timezone)
                 user = {
                     "role": "user",
                     "_speaker": cfg.owner_name if ctx.owner else ctx.actor,
                     "_original_content": text,
                     "content": text
-                    + f"\n<context time='{now().isoformat()}' timezone='{cfg.proactive.timezone}'>\n"
-                    + canonical(memory)
+                    + f"\n<context local_time='{local_clock(zone)}' timezone='{cfg.proactive.timezone}'>\n"
+                    + canonical(localize(memory, zone))
                     + "\n</context>",
                 }
                 # Persist the original input even if context compression fails.
