@@ -59,6 +59,7 @@ class Application:
         self.extractor = MemoryExtractor(self.memory, self.store, self.config, self.llm)
         await self.extractor.open()
         self.proactive.memory_sink = self.extractor.enqueue_event
+        self.adapters.emit = self.proactive.emit
         self.maintenance = MemoryMaintenance(self.memory, self.store, self.proactive.emit)
         self.routine = RoutineManager(self.store, self.proactive.emit)
         self.subagents = SubagentManager(self.config, self.store, self.home, self.proactive.emit)

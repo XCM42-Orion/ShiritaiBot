@@ -14,6 +14,7 @@ from shiritaibot.core.process import run_process
 from shiritaibot.memory.tools import memory_tools
 from shiritaibot.routine import RoutineItem
 from shiritaibot.tools import TEXT, schema
+from shiritaibot.tools.qq import qq_tools, session_dir
 
 
 async def register_builtin(app) -> None:
@@ -47,7 +48,7 @@ async def register_builtin(app) -> None:
             return response.json()
 
     async def shell(ctx, args):
-        workspace = app.home / "workspaces" / hashlib.sha256(ctx.session.encode()).hexdigest()[:24]
+        workspace = session_dir(app.home, "workspaces", ctx.session)
         await asyncio.to_thread(workspace.mkdir, parents=True, exist_ok=True)
         return await run_process(
             [*app.config.value.policy.shell_command, args["command"]],
@@ -172,9 +173,12 @@ async def register_builtin(app) -> None:
             raise PublicError("文件所属 OneBot 实例不可用")
         data = row["data"]
         file_id = data.get("file_id", data.get("id"))
-        if not file_id:
+        if not file_id and not data.get("url"):
             raise PublicError("文件缺少平台 ID")
-        if row["group_id"]:
+        if not file_id:
+            # Images and videos from message history carry their CDN link directly.
+            resource = {"url": data["url"]}
+        elif row["group_id"]:
             resource = await bot.call(
                 "get_group_file_url",
                 {
@@ -193,11 +197,12 @@ async def register_builtin(app) -> None:
             or parsed.username
             or parsed.password
             or not any(
-                host == d or host.endswith("." + d) for d in ("qq.com", "qpic.cn", "gtimg.cn")
+                host == d or host.endswith("." + d)
+                for d in ("qq.com", "qq.com.cn", "qpic.cn", "gtimg.cn")
             )
         ):
             raise PublicError("OneBot 没有返回受支持的 QQ HTTPS 下载地址；不读取协议端本地路径")
-        folder = app.home / "files" / hashlib.sha256(ctx.session.encode()).hexdigest()[:24]
+        folder = session_dir(app.home, "files", ctx.session)
         await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
         temp = folder / (args["ref"] + ".part")
         digest, size = hashlib.sha256(), 0
@@ -333,7 +338,8 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "qq_file_download",
-            "下载当前聊天已接收到的 QQ 文件引用",
+            "下载 QQ 文件引用（当前聊天收到的文件，或 qq_message_get / qq_message_history / "
+            "qq_forward_get 返回的文件和图片 ref），返回本地路径",
             schema({"ref": TEXT}, ["ref"]),
             qq_download,
             risk="normal",
@@ -341,6 +347,7 @@ async def register_builtin(app) -> None:
         ),
     ]
     entries += memory_tools(app.memory)
+    entries += qq_tools(app)
     if await app.vault.resolve(app.config.value.tavily_key):
         entries.append(
             Tool(

@@ -5,10 +5,22 @@ import html
 import json
 import random
 import re
+from typing import Any, Awaitable, Callable
 
 from websockets.asyncio.client import connect
 
-from shiritaibot.core import ApprovalPort, Context, PublicError, RuntimePort, canonical, now, uid
+from shiritaibot.core import (
+    Actor,
+    ApprovalPort,
+    Context,
+    ExternalEvent,
+    PublicError,
+    RuntimePort,
+    canonical,
+    fingerprint,
+    now,
+    uid,
+)
 from shiritaibot.core.logs import brief, get_logger
 
 
@@ -42,9 +54,20 @@ def describe(parts: list[dict]) -> str:
             out.append(f"@{data.get('name') or data.get('qq', '')} ")
         elif kind == "file":
             out.append(f"[文件 {data.get('name', '')}]")
+        elif kind == "forward":
+            out.append(f"[合并转发 {data.get('id', '')}]")
         elif kind in labels:
             out.append(labels[kind])
     return "".join(out).strip()[:2000]
+
+
+async def file_ref(store, adapter: str, group_id: str, data: dict, session: str) -> str:
+    """A session-bound handle for qq_file_download; platform IDs never leave the store."""
+    ref = uid()
+    await store.put(
+        "qq_file", ref, {"adapter": adapter, "group_id": group_id, "data": data}, session
+    )
+    return ref
 
 
 class OneBot:
@@ -57,7 +80,7 @@ class OneBot:
         self.events: asyncio.Queue = asyncio.Queue(maxsize=256)
         self.log = get_logger(config.id)
 
-    async def call(self, action: str, params: dict) -> dict:
+    async def call(self, action: str, params: dict) -> Any:
         if not self.ws:
             raise PublicError("OneBot 未连接")
         key = uid()
@@ -163,6 +186,8 @@ class AdapterHub:
         self.tasks: list[asyncio.Task] = []
         self.runtime: RuntimePort | None = None
         self.permissions: ApprovalPort | None = None
+        # Friend / group requests become events so PE decides whether to tell the owner.
+        self.emit: Callable[[ExternalEvent], Awaitable[str]] | None = None
 
     async def start(self) -> None:
         for cfg in self.config.value.adapters:
@@ -183,6 +208,9 @@ class AdapterHub:
     async def receive(self, bot: OneBot, event: dict) -> None:
         assert self.runtime is not None and self.permissions is not None
         cfg = bot.config
+        if event.get("post_type") == "request":
+            await self.request(bot, event)
+            return
         if event.get("post_type") != "message" or not bot.self_id:
             return
         user = str(event.get("user_id", ""))
@@ -261,20 +289,64 @@ class AdapterHub:
                     await self.enqueue(session, str(exc))
                 return
         for part in parts:
+            data = part.get("data", {})
             if part.get("type") == "file":
-                ref = uid()
-                await self.store.put(
-                    "qq_file",
-                    ref,
-                    {"adapter": cfg.id, "group_id": target if group else "", "data": part["data"]},
-                    session,
-                )
-                text += f"\n[QQ 文件引用 {ref}: {part['data'].get('name', 'file')}]"
+                ref = await file_ref(self.store, cfg.id, target if group else "", data, session)
+                text += f"\n[QQ 文件引用 {ref}: {data.get('name', 'file')}]"
+            elif part.get("type") == "forward" and data.get("id"):
+                text += f"\n[QQ 合并转发 {data['id']}]"
+            elif part.get("type") == "reply" and data.get("id"):
+                text = f"[引用 QQ 消息 {data['id']}] " + text
         if text:
             owner = user == cfg.owner_id
             await self.runtime.submit(
                 Context(session, user, "agent" if owner and not group else "chat", owner, group),
                 text,
+            )
+
+    async def request(self, bot: OneBot, event: dict) -> None:
+        kind, flag = event.get("request_type"), str(event.get("flag", ""))
+        if kind not in {"friend", "group"} or not flag:
+            return
+        key = fingerprint([bot.config.id, flag])[:16]
+        user, group = str(event.get("user_id", "")), str(event.get("group_id") or "")
+        sub_type = str(event.get("sub_type", "")) if kind == "group" else ""
+        title = (
+            f"QQ 好友申请：{user}"
+            if kind == "friend"
+            else f"QQ 群邀请：{user} 邀请加入群 {group}"
+            if sub_type == "invite"
+            else f"QQ 入群申请：{user} 申请加入群 {group}"
+        )
+        record = {
+            "adapter": bot.config.id,
+            "kind": kind,
+            "sub_type": sub_type,
+            "user_id": user,
+            "group_id": group,
+            "comment": str(event.get("comment", ""))[:500],
+            "flag": flag,
+            "status": "pending",
+            "at": now().isoformat(),
+        }
+        if not await self.store.insert("qq_request", key, record):
+            return
+        bot.log.log(f"{title}（{brief(record['comment'], 80) or '无附言'}）")
+        if self.emit is not None:
+            await self.emit(
+                ExternalEvent(
+                    source="qq",
+                    kind=f"qq.request.{kind}",
+                    dedup_key=key,
+                    title=title,
+                    payload={
+                        "request": key,
+                        "comment": record["comment"],
+                        "group_id": group,
+                        "how_to_handle": "用 qq_request_handle 处理该 request",
+                    },
+                    actors=[Actor(identity=f"qq:{user}", role="requester")] if user else [],
+                )
             )
 
     async def enqueue(self, session: str, text: str) -> None:
