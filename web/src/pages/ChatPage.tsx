@@ -2,7 +2,7 @@ import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Send, Square } from "lucide-react";
-import { Details } from "../components/Details";
+import { AgentTimeline } from "../components/AgentTimeline";
 import { EmptyState } from "../components/EmptyState";
 import type { PageProps } from "./common";
 
@@ -87,22 +87,13 @@ export function ChatPage({
         {!history.data?.length && (
           <EmptyState text="从一句话开始。请先在「模型与服务」里配置模型路由。" />
         )}
-        {history.data?.map((message, index) => (
-          <div className={"message " + message.role} key={index}>
-            <small>
-              {message.role === "user"
-                ? "你"
-                : message.role === "assistant"
-                  ? message._speaker || assistantName
-                  : "工具结果"}
-            </small>
-            {message.role === "tool" || message.tool_calls ? (
-              <Details value={message} />
-            ) : (
-              <p>{message.content?.split("\n<context")[0]}</p>
-            )}
-          </div>
-        ))}
+        {history.data && (
+          <AgentTimeline
+            history={history.data}
+            assistantName={assistantName}
+            userLabel={session.startsWith("background:") ? "任务" : "你"}
+          />
+        )}
         {delivered.map((row) => (
           <div className="message delivered" key={row.id}>
             <small>已投递</small>

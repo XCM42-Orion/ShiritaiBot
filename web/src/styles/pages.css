@@ -134,6 +134,85 @@
   overflow-wrap: anywhere;
 }
 
+.loop-step + .loop-step {
+  margin-top: 6px;
+}
+
+.tool-call {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.tool-call.failed {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.tool-call > summary code {
+  color: var(--accent);
+}
+
+.tool-status {
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+.tool-call.failed .tool-status {
+  color: var(--danger);
+}
+
+.tool-call[open] > summary svg:last-child,
+.tool-result[open] > summary svg:last-child {
+  transform: rotate(90deg);
+}
+
+.tool-call-body {
+  margin-top: 8px;
+}
+
+.tool-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tool-args {
+  margin: 4px 0 0;
+}
+
+.tool-args div {
+  display: grid;
+  grid-template-columns: minmax(80px, max-content) 1fr;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.tool-args dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tool-args dd {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-result {
+  margin-top: 8px;
+}
+
+.tool-call pre {
+  max-height: 360px;
+  overflow: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .message small {
   font-size: 10px;
   color: var(--muted);

@@ -596,6 +596,34 @@ it("sends a chat message from the composer", async () => {
   );
 });
 
+it("renders an Agent Loop as text and collapsible tool calls", async () => {
+  const client = fakeClient();
+  client.history = vi.fn().mockResolvedValue([
+    { role: "user", content: "查邮件\n<context local_time='x'>[]</context>" },
+    {
+      role: "assistant",
+      content: "我先看看",
+      tool_calls: [
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "mail_search", arguments: '{"query":"汇丰"}' },
+        },
+      ],
+    },
+    { role: "tool", tool_call_id: "c1", content: '{"count":1}' },
+    { role: "assistant", content: "找到一封" },
+  ]);
+  render(withQuery(<ChatPage client={client} act={act} />));
+  expect(await screen.findByText("我先看看")).toBeTruthy();
+  expect(screen.getByText("找到一封")).toBeTruthy();
+  expect(screen.getByText("查邮件")).toBeTruthy();
+  expect(screen.getByText("mail_search")).toBeTruthy();
+  expect(screen.getByText("汇丰")).toBeTruthy();
+  expect(screen.getByText("完成")).toBeTruthy();
+  expect(screen.queryByText(/tool_call_id/)).toBeNull();
+});
+
 function NoticeControls() {
   const { succeed, fail, warn } = useNotice();
   return (
