@@ -57,7 +57,7 @@ export const PROVIDER_FIELDS: FieldSpec[] = [
     label: "API Base URL",
     kind: "text",
     placeholder: "https://api.openai.com/v1",
-    help: "填写接口前缀：OpenAI / Anthropic 通常以 /v1 结尾，Gemini 以 /v1beta 结尾，TypeSafe Jev 为 https://api.typesafe.ai/v1。",
+    help: "填写接口前缀：OpenAI / Anthropic 通常以 /v1 结尾，Gemini 以 /v1beta 结尾，TypeSafe Jev 为 https://api.typesafe.ai/v1，经 OpenRouter 调用 Jev 为 https://openrouter.ai/api/v1。",
   },
   { key: "api_key", label: "API Key", kind: "secret" },
   { key: "timeout", label: "超时（秒）", kind: "number", min: 5, max: 600 },

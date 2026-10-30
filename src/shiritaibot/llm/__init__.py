@@ -252,6 +252,13 @@ def parse_reply(protocol: str, model: str, data: dict) -> Reply:
     return Reply(text, calls, data.get("usageMetadata", {}), {"key": key, "data": raw})
 
 
+def failure(provider_id: str, exc: Exception) -> str:
+    """Activity detail for a failed call; the status code tells a bad path from a bad key."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"{provider_id}: HTTP {exc.response.status_code}"
+    return f"{provider_id}: {type(exc).__name__}"
+
+
 class ProviderManager:
     def __init__(self, config, vault, store):
         self.config, self.vault, self.store = config, vault, store
@@ -304,11 +311,15 @@ class ProviderManager:
         elif token:
             headers = {"Authorization": f"Bearer {token}"}
         if provider.protocol == "systemone":
-            # TypeSafe publishes model routes instead of a listing endpoint.
-            return [
-                {"id": key, "name": key, "max_output": 4096}
-                for key in ("jev-latest", "jev-preview")
-            ]
+            # TypeSafe publishes model routes instead of a listing endpoint, and OpenRouter's
+            # /models omits decision models, so offer each host's own names.
+            host = httpx.URL(provider.base_url).host
+            keys = (
+                ("~typesafe/jev-latest",)
+                if host == "openrouter.ai" or host.endswith(".openrouter.ai")
+                else ("jev-latest", "jev-preview")
+            )
+            return [{"id": key, "name": key, "max_output": 4096} for key in keys]
         base = provider.base_url.rstrip("/")
         params, found, cursors = {}, {}, set()
         try:
@@ -432,9 +443,7 @@ class ProviderManager:
                     )
                     return reply
                 except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
-                    await self.store.activity(
-                        "provider.failed", f"{provider.id}: {type(exc).__name__}"
-                    )
+                    await self.store.activity("provider.failed", failure(provider.id, exc))
         if context_skipped:
             raise PublicError(
                 "候选模型调用失败，部分模型的估算上下文超过上限，请减少输入或调整模型上下文配置"
@@ -487,5 +496,5 @@ class ProviderManager:
                 )
                 return answers
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-                await self.store.activity("provider.failed", f"{provider.id}: {type(exc).__name__}")
+                await self.store.activity("provider.failed", failure(provider.id, exc))
         return None

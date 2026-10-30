@@ -170,16 +170,32 @@ async def test_decision_models_answer_decide_and_are_skipped_for_text(app):
 
 async def test_decide_returns_none_without_decision_model_or_on_failure(app):
     jev_config(app, {"light": ["text"], "router": ["jev"]})
+    statuses = iter([200, 404])
 
     async def handle(req):
-        return httpx.Response(200, json={"answers": {}})
+        return httpx.Response(next(statuses), json={"answers": {}})
 
     await use_transport(app, handle)
     questions = {"q": {"type": "noul", "instructions": "?"}}
     assert await app.llm.decide("light", "s", questions) is None
     assert await app.llm.decide("router", "s", questions) is None
+    assert await app.llm.decide("router", "s", questions) is None
+    failures = [r for r in await app.store.list("activity") if r.get("kind") == "provider.failed"]
+    assert any(r.get("detail") == "ts: HTTP 404" for r in failures)
     with pytest.raises(Exception, match="决策模型不生成文本"):
         await app.llm.complete("router", "sys", [{"role": "user", "content": "hi"}], [])
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        ("https://api.typesafe.ai/v1", ["jev-latest", "jev-preview"]),
+        ("https://openrouter.ai/api/v1", ["~typesafe/jev-latest"]),
+    ],
+)
+async def test_decision_model_discovery_uses_host_model_names(app, base_url, expected):
+    provider = ProviderConfig(id="ts", protocol="systemone", base_url=base_url, api_key="k")
+    assert [m["id"] for m in await app.llm.discover(provider)] == expected
 
 
 def test_decision_models_are_limited_to_decision_routes():
