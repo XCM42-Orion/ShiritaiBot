@@ -21,7 +21,7 @@ uv run shiritaibot run
 uv run shiritaibot token
 ```
 
-默认不连接外部账号、不调用付费模型，Shell 和主动性引擎关闭。可以用 `uv run shiritaibot run --home <目录> --port 8765` 选择数据目录。仅监听本机；远程使用可通过 SSH 端口转发。
+默认不连接外部账号、不调用付费模型，Shell 和主动性引擎关闭。可以用 `uv run shiritaibot run --home <目录> --port 8765` 选择数据目录，`--log-level debug` 查看更详细的运行日志（默认 info）。运行日志同时以彩色输出到终端、写入 `<目录>/logs/shiritaibot.log`，并在 WebUI「日志 → 运行日志」实时展示。仅监听本机；远程使用可通过 SSH 端口转发。
 
 开发前端时运行 `npm --prefix web run dev`，Vite 会将 `/api` 代理到 8765。
 

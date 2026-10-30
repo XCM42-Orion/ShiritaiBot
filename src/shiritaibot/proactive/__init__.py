@@ -12,8 +12,14 @@ from zoneinfo import ZoneInfo
 from pydantic import Field, model_validator
 
 from shiritaibot.core import Context, ExternalEvent, Model, RuntimePort, canonical, fingerprint, now
+from shiritaibot.core.logs import brief, get_logger
 
 PREPARE_SESSION = "background:proactive:"
+log = get_logger("Proactive")
+
+
+def event_log(key: str):
+    return log.bind(f"事件 {key[:8]}")
 
 
 class Decision(Model):
@@ -245,7 +251,13 @@ class ProactiveEngine:
                 "received_at": now().isoformat(),
             },
         ):
+            event_log(key).log(
+                f"收到事件「{brief(event.title, 80)}」（来源 {event.source}，类型 {event.kind}，"
+                f"紧急度 {event.urgency}）"
+            )
             self.wake.set()
+        else:
+            event_log(key).debug(f"重复事件已忽略：{brief(event.title, 60)}")
         return key
 
     async def emit_many(self, events: list[ExternalEvent]) -> list[str]:
@@ -260,7 +272,7 @@ class ProactiveEngine:
         if decided is not None:
             return decided
         messages = [{"role": "user", "content": canonical(event.model_dump(mode="json"))}]
-        for _ in range(2):
+        for attempt in range(2):
             try:
                 reply = await self.llm.complete(
                     "light",
@@ -273,8 +285,14 @@ class ProactiveEngine:
                     messages,
                     [],
                 )
-                return Decision.model_validate(first_object(reply.text))
-            except Exception:
+                decision = Decision.model_validate(first_object(reply.text))
+                log.debug(f"分诊由文本模型完成：{brief(event.title, 40)}")
+                return decision
+            except Exception as exc:
+                log.warning(
+                    f"分诊模型输出无效（{type(exc).__name__}），"
+                    + ("重试中" if attempt == 0 else "改用默认判断")
+                )
                 messages.append(
                     {"role": "user", "content": "输出无效，请返回符合 schema 的 JSON。"}
                 )
@@ -317,6 +335,7 @@ class ProactiveEngine:
         )
         if answers is None:
             return None
+        log.debug(f"分诊由决策模型（Jev）完成：{brief(event.title, 40)}")
         try:
             # The most probable level, not the expected value, so a likely 4 stays a 4.
             levels = answers["importance"]["probabilities"]
@@ -330,6 +349,7 @@ class ProactiveEngine:
                 f"建议 {choice['choice']}（置信度 {float(choice.get('confidence', 0)):.2f}）",
             )
         except (KeyError, TypeError, ValueError):
+            log.warning("决策模型返回的分诊结果不完整，改用文本模型")
             return None
 
     async def handle(self, row: dict) -> None:
@@ -340,6 +360,7 @@ class ProactiveEngine:
         )
         scheduled = event.source == "routine" and event.kind in {"routine.reminder", "routine.job"}
         if not self.config.value.proactive.enabled and not scheduled:
+            event_log(key).log("主动性引擎未启用，事件仅记录")
             row.update(status="processed", action="record", reason="主动性引擎未启用")
             await self.store.put("event", key, row)
             await self.short_term.record(key, "logged", row["reason"])
@@ -358,6 +379,11 @@ class ProactiveEngine:
             update={"urgency": ("low", "low", "normal", "high", "critical")[decision.importance]}
         )
         row.update(status="filtered", decision=decision.model_dump(), action=grade(decision))
+        event_log(key).log(
+            f"分诊结果：重要性 {decision.importance}/4（{_LEVELS[decision.importance]}），"
+            f"建议{_SUGGESTIONS[decision.decision]}；理由：{brief(decision.reason, 120)}"
+            + ("（主人设定的日程，强制通知）" if scheduled else "")
+        )
         await self.store.put("event", key, row)
         await self.short_term.record(
             key, "filtered", decision.reason, importance=decision.importance, action=row["action"]
@@ -367,6 +393,7 @@ class ProactiveEngine:
         key = row["id"]
         decision = Decision.model_validate(row["decision"])
         if grade(decision) == "drop":
+            event_log(key).log("重要性为 0，事件已丢弃")
             row.update(status="discarded", processed_at=now().isoformat())
             await self.store.put("event", key, row)
             await self.short_term.record(key, "discarded", decision.reason)
@@ -391,6 +418,7 @@ class ProactiveEngine:
         if event["source"] == "routine" and event["kind"] == "routine.job":
             prompt += "\n\n这是主人保存的定时任务，请执行任务要求：" + event["title"]
         row.update(status="running", loop_started=now().timestamp())
+        event_log(key).log("交给 Proactive Agent 核查处理")
         await self.store.put("event", key, row)
         await self.short_term.record(key, "running", decision.prepare or decision.reason)
         try:
@@ -400,7 +428,8 @@ class ProactiveEngine:
                 Context(PREPARE_SESSION + key, "owner", "agent", True, background=True),
                 prompt,
             )
-        except Exception:
+        except Exception as exc:
+            event_log(key).error(f"无法启动 Proactive Agent（{type(exc).__name__}）", exc=exc)
             await self.finish(row, "", failed=True)
 
     async def queue(self, key: str, source: str, decision: Decision, message: str) -> None:
@@ -429,6 +458,7 @@ class ProactiveEngine:
             result = parse_loop_result(text)
         except (ValueError, TypeError):
             failed = True
+            event_log(row["id"]).warning("Proactive Agent 未给出有效结论，按分诊建议处理")
             result = LoopResult(
                 notify=decision.decision in {"notify", "digest"},
                 message=(decision.message or row["event"]["title"])
@@ -454,6 +484,14 @@ class ProactiveEngine:
             loop_failed=failed,
         )
         await self.store.put("event", row["id"], row)
+        if should_notify:
+            reason = "重要性最高" if must_notify else "主人设定的提醒" if explicit_reminder else ""
+            event_log(row["id"]).log(
+                f"处理结束：将通知主人{f'（{reason}）' if reason else ''}"
+                f"——{brief(result.message, 100)}"
+            )
+        else:
+            event_log(row["id"]).log(f"处理结束：不打扰主人；理由：{brief(result.reason, 120)}")
         await self.short_term.record(
             row["id"], "queued" if should_notify else "silent", result.reason
         )
@@ -472,6 +510,9 @@ class ProactiveEngine:
                     now().timestamp() - row.get("loop_started", row.get("prepare_started", 0))
                     > limit
                 ):
+                    event_log(row["id"]).warning(
+                        f"Proactive Agent 超过 {limit} 秒未完成，按超时处理"
+                    )
                     await self.finish(row, "", failed=True)
             await self.flush_notifications()
 
@@ -492,6 +533,7 @@ class ProactiveEngine:
                             f"通知延后到 {cfg.quiet_end} 发送"
                         )
                         await self.short_term.record(note["id"], "deferred", detail)
+                        event_log(note["id"]).log(detail)
                         await self.store.activity("notify.deferred", f"{note['source']}: {detail}")
                     continue
                 if note["decision"] == "digest" and now().timestamp() - note["created"] < max(
@@ -508,6 +550,7 @@ class ProactiveEngine:
             ):
                 continue
             text = "\n\n".join(n["message"] for n in notes)
+            log.log(f"向主人发送 {len(notes)} 条通知（来源 {source}）：{brief(text, 120)}")
             await self.notify(text)
             for note in notes:
                 note["status"] = "sent"
@@ -523,6 +566,7 @@ class ProactiveEngine:
                 try:
                     await handler(source, text)
                 except Exception as exc:
+                    log.warning(f"插件 {plugin} 的通知渠道转发失败（{type(exc).__name__}）")
                     await self.store.activity(
                         "notify.channel_failed", f"{plugin}: {type(exc).__name__}"
                     )
@@ -533,6 +577,7 @@ class ProactiveEngine:
             try:
                 await self.tick()
             except Exception as exc:
+                log.error(f"主动性引擎循环出错（{type(exc).__name__}）", exc=exc)
                 await self.store.activity("proactive.failed", type(exc).__name__)
             try:
                 await asyncio.wait_for(self.wake.wait(), timeout=10)

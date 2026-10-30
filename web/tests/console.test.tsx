@@ -115,6 +115,7 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     saveConfig: vi.fn().mockResolvedValue({ ok: true, version: 2 }),
     records: vi.fn().mockResolvedValue([]),
     rawLogs: vi.fn().mockResolvedValue({ lines: [] }),
+    logs: vi.fn().mockResolvedValue({ entries: [], sources: [] }),
     stats: vi.fn().mockResolvedValue({
       hours: 24,
       timezone: "Asia/Shanghai",
@@ -624,6 +625,46 @@ it("renders an Agent Loop as text and collapsible tool calls", async () => {
   expect(screen.getByText("汇丰")).toBeTruthy();
   expect(screen.getByText("完成")).toBeTruthy();
   expect(screen.queryByText(/tool_call_id/)).toBeNull();
+});
+
+it("shows the runtime log by default with level and source filters", async () => {
+  const client = fakeClient();
+  client.logs = vi.fn().mockResolvedValue({
+    entries: [
+      {
+        at: "2026-10-30T08:00:01+08:00",
+        level: "LOG",
+        source: "qq",
+        tags: ["群 1", "张三(42)"],
+        message: "早上好",
+      },
+      {
+        at: "2026-10-30T08:00:02+08:00",
+        level: "WARNING",
+        source: "Proactive",
+        tags: [],
+        message: "分诊模型输出无效",
+      },
+    ],
+    sources: ["Proactive", "qq"],
+  });
+  render(withQuery(<LogsPage client={client} act={act} />));
+  expect(await screen.findByText("早上好")).toBeTruthy();
+  expect(screen.getByText("[张三(42)]")).toBeTruthy();
+  expect(
+    screen.getByText("分诊模型输出无效").closest(".level-warning"),
+  ).toBeTruthy();
+  const user = userEvent.setup();
+  await user.selectOptions(screen.getByLabelText("日志级别"), "warning");
+  await user.selectOptions(screen.getByLabelText("日志来源"), "qq");
+  await waitFor(() =>
+    expect(client.logs).toHaveBeenLastCalledWith({
+      limit: 500,
+      level: "warning",
+      source: "qq",
+      query: "",
+    }),
+  );
 });
 
 it("shows the raw rolling log with a keyword filter", async () => {

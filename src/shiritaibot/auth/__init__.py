@@ -14,9 +14,12 @@ from pydantic import Field, StrictBool
 
 from shiritaibot.config import SessionPolicy, ToolPolicy
 from shiritaibot.core import Context, Model, PublicError, Tool, canonical, fingerprint, now, uid
+from shiritaibot.core.logs import brief, describe_session, get_logger
 
 if TYPE_CHECKING:
     from shiritaibot.llm import ProviderManager
+
+log = get_logger("审批")
 
 
 class Review(Model):
@@ -235,6 +238,11 @@ class Permissions:
         except Exception:
             body.update(status="denied", reason="自动审批失败、超时或返回格式无效，未执行")
         await self.store.put("approval", key, body, ctx.session)
+        (log.log if body["status"] == "approved" else log.warning)(
+            f"模型自动审批{'通过' if body['status'] == 'approved' else '拒绝'} "
+            f"{tool.name}（{brief(args, 80)}）：{brief(body['reason'], 120)}",
+            describe_session(ctx.session),
+        )
         if body["status"] != "approved":
             raise PublicError("模型自动审批拒绝：" + body["reason"])
 
@@ -262,6 +270,8 @@ class Permissions:
             "reviewer": "human",
         }
         await self.store.put("approval", key, body, ctx.session)
+        where = describe_session(ctx.session)
+        log.log(f"等待主人审批 {key}：{tool.name}（{brief(args, 80)}）", where)
         try:
             if self.notify:
                 await self.notify(
@@ -270,10 +280,13 @@ class Permissions:
             async with asyncio.timeout(self.config.value.policy.approval_timeout):
                 approved = await future
             if not approved:
+                log.log(f"主人拒绝了 {tool.name}", where)
                 raise PublicError("主人拒绝了本次调用")
+            log.log(f"主人批准了 {tool.name}", where)
             if self.decision(ctx, tool) not in {"approve", "allow"}:
                 raise PublicError("审批期间权限已变更，未执行")
         except TimeoutError:
+            log.warning(f"审批 {key} 超时，{tool.name} 未执行", where)
             body["status"] = "expired"
             await self.store.put("approval", key, body, ctx.session)
             raise PublicError("审批超时，未执行") from None

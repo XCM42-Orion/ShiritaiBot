@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 from shiritaibot.core import EventBus, canonical, now, uid
+from shiritaibot.core.logs import get_logger
 
-log = logging.getLogger("shiritaibot.activity")
+# Call sites log a readable line themselves; this keeps the raw activity kind for debugging.
+log = get_logger("活动")
 GROUP_MESSAGES_KEPT = 2000
 
 
@@ -37,6 +38,7 @@ class Store:
             ):
                 for row in rows:
                     row["status"] = "interrupted"
+                    log.debug(f"上次未完成的 {kind} {row['id'][:8]} 标记为已中断")
                     await self.put(kind, row["id"], row, row.get("scope", ""))
 
     async def close(self) -> None:
@@ -156,7 +158,7 @@ class Store:
         return rows[::-1]
 
     async def activity(self, kind: str, detail: str, scope: str = "") -> None:
-        log.info("%s %s%s", kind, detail, f" [{scope}]" if scope else "")
+        log.debug(f"{kind} {detail}", scope)
         await self.put(
             "activity", uid(), {"kind": kind, "detail": detail, "at": now().isoformat()}, scope
         )

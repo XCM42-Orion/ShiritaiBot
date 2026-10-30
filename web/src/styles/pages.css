@@ -385,6 +385,81 @@
   }
 }
 
+/* Runtime log */
+
+.run-log {
+  max-height: 70vh;
+  overflow: auto;
+  padding: 6px 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.run-log-row {
+  display: flex;
+  gap: 8px;
+  padding: 3px 12px;
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+
+.run-log-row time {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-log-level {
+  flex-shrink: 0;
+  min-width: 58px;
+  font-weight: 600;
+}
+
+.run-log-source {
+  flex-shrink: 0;
+  color: var(--accent-strong);
+}
+
+.run-log-tag {
+  flex-shrink: 0;
+  color: var(--pink);
+}
+
+.run-log-message {
+  white-space: pre-wrap;
+  color: var(--text-strong);
+}
+
+.run-log-row.level-debug .run-log-level,
+.run-log-row.level-debug .run-log-message {
+  color: var(--muted);
+}
+
+.run-log-row.level-log .run-log-level {
+  color: var(--success);
+}
+
+.run-log-row.level-warning {
+  background: #fffbeb;
+}
+
+.run-log-row.level-warning .run-log-level,
+.run-log-row.level-warning .run-log-message {
+  color: #a16207;
+}
+
+.run-log-row.level-error {
+  background: var(--danger-bg);
+}
+
+.run-log-row.level-error .run-log-level,
+.run-log-row.level-error .run-log-message {
+  color: var(--danger);
+}
+
 /* Raw log */
 
 .raw-log-toolbar {

@@ -245,6 +245,22 @@ export interface TriageDecision {
   urgency: Urgency;
 }
 
+export type LogLevel = "DEBUG" | "LOG" | "WARNING" | "ERROR";
+
+export interface LogEntry {
+  at: string;
+  level: LogLevel;
+  source: string;
+  tags: string[];
+  message: string;
+  error?: string;
+}
+
+export interface LogFeed {
+  entries: LogEntry[];
+  sources: string[];
+}
+
 export interface ActivityRecord {
   id: string;
   scope: string;

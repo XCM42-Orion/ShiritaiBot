@@ -15,12 +15,13 @@ def run(
     allowed_host: list[str] = typer.Option(
         [], help="额外允许的 Host（内网穿透/反向代理域名），可重复；支持 *.example.com"
     ),
+    log_level: str = typer.Option("info", help="Bot 日志级别：debug / info / warning / error"),
 ):
     """Run the local control plane and configured adapters."""
     ensure_token(home)
     typer.echo(f"WebUI: http://127.0.0.1:{port} · 管理令牌文件: {home.resolve() / 'web.token'}")
     uvicorn.run(
-        create_app(home.resolve(), allowed_hosts=allowed_host),
+        create_app(home.resolve(), allowed_hosts=allowed_host, log_level=log_level),
         host="127.0.0.1",
         port=port,
         access_log=False,

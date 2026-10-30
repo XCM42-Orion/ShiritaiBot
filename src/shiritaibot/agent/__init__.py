@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections import Counter, deque
 from dataclasses import replace
 from datetime import datetime
@@ -10,6 +11,7 @@ from zoneinfo import ZoneInfo
 from shiritaibot.agent.commands import command
 from shiritaibot.agent.context import ContextManager, context_chars
 from shiritaibot.core import Context, PublicError, canonical, fingerprint, now, uid
+from shiritaibot.core.logs import Logger, brief, describe_session, get_logger
 from shiritaibot.proactive import (
     PREPARE_SESSION,
     REPORT_SPEC,
@@ -20,6 +22,31 @@ from shiritaibot.proactive import (
 
 # Minimum Jev probability for Chat; the LLM router is likewise told to prefer Work.
 ROUTER_CHAT_THRESHOLD = 0.6
+ROUTE_NAMES = {"chat": "Chat", "agent": "Agent Work", "agent_chat": "Agent Chat"}
+
+
+def loop_logger(ctx: Context) -> Logger:
+    if ctx.session.startswith(PREPARE_SESSION):
+        source = "Proactive Agent"
+    else:
+        source = "后台任务" if ctx.background else "主循环"
+    return get_logger(source, describe_session(ctx.session))
+
+
+def tool_outcome(output: str) -> tuple[bool, str]:
+    """(ok, readable summary) of a registry result string."""
+    try:
+        value = json.loads(output)
+    except ValueError:
+        return True, brief(output, 100)
+    if isinstance(value, dict) and set(value) == {"error"}:
+        return False, brief(value["error"], 160)
+    if isinstance(value, dict) and value.get("truncated") and value.get("artifact"):
+        return (
+            True,
+            f"结果较长，已存为附件 {value['artifact'][:8]}：{brief(value.get('preview', ''), 80)}",
+        )
+    return True, brief(value, 100) or "（空结果）"
 
 
 def repair_history(messages: list[dict], max_chars: int | None) -> list[dict]:
@@ -127,6 +154,7 @@ class SessionActor:
     async def submit(self, ctx: Context, text: str) -> str:
         if text.strip() in {"/stop", "/cancel", "停", "取消"}:
             if self.current and self.context and (ctx.owner or ctx.actor == self.context.actor):
+                loop_logger(ctx).log(f"{ctx.actor} 取消了正在执行的任务")
                 self.current.cancel()
                 self.steering.clear()
             self._discard_buffered(ctx)
@@ -149,8 +177,10 @@ class SessionActor:
             and ctx.mode == "agent"
         ):
             if len(self.steering) == self.steering.maxlen:
+                loop_logger(ctx).warning("插话队列已满，拒绝新的插话")
                 raise PublicError("插话队列已满")
             self.steering.append(text)
+            loop_logger(ctx).log(f"任务进行中，插话已转交模型：{brief(text, 80)}")
             return "steering"
         policy = self.runtime.config.value.policy
         if (
@@ -174,11 +204,16 @@ class SessionActor:
             )
             wait = 0 if immediate else policy.debounce_seconds
             self.deadline = min(at + wait, first + policy.debounce_max_seconds)
+            loop_logger(ctx).debug(
+                f"消息合并窗口：已缓存 {len(self.buffered)} 条，"
+                f"{max(0.0, self.deadline - at):.1f} 秒后开始处理"
+            )
             self.wake.set()
             return "buffering"
         try:
             self.queue.put_nowait((ctx, text))
         except asyncio.QueueFull:
+            loop_logger(ctx).warning("会话队列已满，拒绝新消息")
             raise PublicError("会话队列已满，请稍后重试") from None
         self.wake.set()
         return "queued"
@@ -245,6 +280,7 @@ class SessionActor:
                     if task and task.cancelling():
                         raise
                 except Exception as exc:
+                    loop_logger(ctx).error(f"会话执行异常（{type(exc).__name__}）", exc=exc)
                     await self.runtime.store.activity(
                         "actor.failed", type(exc).__name__, self.session
                     )
@@ -298,6 +334,7 @@ class AgentRuntime:
             },
         )
         if text.strip().startswith("/"):
+            loop_logger(ctx).log(f"{'主人' if ctx.owner else ctx.actor} 执行指令 {brief(text, 80)}")
             return await command(self, ctx, text)
         if ctx.session not in self.actors or self.actors[ctx.session].task.done():
             actor = SessionActor(self, ctx.session)
@@ -393,7 +430,11 @@ class AgentRuntime:
             # Calibrated probabilities: only a clear Chat verdict leaves the Work route.
             answer = answers["route"] if isinstance(answers["route"], dict) else {}
             chat = (answer.get("probabilities") or {}).get("chat", 0)
-            return "agent_chat" if chat >= ROUTER_CHAT_THRESHOLD else "agent"
+            route = "agent_chat" if chat >= ROUTER_CHAT_THRESHOLD else "agent"
+            loop_logger(ctx).log(
+                f"分流模型（决策模型）判定 → {ROUTE_NAMES[route]}（闲聊概率 {float(chat):.2f}）"
+            )
+            return route
         try:
             reply = await self.llm.complete(
                 "router",
@@ -407,10 +448,15 @@ class AgentRuntime:
                 settings=cfg,
             )
         except Exception as exc:
+            loop_logger(ctx).warning(
+                f"分流模型调用失败（{type(exc).__name__}），默认交给 Agent Work"
+            )
             await self.store.activity("router.failed", type(exc).__name__, ctx.session)
             return "agent"
         answer = reply.text.strip().lower()
-        return "agent_chat" if "chat" in answer and "work" not in answer else "agent"
+        route = "agent_chat" if "chat" in answer and "work" not in answer else "agent"
+        loop_logger(ctx).log(f"分流模型判定 → {ROUTE_NAMES[route]}（模型回答 {brief(answer, 20)}）")
+        return route
 
     async def turn(self, actor: SessionActor, ctx: Context, text: str) -> None:
         async with self.context_locks.setdefault(ctx.session, asyncio.Lock()):
@@ -428,6 +474,12 @@ class AgentRuntime:
         selected = await self.store.get("session_model", ctx.session)
         if selected and selected.get("model"):
             cfg.routes[route] = [selected["model"]]
+        log = loop_logger(ctx)
+        started = time.monotonic()
+        log.log(
+            f"开始处理（{ROUTE_NAMES.get(route, route)}，候选模型 "
+            f"{brief(cfg.routes.get(route) or ['未配置'], 60)}）：{brief(text, 80)}"
+        )
         body = {
             "status": "running",
             "actor": ctx.actor,
@@ -498,6 +550,7 @@ class AgentRuntime:
                         history.append(item)
                     if context_chars(history) > cfg.policy.max_context_chars * 2:
                         raise PublicError("本轮上下文达到限制，请开启新会话或减少输入")
+                    log.debug(f"第 {step + 1} 步：请求模型（上下文 {len(history)} 条消息）")
                     reply = await self.llm.complete(
                         route,
                         system,
@@ -518,16 +571,20 @@ class AgentRuntime:
                     if not reply.calls:
                         if proactive and not nudged and not _is_loop_result(reply.text):
                             nudged = True
+                            log.warning("模型未调用 proactive_report 提交结论，已提醒一次")
                             item = {"role": "user", "content": "请调用 proactive_report 提交结论。"}
                             await self.store.append(ctx.session, ctx.turn, item)
                             history.append(item)
                             continue
+                        if not proactive:
+                            log.log(f"回复：{brief(reply.text, 200) or '（空）'}")
                         await self.deliver(ctx.session, reply.text or "模型没有返回可显示的内容。")
                         body["status"] = "completed"
                         return
                     # Main-loop text is visible before tools run; proactive turns
                     # deliver only their final structured notification decision.
                     if not ctx.background and reply.text.strip():
+                        log.log(f"回复：{brief(reply.text, 200)}")
                         await self.deliver(ctx.session, reply.text)
                     report = None
                     for call in reply.calls:
@@ -535,17 +592,42 @@ class AgentRuntime:
                         sig = fingerprint(function)
                         repetitions[sig] += 1
                         if repetitions[sig] >= 5:
+                            log.warning(f"重复调用 {function['name']} 已达 5 次，终止本轮")
                             raise PublicError("重复调用同一工具已达上限")
                         if proactive and function["name"] == REPORT_TOOL:
                             report, output = _report(function["arguments"])
+                            if report is None:
+                                log.warning("proactive_report 参数无效，已要求模型重试")
                         else:
+                            try:
+                                shown = json.loads(function["arguments"] or "{}")
+                            except (TypeError, ValueError):
+                                shown = function["arguments"]
+                            log.log(
+                                f"调用工具 {function['name']}（{brief(shown, 120) or '无参数'}）"
+                            )
+                            called = time.monotonic()
                             output = await self.registry.execute(
                                 ctx, function["name"], function["arguments"]
                             )
+                            ok, summary = tool_outcome(output)
+                            spent = time.monotonic() - called
+                            if ok:
+                                log.log(
+                                    f"工具 {function['name']} 完成，用时 {spent:.1f}s：{summary}"
+                                )
+                            else:
+                                log.warning(
+                                    f"工具 {function['name']} 失败，用时 {spent:.1f}s：{summary}"
+                                )
                         result = {"role": "tool", "tool_call_id": call["id"], "content": output}
                         await self.store.append(ctx.session, ctx.turn, result)
                         history.append(result)
                     if report is not None:
+                        log.log(
+                            ("决定通知主人" if report.notify else "决定不打扰主人")
+                            + f"：{brief(report.reason, 120)}"
+                        )
                         await self.deliver(ctx.session, canonical(report.model_dump()))
                         body["status"] = "completed"
                         return
@@ -554,15 +636,24 @@ class AgentRuntime:
                 raise PublicError("已达到本轮步数限制")
         except asyncio.CancelledError:
             body["status"] = "cancelled"
+            log.log(f"本轮已取消（{body['steps']} 步，用时 {time.monotonic() - started:.1f}s）")
             raise
         except Exception as exc:
             body["status"] = "failed"
             error = (
                 str(exc) if isinstance(exc, PublicError) else f"本轮执行失败 ({type(exc).__name__})"
             )
+            log.error(
+                f"本轮失败：{error}",
+                exc=None if isinstance(exc, (PublicError, TimeoutError)) else exc,
+            )
             await self.store.append(ctx.session, ctx.turn, {"role": "assistant", "content": error})
             await self.deliver(ctx.session, error)
         finally:
+            if body["status"] == "completed":
+                log.log(
+                    f"本轮完成（{body['steps'] + 1} 步，用时 {time.monotonic() - started:.1f}s）"
+                )
             body["finished"] = now().isoformat()
             await self.store.put("turn", ctx.turn, body, ctx.session)
             if self.short_term:

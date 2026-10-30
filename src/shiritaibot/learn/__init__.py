@@ -111,6 +111,7 @@ class OneLearnPlugin(Plugin):
     async def sync_once(self):
         result = await self.invoke("homework", {})
         if not result.get("ok"):
+            self.context.logger.warning(f"网络学堂登录状态异常：{result.get('status', 'unknown')}")
             await self.context.emit(
                 ExternalEvent(
                     source="learn",
@@ -150,12 +151,21 @@ class OneLearnPlugin(Plugin):
             temp.replace(snapshot)
 
         await asyncio.to_thread(save)
+        changed = sum(
+            1 for key, digest in current.items() if old is not None and old.get(key) != digest
+        )
+        self.context.logger.log(
+            f"同步完成：{len(current)} 项作业" + (f"，{changed} 项有变化" if changed else "")
+            if old is not None
+            else f"首次同步，记录 {len(current)} 项作业作为基线"
+        )
 
     async def poll(self, interval):
         while True:
             try:
                 await self.sync_once()
             except Exception as exc:
+                self.context.logger.warning(f"同步失败（{type(exc).__name__}）")
                 await self.context.emit(
                     ExternalEvent(
                         source="learn",
