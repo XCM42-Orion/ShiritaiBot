@@ -112,6 +112,11 @@ class SessionActor:
         self.runtime, self.session = runtime, session
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=5)
         self.steering: deque[str] = deque(maxlen=10)
+        self.buffered: list[tuple[Context, str]] = []
+        self.ready: deque[list[tuple[Context, str]]] = deque()
+        self.first_buffered: float | None = None
+        self.deadline = 0.0
+        self.wake = asyncio.Event()
         self.current: asyncio.Task | None = None
         self.context: Context | None = None
         self.task = asyncio.create_task(self.run(), name=f"session:{session}")
@@ -121,6 +126,7 @@ class SessionActor:
             if self.current and self.context and (ctx.owner or ctx.actor == self.context.actor):
                 self.current.cancel()
                 self.steering.clear()
+            self._discard_buffered(ctx)
             # Also discard queued work when no turn has started yet.
             retained = []
             while not self.queue.empty():
@@ -129,6 +135,8 @@ class SessionActor:
                     retained.append(item)
             for item in retained:
                 self.queue.put_nowait(item)
+            if retained:
+                self.wake.set()
             return "cancelled"
         if (
             self.current
@@ -141,19 +149,87 @@ class SessionActor:
                 raise PublicError("插话队列已满")
             self.steering.append(text)
             return "steering"
+        policy = self.runtime.config.value.policy
+        if (
+            self.current is None
+            and not ctx.background
+            and not ctx.session.startswith("web:")
+            and self.queue.empty()
+            and policy.debounce_seconds > 0
+        ):
+            at = asyncio.get_running_loop().time()
+            if self.buffered and self.buffered[-1][0].actor != ctx.actor:
+                self._finish_batch()
+            if not self.buffered:
+                self.first_buffered = at
+            first = self.first_buffered if self.first_buffered is not None else at
+            self.buffered.append((ctx, text))
+            # A finished sentence ends the window early; the cap bounds total wait.
+            immediate = text.rstrip().endswith(("?", "？", "。", "!", "！"))
+            wait = 0 if immediate else policy.debounce_seconds
+            self.deadline = min(at + wait, first + policy.debounce_max_seconds)
+            self.wake.set()
+            return "buffering"
         try:
             self.queue.put_nowait((ctx, text))
         except asyncio.QueueFull:
             raise PublicError("会话队列已满，请稍后重试") from None
+        self.wake.set()
         return "queued"
+
+    def _finish_batch(self) -> None:
+        if not self.buffered:
+            return
+        self.ready.append(self.buffered)
+        self.buffered = []
+        self.first_buffered = None
+        self.wake.set()
+
+    @staticmethod
+    def _merge_batch(batch: list[tuple[Context, str]]) -> tuple[Context, str]:
+        return batch[-1][0], "\n".join(text for _, text in batch)
+
+    def _discard_buffered(self, ctx: Context) -> None:
+        if ctx.owner:
+            self.buffered, self.ready = [], deque()
+        else:
+            self.buffered = [item for item in self.buffered if item[0].actor != ctx.actor]
+            self.ready = deque(batch for batch in self.ready if batch[0][0].actor != ctx.actor)
+        if not self.buffered:
+            self.first_buffered = None
+            self.deadline = 0.0
+
+    async def _next_input(self) -> tuple[Context, str] | None:
+        while True:
+            if self.ready:
+                return self._merge_batch(self.ready.popleft())
+            if self.buffered:
+                remaining = self.deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    batch, self.buffered = self.buffered, []
+                    self.first_buffered = None
+                    return self._merge_batch(batch)
+                try:
+                    await asyncio.wait_for(self.wake.wait(), remaining)
+                    self.wake.clear()
+                except TimeoutError:
+                    pass
+                continue
+            if not self.queue.empty():
+                return self.queue.get_nowait()
+            try:
+                await asyncio.wait_for(self.wake.wait(), timeout=1800)
+                self.wake.clear()
+            except TimeoutError:
+                return None
 
     async def run(self) -> None:
         try:
             while True:
-                try:
-                    ctx, text = await asyncio.wait_for(self.queue.get(), timeout=1800)
-                except TimeoutError:
+                item = await self._next_input()
+                if item is None:
                     return
+                ctx, text = item
                 self.context = ctx
                 self.current = asyncio.create_task(self.runtime.turn(self, ctx, text))
                 try:
@@ -173,6 +249,7 @@ class SessionActor:
                     self.steering.clear()
                     if not self.queue.full():
                         self.queue.put_nowait((ctx, followup))
+                        self.wake.set()
         finally:
             if self.current:
                 self.current.cancel()
