@@ -208,6 +208,22 @@ export const POLICY_FIELDS: FieldSpec[] = [
     max: 1000000,
   },
   {
+    key: "debounce_seconds",
+    label: "消息合并等待（秒）",
+    kind: "number",
+    min: 0,
+    max: 30,
+    help: "同一发送者的连续消息在此时间内合并为一轮；0 表示关闭。",
+  },
+  {
+    key: "debounce_max_seconds",
+    label: "消息合并最长等待（秒）",
+    kind: "number",
+    min: 0,
+    max: 60,
+    help: "持续有新消息时，本轮最多等待这么久。",
+  },
+  {
     key: "denied_tools",
     label: "禁用工具",
     kind: "list",

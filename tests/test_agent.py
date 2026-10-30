@@ -226,3 +226,84 @@ async def test_agent_work_chat_split(app, split, verdict, expected):
     assert llm.routes == expected
     turn = (await app.store.list("turn"))[0]
     assert turn["route"] == expected[-1]
+
+
+class EchoLLM:
+    def __init__(self):
+        self.inputs = []
+
+    async def complete(self, route, system, messages, tools, **kwargs):
+        self.inputs.append(list(messages))
+        return Reply(text="收到")
+
+
+async def test_debounce_merges_consecutive_messages(app):
+    app.config.value.policy.debounce_seconds = 0.05
+    app.config.value.policy.debounce_max_seconds = 0.2
+    llm = EchoLLM()
+    app.runtime.llm = llm
+    ctx = Context("private:qq-main:1", "owner", "agent", True)
+
+    assert await app.runtime.submit(ctx, "帮我看看") == "buffering"
+    await app.runtime.submit(ctx, "明天")
+    await app.runtime.submit(ctx, "的课表")
+
+    sent = await eventually(lambda: app.store.list("outbox"))
+    assert [message["text"] for message in sent] == ["收到"]
+    assert len(llm.inputs) == 1
+    content = llm.inputs[0][-1]["content"]
+    assert "帮我看看\n明天\n的课表" in content
+
+
+async def test_debounce_flushes_finished_sentence_immediately(app):
+    app.config.value.policy.debounce_seconds = 5
+    app.config.value.policy.debounce_max_seconds = 10
+    app.runtime.llm = EchoLLM()
+    ctx = Context("private:qq-main:1", "owner", "agent", True)
+
+    await app.runtime.submit(ctx, "现在几点？")
+
+    sent = await asyncio.wait_for(eventually(lambda: app.store.list("outbox")), timeout=2)
+    assert [message["text"] for message in sent] == ["收到"]
+
+
+async def test_debounce_skips_web_sessions(app):
+    app.config.value.policy.debounce_seconds = 5
+    app.config.value.policy.debounce_max_seconds = 10
+    app.runtime.llm = EchoLLM()
+
+    await app.runtime.submit(Context("web:owner", "owner", "agent", True), "你好")
+
+    replies = await asyncio.wait_for(eventually(lambda: app.store.list("reply")), timeout=2)
+    assert [reply["text"] for reply in replies] == ["收到"]
+
+
+async def test_debounce_keeps_different_senders_apart(app):
+    app.config.value.policy.debounce_seconds = 0.05
+    app.config.value.policy.debounce_max_seconds = 0.2
+    app.runtime.llm = EchoLLM()
+    first = Context("group:qq:1", "1", "chat", group=True)
+    second = Context("group:qq:1", "2", "chat", group=True)
+
+    await app.runtime.submit(first, "第一条")
+    await app.runtime.submit(second, "第二条")
+
+    async def both():
+        sent = await app.store.list("outbox")
+        return sent if len(sent) >= 2 else None
+
+    sent = await eventually(both)
+    assert [message["text"] for message in sent] == ["收到", "收到"]
+
+
+async def test_stop_discards_buffered_messages(app):
+    app.config.value.policy.debounce_seconds = 5
+    app.config.value.policy.debounce_max_seconds = 10
+    app.runtime.llm = EchoLLM()
+    ctx = Context("private:qq-main:1", "owner", "agent", True)
+
+    await app.runtime.submit(ctx, "先别回答")
+    await app.runtime.submit(ctx, "/stop")
+
+    await asyncio.sleep(0.1)
+    assert await app.store.list("turn") == []

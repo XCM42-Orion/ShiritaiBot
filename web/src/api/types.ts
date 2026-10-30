@@ -142,6 +142,8 @@ export interface Policy {
   max_steps: number;
   max_turn_seconds: number;
   max_context_chars: number;
+  debounce_seconds: number;
+  debounce_max_seconds: number;
 }
 
 export interface ProactiveConfig {

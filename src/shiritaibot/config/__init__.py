@@ -183,6 +183,15 @@ class Policy(Model):
     max_steps: int = Field(default=25, ge=1, le=100)
     max_turn_seconds: int = Field(default=1200, ge=10, le=7200)
     max_context_chars: int = Field(default=100000, ge=4000, le=1000000)
+    # Merge a sender's consecutive messages before starting a turn.
+    debounce_seconds: float = Field(default=1.5, ge=0, le=30)
+    debounce_max_seconds: float = Field(default=6.0, ge=0, le=60)
+
+    @model_validator(mode="after")
+    def debounce_valid(self) -> Policy:
+        if self.debounce_max_seconds < self.debounce_seconds:
+            raise ValueError("debounce_max_seconds must be at least debounce_seconds")
+        return self
 
     @field_validator("sessions")
     @classmethod

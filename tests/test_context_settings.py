@@ -76,6 +76,7 @@ async def test_settings_round_trip_and_legacy_persona(tmp_path):
         {"private_require_keyword": True},
         {"assistant_name": " "},
         {"personas": [{"id": "default", "name": "默认", "prompt": "secret"}]},
+        {"policy": {"debounce_seconds": 2, "debounce_max_seconds": 1}},
     ],
 )
 def test_invalid_settings_are_rejected(patch):
