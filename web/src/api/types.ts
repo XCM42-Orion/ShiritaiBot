@@ -28,7 +28,6 @@ export interface ModelConfig extends Instance {
   max_output: number;
   max_context: number;
   modalities: ("text" | "image" | "audio" | "video")[];
-  json_output: boolean;
   // API accepts an object or JSON editor text and returns a normalized object.
   extra_body: Record<string, unknown> | string;
 }
@@ -143,10 +142,8 @@ export interface Policy {
   max_steps: number;
   max_turn_seconds: number;
   max_context_chars: number;
-  debounce_enabled: boolean;
   debounce_seconds: number;
   debounce_max_seconds: number;
-  debounce_suffixes: string[];
 }
 
 export interface ProactiveConfig {

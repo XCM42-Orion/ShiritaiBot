@@ -105,7 +105,6 @@ export function ModelsPage({
       max_output: Math.min(128000, Math.max(64, row?.max_output || 4096)),
       max_context: 0,
       modalities: ["text"],
-      json_output: false,
       extra_body: {},
     };
     const routes = { ...config.routes };

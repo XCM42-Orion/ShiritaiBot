@@ -192,15 +192,6 @@ def request_payload(
     raise PublicError("不支持的 LLM 协议")
 
 
-def json_mode(protocol: str) -> dict:
-    """Native JSON-output parameters; Anthropic has none and relies on the prompt."""
-    return {
-        "chat_completions": {"response_format": {"type": "json_object"}},
-        "responses": {"text": {"format": {"type": "json_object"}}},
-        "gemini": {"generationConfig": {"responseMimeType": "application/json"}},
-    }.get(protocol, {})
-
-
 def parse_reply(protocol: str, model: str, data: dict) -> Reply:
     key = f"{protocol}:{model}"
     calls, text = [], ""
@@ -362,13 +353,7 @@ class ProviderManager:
             raise PublicError("无法读取提供商模型列表，请检查连接和接口协议") from None
 
     async def complete(
-        self,
-        route: str,
-        system: str,
-        messages: list[dict],
-        tools: list[dict],
-        settings=None,
-        json_output: bool = False,
+        self, route: str, system: str, messages: list[dict], tools: list[dict], settings=None
     ) -> Reply:
         cfg = settings or self.config.value
         candidates = cfg.routes.get(route, [])
@@ -387,8 +372,6 @@ class ProviderManager:
                 path, body = request_payload(
                     provider.protocol, model.model, system, messages, tools, model.max_output
                 )
-                if json_output and model.json_output and not tools:
-                    body = merge_body(body, json_mode(provider.protocol))
                 body = merge_body(body, model.extra_body)
                 if provider.protocol == "chat_completions" and "max_tokens" in model.extra_body:
                     body.pop("max_completion_tokens", None)

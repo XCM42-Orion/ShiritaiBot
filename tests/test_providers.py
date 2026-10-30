@@ -118,31 +118,3 @@ async def test_provider_fallback_and_usage(app):
     assert reply.text == "worked"
     assert [r["model"] for r in requests] == ["bad", "good"]
     assert (await app.store.list("usage"))[0]["usage"]["prompt_tokens"] == 10
-
-
-async def test_json_output_requests_native_json_mode_only_when_enabled(app):
-    app.config.value.providers = [
-        ProviderConfig(id="p", base_url="https://fake.test/v1", api_key="")
-    ]
-    app.config.value.models = [
-        ModelConfig(id="plain", provider="p", model="plain"),
-        ModelConfig(id="json", provider="p", model="json", json_output=True),
-    ]
-    requests = []
-
-    async def handle(req):
-        requests.append(json.loads(req.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
-
-    await app.llm.client.aclose()
-    app.llm.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-    messages = [{"role": "user", "content": "hi"}]
-    for model in ("plain", "json"):
-        app.config.value.routes = {"light": [model]}
-        await app.llm.complete("light", "sys", messages, [], json_output=True)
-    await app.llm.complete("light", "sys", messages, [])
-    assert [r.get("response_format") for r in requests] == [
-        None,
-        {"type": "json_object"},
-        None,
-    ]
