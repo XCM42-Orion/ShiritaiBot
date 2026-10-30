@@ -269,6 +269,7 @@ class ProactiveEngine:
                     + canonical(Decision.model_json_schema()),
                     messages,
                     [],
+                    json_output=True,
                 )
                 return Decision.model_validate(first_object(reply.text))
             except Exception:

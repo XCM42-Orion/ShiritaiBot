@@ -307,3 +307,31 @@ async def test_stop_discards_buffered_messages(app):
 
     await asyncio.sleep(0.1)
     assert await app.store.list("turn") == []
+
+
+async def test_debounce_can_be_disabled(app):
+    app.config.value.policy.debounce_enabled = False
+    app.config.value.policy.debounce_seconds = 5
+    app.config.value.policy.debounce_max_seconds = 10
+    app.runtime.llm = EchoLLM()
+    ctx = Context("private:qq-main:1", "owner", "agent", True)
+
+    assert await app.runtime.submit(ctx, "帮我看看") == "queued"
+    sent = await asyncio.wait_for(eventually(lambda: app.store.list("outbox")), timeout=2)
+    assert [message["text"] for message in sent] == ["收到"]
+
+
+async def test_debounce_uses_configured_suffixes(app):
+    app.config.value.policy.debounce_seconds = 5
+    app.config.value.policy.debounce_max_seconds = 10
+    app.config.value.policy.debounce_suffixes = ["~"]
+    app.runtime.llm = EchoLLM()
+    ctx = Context("private:qq-main:1", "owner", "agent", True)
+
+    await app.runtime.submit(ctx, "现在几点？")
+    await asyncio.sleep(0.1)
+    assert await app.store.list("turn") == []
+    await app.runtime.submit(ctx, "告诉我~")
+
+    sent = await asyncio.wait_for(eventually(lambda: app.store.list("outbox")), timeout=2)
+    assert [message["text"] for message in sent] == ["收到"]

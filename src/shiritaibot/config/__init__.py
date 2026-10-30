@@ -60,6 +60,8 @@ class ModelConfig(Instance):
     modalities: list[Literal["text", "image", "audio", "video"]] = Field(
         default_factory=lambda: ["text"], min_length=1
     )
+    # Request native JSON output for router and event triage calls.
+    json_output: bool = False
     extra_body: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator("extra_body", mode="before")
@@ -184,14 +186,27 @@ class Policy(Model):
     max_turn_seconds: int = Field(default=1200, ge=10, le=7200)
     max_context_chars: int = Field(default=100000, ge=4000, le=1000000)
     # Merge a sender's consecutive messages before starting a turn.
+    debounce_enabled: bool = True
     debounce_seconds: float = Field(default=1.5, ge=0, le=30)
     debounce_max_seconds: float = Field(default=6.0, ge=0, le=60)
+    # A message ending with any of these flushes the window immediately.
+    debounce_suffixes: list[str] = Field(
+        default_factory=lambda: ["?", "？", "。", "!", "！"], max_length=50
+    )
 
     @model_validator(mode="after")
     def debounce_valid(self) -> Policy:
         if self.debounce_max_seconds < self.debounce_seconds:
             raise ValueError("debounce_max_seconds must be at least debounce_seconds")
         return self
+
+    @field_validator("debounce_suffixes")
+    @classmethod
+    def debounce_suffixes_valid(cls, value: list[str]) -> list[str]:
+        value = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if any(len(item) > 20 for item in value):
+            raise ValueError("debounce suffixes must be at most 20 characters")
+        return value
 
     @field_validator("sessions")
     @classmethod

@@ -155,6 +155,7 @@ class SessionActor:
             and not ctx.background
             and not ctx.session.startswith("web:")
             and self.queue.empty()
+            and policy.debounce_enabled
             and policy.debounce_seconds > 0
         ):
             at = asyncio.get_running_loop().time()
@@ -165,7 +166,9 @@ class SessionActor:
             first = self.first_buffered if self.first_buffered is not None else at
             self.buffered.append((ctx, text))
             # A finished sentence ends the window early; the cap bounds total wait.
-            immediate = text.rstrip().endswith(("?", "？", "。", "!", "！"))
+            immediate = bool(policy.debounce_suffixes) and text.rstrip().endswith(
+                tuple(policy.debounce_suffixes)
+            )
             wait = 0 if immediate else policy.debounce_seconds
             self.deadline = min(at + wait, first + policy.debounce_max_seconds)
             self.wake.set()
@@ -374,10 +377,12 @@ class AgentRuntime:
                 "work：需要动手完成的任务，例如查资料、用工具、写代码、处理文件、邮件、日程、"
                 "提醒、多步骤执行或延续之前未完成的任务。"
                 "chat：日常聊天、情感交流、知识问答、观点讨论、简单寒暄，不需要执行任务。"
-                "拿不准时选 work。只输出一个词：work 或 chat。",
+                "拿不准时选 work。"
+                '只输出 JSON：{"route": "work"} 或 {"route": "chat"}。',
                 [{"role": "user", "content": material}],
                 [],
                 settings=cfg,
+                json_output=True,
             )
         except Exception as exc:
             await self.store.activity("router.failed", type(exc).__name__, ctx.session)

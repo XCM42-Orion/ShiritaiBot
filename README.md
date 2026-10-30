@@ -41,6 +41,7 @@ uv run shiritaibot token
 - 提供商的 `max_retries` 是首次请求失败后的额外重试轮数，默认 2，范围 0–10；0 表示不重试。请求超时和 HTTP 429 / 500 / 502 / 503 / 504 会退避重试，其他错误交给候选模型回退。`timeout` 是每次网络请求的超时；Agent 整轮仍受全局时间上限约束。
 - `proxy` 支持 `http://`、`https://`、`socks5://`、`socks5h://`，同时用于模型列表、当前配置测试和正式调用。留空沿用进程默认网络环境（包括环境变量代理）；填写后使用该提供商的独立代理。
 - 模型的 `extra_body` 支持 JSON 对象，例如 `{"temperature":0.7,"top_p":0.9}`。使用协议原生字段，Gemini 示例为 `{"generationConfig":{"temperature":0.7}}`。嵌套对象递归合并，其他值覆盖默认值；不能替换模型、对话、工具定义或开启流式响应。Chat Completions 指定 `max_tokens` 时会移除默认的 `max_completion_tokens`，避免字段冲突。界面保留未完成的 JSON 并提示错误，非法 JSON 不能测试或保存。为保留 `null`，写入 TOML 时该字段编码为 JSON 字符串，读取时恢复成对象。
+- 模型的“支持 JSON 输出”（`json_output`，默认关闭）开启后，Work/Chat 分流和 Proactive 事件分诊调用该模型时会请求原生 JSON 模式：Chat Completions 为 `response_format: {"type":"json_object"}`，Responses 为 `text.format`，Gemini 为 `responseMimeType: application/json`；Anthropic 无原生模式，仅依靠提示词。`extra_body` 中的同名字段优先。接口不支持时请保持关闭。
 - `max_context` 表示输入与预留输出合计的 token 上限；默认 0（未指定），非零时须大于最大输出。当前采用 ASCII 约 4 字符/token、其他字符约 1 字符/token 的估算，包含系统提示、工具和不透明推理状态，不等同于各模型的精确 tokenizer。估算超限会跳过该模型并尝试路由中的下一项，不截断工具调用历史。
 - `modalities` 记录输入模态：`text`、`image`、`audio`、`video`，至少一项，默认仅文本。这是能力配置；当前消息传输仍以文本为主，不会因勾选而自动开启媒体处理。
 
@@ -101,7 +102,7 @@ Proactive Loop 不提供逐会话编辑。**新 Proactive Loop 默认**配置 `p
 
 唤起关键词每行一个，消息包含任意关键词即可触发；群聊也可通过 @ 触发，白名单和忽略规则仍有效。主人私聊默认不需要关键词，可开启“主人私聊 Agent 需要关键词”，开启时须至少配置一个关键词。斜杠命令、停止和审批指令始终可用，WebUI 不受关键词限制。
 
-同一发送者的连续消息默认在 1.5 秒内合并为一轮，持续发送时最多等 6 秒；以问号、句号或感叹号结尾立即开始。不同发送者不合并，WebUI 会话和后台任务不受影响。两项等待时间可在 **工具与权限** 页调整。
+同一发送者的连续消息默认在 1.5 秒内合并为一轮，持续发送时最多等 6 秒；以问号、句号或感叹号结尾立即开始。不同发送者不合并，WebUI 会话和后台任务不受影响。是否开启、两项等待时间和立即开始的结尾后缀均可在 **工具与权限** 页调整。
 
 上下文支持 `discard`（超限丢弃旧轮次，默认）和 `compress`（压缩旧轮次为摘要）。`context.max_turns` 默认 50，包含即将开始的一轮；一轮内的工具调用、工具结果和插话整体保留或处理。字符上限沿用 `policy.max_context_chars`。压缩时保留 `context.keep_recent_turns` 个最近完整轮次（默认 10，须小于最大轮数）；字符空间不足时会压缩更多旧轮次。`context.compression_model` 可指定已启用的模型标识，留空使用 `light` 路由。摘要与裁剪位置持久化，后续压缩会合并已有摘要。
 
