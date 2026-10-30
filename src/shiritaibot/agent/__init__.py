@@ -155,6 +155,7 @@ class SessionActor:
             and not ctx.background
             and not ctx.session.startswith("web:")
             and self.queue.empty()
+            and policy.debounce_enabled
             and policy.debounce_seconds > 0
         ):
             at = asyncio.get_running_loop().time()
@@ -165,7 +166,9 @@ class SessionActor:
             first = self.first_buffered if self.first_buffered is not None else at
             self.buffered.append((ctx, text))
             # A finished sentence ends the window early; the cap bounds total wait.
-            immediate = text.rstrip().endswith(("?", "？", "。", "!", "！"))
+            immediate = bool(policy.debounce_suffixes) and text.rstrip().endswith(
+                tuple(policy.debounce_suffixes)
+            )
             wait = 0 if immediate else policy.debounce_seconds
             self.deadline = min(at + wait, first + policy.debounce_max_seconds)
             self.wake.set()

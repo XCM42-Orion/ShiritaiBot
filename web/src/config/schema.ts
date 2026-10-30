@@ -208,6 +208,12 @@ export const POLICY_FIELDS: FieldSpec[] = [
     max: 1000000,
   },
   {
+    key: "debounce_enabled",
+    label: "合并连续消息",
+    kind: "boolean",
+    help: "开启后，同一发送者在 QQ 私聊或群聊中的连续消息会合并为一轮处理。",
+  },
+  {
     key: "debounce_seconds",
     label: "消息合并等待（秒）",
     kind: "number",
@@ -222,6 +228,12 @@ export const POLICY_FIELDS: FieldSpec[] = [
     min: 0,
     max: 60,
     help: "持续有新消息时，本轮最多等待这么久。",
+  },
+  {
+    key: "debounce_suffixes",
+    label: "立即开始的结尾",
+    kind: "list",
+    help: "每行一个，消息以其中任意一项结尾时不再等待；留空则总是等满时间。",
   },
   {
     key: "denied_tools",
