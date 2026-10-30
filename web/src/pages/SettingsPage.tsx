@@ -7,6 +7,7 @@ import {
   PERSONA_FIELDS,
   CONTEXT_FIELDS,
   GROUP_CONTEXT_FIELDS,
+  MEMORY_FIELDS,
   createPersona,
 } from "../config/schema";
 import type { ConfigPageProps } from "./common";
@@ -166,6 +167,19 @@ export function SettingsPage({ config, setConfig }: ConfigPageProps) {
               policy: { ...config.policy, max_context_chars: Number(value) },
             })
           }
+        />
+      </section>
+      <section className="panel">
+        <h2>长期记忆</h2>
+        <p className="muted">
+          记忆由 Agent
+          维护：私聊和外部事件会自动整理，也可以在对话里说“记住……”“忘掉……”或直接更正；有冲突时
+          Agent 会问你。群聊和 Chat 模式不会读取私人记忆。
+        </p>
+        <FieldForm
+          value={config.memory}
+          fields={MEMORY_FIELDS}
+          onChange={(memory) => setConfig({ ...config, memory })}
         />
       </section>
       <section className="panel">

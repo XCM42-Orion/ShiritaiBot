@@ -200,18 +200,9 @@ async def command(runtime, ctx, text):
                 "\n".join(f"{row['id']} · {row.get('status', '')}" for row in rows) or "暂无任务"
             )
         elif name == "memory":
-            rows = (
-                await runtime.memory.search(ctx, argument)
-                if argument
-                else await runtime.memory.list()
-            )
+            rows = (await runtime.memory.search(query=argument, limit=10))["results"]
             answer = "长期记忆：\n" + (
-                "\n".join(
-                    row["content"][:500]
-                    for row in rows[:10]
-                    if row.get("status", "active") == "active"
-                )
-                or "没有匹配的记忆"
+                "\n".join(row["text"][:500] for row in rows) or "没有匹配的记忆"
             )
         elif name in {"approve", "deny"}:
             if not argument:

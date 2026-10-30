@@ -50,7 +50,7 @@ export const PROVIDER_FIELDS: FieldSpec[] = [
       "gemini",
       "systemone",
     ],
-    help: "systemone 用于 TypeSafe Jev 等决策模型：只做分类不生成文本，仅能用于工作/对话分流和主动事件分诊。",
+    help: "systemone 用于 TypeSafe Jev 等判断模型：只做分类不生成文本，仅能用于工作/对话分流、主动事件分诊和记忆路由。",
   },
   {
     key: "base_url",
@@ -114,6 +114,33 @@ export const MODEL_FIELDS: FieldSpec[] = [
     full: true,
     placeholder: '{"temperature": 0.7}',
     help: '按接口原生格式填写 JSON 对象，嵌套对象递归合并；Gemini 示例：{"generationConfig":{"temperature":0.7}}。参数覆盖默认值，但不能替换模型、对话或工具定义，也不能开启流式响应。',
+  },
+];
+
+export const EMBEDDING_MODEL_FIELDS: FieldSpec[] = [
+  { key: "id", label: "模型标识", kind: "text" },
+  {
+    key: "model",
+    label: "提供商模型名称",
+    kind: "text",
+    placeholder: "text-embedding-3-small",
+  },
+  { key: "enabled", label: "启用", kind: "boolean" },
+  {
+    key: "dims",
+    label: "向量维度",
+    kind: "number",
+    min: 0,
+    max: 16384,
+    help: "0 表示使用模型默认维度；支持降维的模型（如 OpenAI text-embedding-3、Gemini）可填较小值。修改后会重算全部记忆向量。",
+  },
+  {
+    key: "extra_body",
+    label: "自定义请求体参数（JSON）",
+    kind: "json",
+    full: true,
+    placeholder: '{"encoding_format": "float"}',
+    help: "OpenAI 兼容接口按原生格式合并到 /embeddings 请求体；Gemini 接口不使用此项。",
   },
 ];
 
@@ -349,6 +376,44 @@ export const CONTEXT_FIELDS: FieldSpec[] = [
     min: 0,
     max: 9999,
     help: "小于最大轮数。字符空间不足时可能压缩更多旧轮次。",
+  },
+];
+
+export const MEMORY_FIELDS: FieldSpec[] = [
+  {
+    key: "inject",
+    label: "每轮自动注入相关记忆",
+    kind: "boolean",
+    help: "主人私聊和 Proactive Loop 中，消息提到已知的人或事物、或检索到足够相关的记忆时，把它们附在本轮消息末尾；否则不注入。",
+  },
+  {
+    key: "inject_chars",
+    label: "记忆注入字符预算",
+    kind: "number",
+    min: 200,
+    max: 20000,
+    help: "每轮注入记忆的字符上限；已在上下文中的条目不会重复注入。",
+  },
+  {
+    key: "extract",
+    label: "自动整理记忆",
+    kind: "boolean",
+    help: "用记忆模型从主人私聊和已处理的外部事件中提取人物、事实和事件。每条都要有原文证据，助手自己说的话不会被记住；拿不准的冲突会在之后的对话里由 Agent 问你。",
+  },
+  {
+    key: "extract_messages",
+    label: "私聊累计多少条消息后整理",
+    kind: "number",
+    min: 2,
+    max: 200,
+  },
+  {
+    key: "extract_idle_minutes",
+    label: "私聊空闲多少分钟后整理",
+    kind: "number",
+    min: 1,
+    max: 1440,
+    help: "没有达到条数时，对话停下来这么久也会整理一次。",
   },
 ];
 

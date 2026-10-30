@@ -229,6 +229,8 @@ class ProactiveEngine:
         self.config, self.store, self.llm, self.notify = config, store, llm, notify
         self.short_term = short_term
         self.runtime: RuntimePort | None = None
+        # Long-term memory reads each handled event afterwards (memory/extract.py).
+        self.memory_sink: Callable[[dict], Awaitable[None]] | None = None
         self.channels: dict[str, list[Callable[[str, str], Awaitable[None]]]] = {}
         self.wake = asyncio.Event()
         self.lock = asyncio.Lock()
@@ -495,6 +497,11 @@ class ProactiveEngine:
         await self.short_term.record(
             row["id"], "queued" if should_notify else "silent", result.reason
         )
+        if self.memory_sink is not None:
+            try:
+                await self.memory_sink(row)
+            except Exception as exc:
+                event_log(row["id"]).warning(f"未能提交记忆抽取（{type(exc).__name__}）")
         self.wake.set()
 
     async def tick(self) -> None:

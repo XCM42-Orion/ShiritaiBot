@@ -68,7 +68,7 @@ QQ 和 WebUI 共用命令入口。WebUI 输入 `/` 可查看命令菜单。命�
 | `/mode agent`、`/mode chat` | 主人切换当前 Main 会话模式；`/tools mode agent` 同效 |
 | `/tools reset` | 清除当前会话配置，恢复继承默认策略 |
 | `/tasks` | 最近子代理任务，仅主人私聊 / WebUI |
-| `/memory [关键词]` | 查看或搜索长期记忆，仅主人私聊 / WebUI |
+| `/memory [关键词]` | 查看或搜索长期记忆（人物、事物、事实、事件），仅主人私聊 / WebUI；增删改直接对 Agent 说 |
 | `/approve 编号`、`/deny 编号` | 同意 / 拒绝一次审批，仅主人私聊 / WebUI |
 
 **概览 → 数据看板**显示过去 24 小时、3 天、7 天的逐小时输入/输出 tokens、用户消息和助手回复，以及总 tokens、消息数、模型调用数、失败轮次。使用北京时间，首尾小时只统计所选滚动区间；每 30 秒刷新。统计来自已有 SQLite 数据，无需重新开始积累。
@@ -121,7 +121,7 @@ src/shiritaibot/
   llm/                   Provider / 模型 / 路由和协议转换
   auth/                  权限、一次性审批、加密凭据
   tools/                 工具执行器和内置工具
-  memory/                私人原子记忆、中文全文搜索
+  memory/                长期记忆（人物/事物/事实/事件 + 证据）、检索注入、记忆工具、向量索引
   routine/               待办、日程、提醒、cron 调度
   proactive/             事件驱动循环：判断 → 分级 → 行动，免打扰、通知、短期记忆
   subagent/              外部 Agent CLI 生命周期

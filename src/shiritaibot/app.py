@@ -12,6 +12,7 @@ from shiritaibot.core import EventBus
 from shiritaibot.core.logs import get_logger
 from shiritaibot.llm import ProviderManager
 from shiritaibot.memory import MemoryManager, ShortTermMemory
+from shiritaibot.memory.extract import MemoryExtractor
 from shiritaibot.plugin.core import PluginManager
 from shiritaibot.proactive import PREPARE_SESSION, ProactiveEngine
 from shiritaibot.routine import RoutineManager
@@ -45,13 +46,18 @@ class Application:
         self.registry = ToolRegistry(self.permissions, self.store)
         self.llm = ProviderManager(self.config, self.vault, self.store)
         self.permissions.llm = self.llm
-        self.memory = MemoryManager(self.store)
+        self.memory = MemoryManager(self.store, self.config, self.llm)
+        await self.memory.open()
         self.short_term = ShortTermMemory(self.store, self.llm, config=self.config)
         await self.short_term.recover()
         self.adapters = AdapterHub(self.config, self.vault, self.store)
         self.proactive = ProactiveEngine(
             self.config, self.store, self.llm, self.adapters.notify_owner, self.short_term
         )
+        # Handled events feed long-term memory; the plugin that emitted them is not involved.
+        self.extractor = MemoryExtractor(self.memory, self.store, self.config, self.llm)
+        await self.extractor.open()
+        self.proactive.memory_sink = self.extractor.enqueue_event
         self.routine = RoutineManager(self.store, self.proactive.emit)
         self.subagents = SubagentManager(self.config, self.store, self.home, self.proactive.emit)
         self.plugins = PluginManager(
@@ -78,6 +84,8 @@ class Application:
             asyncio.create_task(self.routine.run()),
             asyncio.create_task(self.proactive.run()),
             asyncio.create_task(self.short_term.run()),
+            asyncio.create_task(self.memory.run()),
+            asyncio.create_task(self.extractor.run()),
         ]
         cfg = self.config.value
         log.log(

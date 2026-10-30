@@ -177,8 +177,10 @@ def test_http_auth_crud_and_validation(tmp_path):
         assert client.put("/api/secrets/key", json={"value": "secret-value"}).status_code == 200
         assert client.get("/api/secrets").json() == ["key"]
         assert "secret-value" not in client.get("/api/config").text
-        assert client.post("/api/memory", json={"content": "持久记忆"}).status_code == 200
-        assert len(client.get("/api/memory").json()) == 1
+        # Memory is read-only over HTTP; the Agent writes it through tools.
+        assert client.post("/api/memory", json={"content": "持久记忆"}).status_code == 405
+        assert client.get("/api/memory").json() == []
+        assert client.get("/api/memory/status").json()["model"] is None
         assert (
             client.post(
                 "/api/routines", json={"kind": "reminder", "title": "bad", "due": "2026-01-01"}

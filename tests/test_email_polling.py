@@ -59,6 +59,13 @@ async def test_time_filters_use_exact_server_receipt_time(mailbox, mode, expecte
     assert payload["count"] == len(expected)
     assert [m["uid"] for m in payload["messages"]] == expected
     assert all(m["received_at"] for m in payload["messages"])
+    # The plugin passes raw identities and receipt time; memory decisions happen in the core.
+    event = events[0]["event"]
+    assert event["actors"] == [
+        {"identity": "email:teacher@example.edu", "name": "", "role": "sender"}
+    ]
+    newest = max(datetime.fromisoformat(m["received_at"]) for m in payload["messages"])
+    assert datetime.fromisoformat(event["occurred_at"]) == newest
 
 
 async def test_multiple_emails_start_one_proactive_turn(mailbox):
@@ -83,6 +90,9 @@ async def test_multiple_emails_start_one_proactive_turn(mailbox):
     assert len(await app.store.list("event")) == 1
     content = app.runtime.llm.inputs[0][0][0]["content"]
     assert all(f"正文 {uid}" in content for uid in range(1, 4))
+    # The handled event is queued for long-term memory by the core, not the plugin.
+    jobs = await app.store.list("memory_extract")
+    assert [job["event"] for job in jobs] == [(await app.store.list("event"))[0]["id"]]
 
 
 async def test_last_poll_cutoff_survives_restart_and_does_not_drop_backlog(mailbox):

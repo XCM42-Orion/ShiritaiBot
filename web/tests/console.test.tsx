@@ -18,6 +18,7 @@ import { ChatPage } from "../src/pages/ChatPage";
 import { LogsPage } from "../src/pages/LogsPage";
 import { PluginsPage } from "../src/pages/PluginsPage";
 import { SettingsPage } from "../src/pages/SettingsPage";
+import { MemoryPage } from "../src/pages/MemoryPage";
 import { SecretField } from "../src/components/SecretField";
 import { NoticeProvider, useNotice } from "../src/hooks/useNotice";
 import { FieldForm } from "../src/components/FieldForm";
@@ -89,6 +90,13 @@ function baseConfig(): Settings {
       inject_chars: 4000,
       query_tool: true,
     },
+    memory: {
+      inject: true,
+      inject_chars: 1500,
+      extract: true,
+      extract_messages: 20,
+      extract_idle_minutes: 10,
+    },
   };
 }
 
@@ -143,8 +151,12 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     sendMessage: vi.fn().mockResolvedValue({ status: "queued" }),
     resolveApproval: vi.fn().mockResolvedValue({ ok: true }),
     memories: vi.fn().mockResolvedValue([]),
-    addMemory: vi.fn().mockResolvedValue({}),
-    archiveMemory: vi.fn().mockResolvedValue({ ok: true }),
+    memory: vi
+      .fn()
+      .mockResolvedValue({ id: "e1", type: "entity", status: "confirmed" }),
+    memoryStatus: vi
+      .fn()
+      .mockResolvedValue({ model: null, indexed: 0, pending: 3 }),
     createRoutine: stub(),
     setRoutineStatus: stub(),
     cancelSubagent: stub(),
@@ -286,7 +298,7 @@ function Host({
   ) => React.ReactNode;
 }) {
   const [config, setConfig] = useState(baseConfig());
-  return <>{children(config, setConfig)}</>;
+  return withQuery(<>{children(config, setConfig)}</>);
 }
 
 function withQuery(node: React.ReactNode) {
@@ -488,6 +500,110 @@ describe("models workspace", () => {
     await user.click(screen.getByLabelText("移除提供商"));
     expect(snapshot!.models).toEqual([]);
     expect(snapshot!.routes.agent).toEqual([]);
+  });
+});
+
+describe("model categories", () => {
+  function renderModels(client: ApiClient, onChange: (next: Settings) => void) {
+    render(
+      <Host client={client}>
+        {(config, setConfig) => (
+          <ModelsPage
+            client={client}
+            act={act}
+            config={config}
+            setConfig={(next) => {
+              onChange(next);
+              setConfig(next);
+            }}
+          />
+        )}
+      </Host>,
+    );
+  }
+
+  it("keeps embedding models in their own tab and route", async () => {
+    const client = fakeClient();
+    let snapshot: Settings | null = null;
+    renderModels(client, (next) => (snapshot = next));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Embedding" }));
+    await user.click(screen.getByText("手动添加"));
+    expect(snapshot!.models[0]).toMatchObject({ kind: "embedding", dims: 0 });
+    expect(snapshot!.routes.embedding).toEqual([snapshot!.models[0].id]);
+    expect(snapshot!.routes.agent).toEqual([]);
+    expect(screen.getByLabelText("向量维度")).toBeTruthy();
+    expect(screen.queryByLabelText("最大输出 tokens")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "语言模型" }));
+    expect(screen.queryByLabelText("向量维度")).toBeNull();
+    await user.click(screen.getByText("手动添加"));
+    expect(snapshot!.models[1].kind).toBe("text");
+
+    await user.click(screen.getByRole("button", { name: "Embedding" }));
+    await user.click(screen.getByText("模型路由"));
+    expect(await screen.findByText(/未配置 Embedding：3 条记忆/)).toBeTruthy();
+    expect(screen.getByText(/支持中文的 Embedding 模型/)).toBeTruthy();
+    const options = Array.from(
+      screen
+        .getByLabelText("添加 embedding 路由模型")
+        .querySelectorAll("option"),
+    ).map((option) => option.textContent);
+    expect(options).not.toContain(snapshot!.models[1].id);
+  });
+
+  it("creates Jev providers in the decision tab and explains each route", async () => {
+    const client = fakeClient();
+    let snapshot: Settings | null = null;
+    renderModels(client, (next) => (snapshot = next));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "判断模型（Jev）" }));
+    expect(screen.queryByText("main")).toBeNull();
+    await user.click(screen.getByLabelText("新增提供商"));
+    expect(snapshot!.providers[1]).toMatchObject({
+      protocol: "systemone",
+      base_url: "https://api.typesafe.ai/v1",
+    });
+    await user.click(screen.getByText("模型路由"));
+    expect(screen.getByText("记忆模型")).toBeTruthy();
+    expect(screen.queryByText("Chat 默认模型")).toBeNull();
+    expect(screen.getByText(/准确比快重要/)).toBeTruthy();
+  });
+});
+
+describe("memory page", () => {
+  it("browses memories and shows evidence without offering edits", async () => {
+    const client = fakeClient({
+      memories: vi.fn().mockResolvedValue([
+        {
+          id: "v1",
+          type: "event",
+          status: "active",
+          text: "[事件] 2026-10-29（周四） 梦寻发邮件说 issue #3 已处理完成  #v1",
+        },
+      ]),
+      memory: vi.fn().mockResolvedValue({
+        id: "v1",
+        type: "event",
+        status: "active",
+        evidence: [
+          {
+            source: "外部事件",
+            quote: "issue #3 已经处理完成",
+            recorded: "2026-10-29 14:32（周四）",
+            verdict: "quoted",
+          },
+        ],
+      }),
+    } as Partial<ApiClient>);
+    render(withQuery(<MemoryPage client={client} act={act} />));
+    const user = userEvent.setup();
+    expect(await screen.findByText(/梦寻发邮件说 issue #3/)).toBeTruthy();
+    expect(screen.queryByText("记住")).toBeNull();
+    await user.click(screen.getByText("详情与证据"));
+    expect(await screen.findByText(/issue #3 已经处理完成/)).toBeTruthy();
+    await user.click(screen.getByText("事件"));
+    expect(client.memories).toHaveBeenLastCalledWith("event", "");
   });
 });
 

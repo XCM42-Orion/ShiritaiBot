@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from shiritaibot.learn import OneLearnPlugin
 
+from shiritaibot.core import Actor
+
 from .base import (
     TEXT,
     Context,
@@ -21,6 +23,7 @@ from .base import (
 )
 
 __all__ = [
+    "Actor",
     "Plugin",
     "PluginContext",
     "Context",

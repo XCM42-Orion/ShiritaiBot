@@ -10,12 +10,14 @@ from shiritaibot.proactive import quiet_hours
 from shiritaibot.routine import RoutineItem
 
 
-async def test_memory_chinese_search_and_archive(app):
-    ctx = Context("web:owner", "owner", "agent", True)
-    row = await app.memory.add(ctx, "学习电动力学时先解释基本原理")
-    assert (await app.memory.search(ctx, "电动力学"))[0]["id"] == row["id"]
-    await app.memory.archive(row["id"])
-    assert await app.memory.search(ctx, "电动力学") == []
+async def test_memory_chinese_search_and_forget(app):
+    ctx = Context("web:owner", "owner", "agent", True, turn="t1")
+    text = "学习电动力学时先解释基本原理"
+    await app.store.append("web:owner", "t1", {"role": "user", "content": text})
+    row = await app.memory.save_fact(ctx, text, text, "主人")
+    assert (await app.memory.search("电动力学"))["results"][0]["id"] == row["id"]
+    await app.memory.forget(row["id"], "主人要求忘掉")
+    assert (await app.memory.search("电动力学"))["results"] == []
 
 
 async def test_vault_encrypts_and_does_not_expose_plaintext(app):

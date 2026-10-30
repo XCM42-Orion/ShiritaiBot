@@ -388,7 +388,7 @@ class ProviderManager:
                     (p for p in cfg.providers if model and p.id == model.provider and p.enabled),
                     None,
                 )
-                if not model or not provider:
+                if not model or not provider or model.kind == "embedding":
                     continue
                 if provider.protocol == "systemone":
                     decision_only = True
@@ -468,6 +468,84 @@ class ProviderManager:
                 f"{route} 路由的候选模型调用失败；Jev 等决策模型不生成文本，请再添加一个文本模型"
             )
         raise PublicError("所有候选模型调用失败，请检查 Provider 地址、凭据与模型名称")
+
+    def embedding_model(self, settings=None, route: str = "embedding"):
+        """(model, provider) serving the route, or None; only the first usable one counts."""
+        cfg = settings or self.config.value
+        for model_id in cfg.routes.get(route, []):
+            model = next(
+                (m for m in cfg.models if m.id == model_id and m.enabled and m.kind == "embedding"),
+                None,
+            )
+            provider = next(
+                (p for p in cfg.providers if model and p.id == model.provider and p.enabled), None
+            )
+            if model and provider:
+                return model, provider
+        return None
+
+    @staticmethod
+    def embedding_key(model) -> str:
+        # Vectors from different models or dimensions never share an index.
+        return f"{model.provider}:{model.model}" + (f"@{model.dims}" if model.dims else "")
+
+    async def embed(
+        self, texts: list[str], *, query: bool = False, settings=None, route: str = "embedding"
+    ) -> tuple[str, list[list[float]]]:
+        """Vectors from the embedding route's model, keyed by `embedding_key`."""
+        selected = self.embedding_model(settings, route)
+        if selected is None:
+            raise PublicError("尚未配置 Embedding 模型")
+        model, provider = selected
+        ref = provider.api_key
+        token = await self.vault.resolve(ref) if ref.startswith(("env:", "secret:")) else ref
+        headers = {"Content-Type": "application/json"}
+        base = provider.base_url.rstrip("/")
+        if provider.protocol == "gemini":
+            headers["x-goog-api-key"] = token
+            task = "RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT"
+            url = f"{base}/models/{model.model}:batchEmbedContents"
+            body: dict[str, Any] = {
+                "requests": [
+                    {
+                        "model": f"models/{model.model}",
+                        "content": {"parts": [{"text": text}]},
+                        "taskType": task,
+                        **({"outputDimensionality": model.dims} if model.dims else {}),
+                    }
+                    for text in texts
+                ]
+            }
+        else:
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            url = base + "/embeddings"
+            body = {"model": model.model, "input": texts, **model.extra_body}
+            if model.dims:
+                body["dimensions"] = model.dims
+        try:
+            async with self.semaphore:
+                response = await self._request(provider, "POST", url, json=body, headers=headers)
+            data = response.json()
+            if provider.protocol == "gemini":
+                vectors = [row["values"] for row in data["embeddings"]]
+            else:
+                rows = sorted(data["data"], key=lambda row: row.get("index", 0))
+                vectors = [row["embedding"] for row in rows]
+            if len(vectors) != len(texts) or any(
+                not v or len(v) != len(vectors[0]) for v in vectors
+            ):
+                raise ValueError("embedding count or dimensions mismatch")
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            log.warning(f"Embedding 模型 {model.id} 调用失败（{failure(provider.id, exc)}）", route)
+            await self.store.activity("provider.failed", failure(provider.id, exc))
+            raise PublicError("Embedding 调用失败，请检查 Provider 地址、凭据与模型名称") from None
+        await self.store.put(
+            "usage",
+            uid(),
+            {"model": model.id, "protocol": "embedding", "usage": data.get("usage", {})},
+        )
+        return self.embedding_key(model), vectors
 
     async def decide(
         self, route: str, state: str | dict, questions: dict, settings=None
