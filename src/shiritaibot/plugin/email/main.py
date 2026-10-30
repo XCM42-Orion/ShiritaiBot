@@ -16,7 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parseaddr
 from html.parser import HTMLParser
 from time import mktime
 from typing import Literal
@@ -31,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from shiritaibot.plugin_api import ExternalEvent, Plugin, PublicError, brief
+from shiritaibot.plugin_api import Actor, ExternalEvent, Plugin, PublicError, brief
 
 Security = Literal["ssl", "starttls", "none"]
 
@@ -161,6 +161,22 @@ def describe(raw: bytes, max_chars: int) -> dict:
     }
 
 
+def senders(mails: list[dict]) -> list[Actor]:
+    actors = {}
+    for mail in mails:
+        name, address = parseaddr(mail["from"])
+        if "@" in address:
+            key = "email:" + address.strip().lower()
+            actors.setdefault(key, Actor(identity=key, name=name.strip()[:200], role="sender"))
+    return list(actors.values())
+
+
+def received(mails: list[dict]) -> dict:
+    """occurred_at for the event: when the newest message arrived, if known."""
+    stamps = [mail["received_at"] for mail in mails if mail.get("received_at")]
+    return {"occurred_at": max(stamps)} if stamps else {}
+
+
 class Entry(Plugin):
     def __init__(self, context):
         super().__init__(context)
@@ -220,6 +236,9 @@ class Entry(Plugin):
                             "count": len(mails),
                             "messages": [{**mail, "uid": uid} for uid, mail in mails],
                         },
+                        # Raw identities only; the core decides what to remember.
+                        actors=senders([mail for _, mail in mails]),
+                        **received([mail for _, mail in mails]),
                     )
                 )
 

@@ -81,3 +81,6 @@ CREATE TABLE IF NOT EXISTS mem_vector (
   id TEXT NOT NULL, model TEXT NOT NULL, hash TEXT NOT NULL, vec BLOB NOT NULL,
   PRIMARY KEY(id, model)
 );
+CREATE TABLE IF NOT EXISTS mem_cursor (           -- last message seq read for extraction
+  session TEXT PRIMARY KEY, seq INTEGER NOT NULL, updated REAL NOT NULL
+);

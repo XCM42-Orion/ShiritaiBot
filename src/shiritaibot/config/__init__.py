@@ -153,6 +153,10 @@ class MemoryConfig(Model):
     # Long-term memory recall for owner Agent sessions and Proactive loops.
     inject: bool = True
     inject_chars: int = Field(default=1500, ge=200, le=20000)
+    # Automatic extraction from owner private chats and handled Proactive events.
+    extract: bool = True
+    extract_messages: int = Field(default=20, ge=2, le=200)
+    extract_idle_minutes: int = Field(default=10, ge=1, le=1440)
 
 
 class GroupContextConfig(Model):

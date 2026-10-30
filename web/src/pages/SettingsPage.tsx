@@ -173,8 +173,8 @@ export function SettingsPage({ config, setConfig }: ConfigPageProps) {
         <h2>长期记忆</h2>
         <p className="muted">
           记忆由 Agent
-          通过工具维护：在对话里说“记住……”“忘掉……”或更正即可；有冲突时 Agent
-          会直接问你。群聊和 Chat 模式不会读取私人记忆。
+          维护：私聊和外部事件会自动整理，也可以在对话里说“记住……”“忘掉……”或直接更正；有冲突时
+          Agent 会问你。群聊和 Chat 模式不会读取私人记忆。
         </p>
         <FieldForm
           value={config.memory}

@@ -162,7 +162,7 @@ SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之
 
 ## 主动性引擎
 
-事件源统一调用 `PluginContext.emit(event)`、`emit_many(events)`、`get_event(receipt_id)`；宿主提供同名 API，HTTP 分别是认证后的 `POST /api/events`、`POST /api/events/batch`、`GET /api/events/{id}`。事件包含来源事件 `id`、事件名 `kind`、`source`、带时区的 `occurred_at`、标题 `title`、内容 `payload`、稳定的 `dedup_key` 和参考值 `urgency`。`id` 可由入口自动补齐。返回的接收记录 ID 按 `(source, dedup_key)` 稳定去重；提交不代表处理完成，状态查询可查看分类和执行结果。
+事件源统一调用 `PluginContext.emit(event)`、`emit_many(events)`、`get_event(receipt_id)`；宿主提供同名 API，HTTP 分别是认证后的 `POST /api/events`、`POST /api/events/batch`、`GET /api/events/{id}`。事件包含来源事件 `id`、事件名 `kind`、`source`、带时区的 `occurred_at`、标题 `title`、内容 `payload`、稳定的 `dedup_key`、参考值 `urgency`，以及可选的 `actors`（事件涉及的人：`identity` 如 `email:someone@example.edu` / `qq:12345`，`name`，`role` 如 `sender`）。`actors` 只是原始身份数据：插件不调用任何记忆接口，事件处理完后由核心统一决定是否写入长期记忆（见 [MEMORY.md](MEMORY.md)）。`id` 可由入口自动补齐。返回的接收记录 ID 按 `(source, dedup_key)` 稳定去重；提交不代表处理完成，状态查询可查看分类和执行结果。
 
 | 阶段 | 行为 |
 |---|---|

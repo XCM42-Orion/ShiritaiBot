@@ -31,6 +31,15 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class Actor(Model):
+    """Someone an event involves, as raw identity data; the core decides what to remember."""
+
+    # Platform identity such as email:someone@example.edu or qq:12345.
+    identity: str = Field(pattern=r"^[a-z][a-z0-9_]*:\S+$", max_length=320)
+    name: str = Field(default="", max_length=200)
+    role: str = Field(default="", max_length=50)  # sender | recipient | author | ...
+
+
 class ExternalEvent(Model):
     id: str = Field(default_factory=uid, min_length=1, max_length=200)
     source: str = Field(min_length=1, max_length=200)
@@ -40,6 +49,7 @@ class ExternalEvent(Model):
     payload: dict[str, Any] = Field(default_factory=dict)
     urgency: Literal["low", "normal", "high", "critical"] = "normal"
     occurred_at: AwareDatetime = Field(default_factory=now)
+    actors: list[Actor] = Field(default_factory=list, max_length=50)
 
     @field_validator("id", "source", "kind", "dedup_key", "title", mode="before")
     @classmethod

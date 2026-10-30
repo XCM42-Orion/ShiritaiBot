@@ -95,6 +95,9 @@ export interface ContextConfig {
 export interface MemoryConfig {
   inject: boolean;
   inject_chars: number;
+  extract: boolean;
+  extract_messages: number;
+  extract_idle_minutes: number;
 }
 
 export interface GroupContextConfig {

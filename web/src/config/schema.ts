@@ -394,6 +394,27 @@ export const MEMORY_FIELDS: FieldSpec[] = [
     max: 20000,
     help: "每轮注入记忆的字符上限；已在上下文中的条目不会重复注入。",
   },
+  {
+    key: "extract",
+    label: "自动整理记忆",
+    kind: "boolean",
+    help: "用记忆模型从主人私聊和已处理的外部事件中提取人物、事实和事件。每条都要有原文证据，助手自己说的话不会被记住；拿不准的冲突会在之后的对话里由 Agent 问你。",
+  },
+  {
+    key: "extract_messages",
+    label: "私聊累计多少条消息后整理",
+    kind: "number",
+    min: 2,
+    max: 200,
+  },
+  {
+    key: "extract_idle_minutes",
+    label: "私聊空闲多少分钟后整理",
+    kind: "number",
+    min: 1,
+    max: 1440,
+    help: "没有达到条数时，对话停下来这么久也会整理一次。",
+  },
 ];
 
 export const GROUP_CONTEXT_FIELDS: FieldSpec[] = [

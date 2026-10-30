@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 import jieba
@@ -23,7 +24,13 @@ TYPES = {"e": "entity", "f": "fact", "v": "event", "c": "conflict"}
 LABELS = {"person": "人物", "thing": "事物"}
 AUTHORITY = {"agent": 0, "derived": 1, "direct": 2, "owner": 3}
 CONFIDENCE = {"agent": 0.5, "derived": 0.7, "direct": 0.85, "owner": 0.95}
-SOURCES = {"owner": "主人告知", "tool": "工具结果", "event": "外部事件", "legacy": "旧记忆"}
+SOURCES = {
+    "owner": "主人告知",
+    "msg": "私聊",
+    "tool": "工具结果",
+    "event": "外部事件",
+    "legacy": "旧记忆",
+}
 EVENT_SOURCES = {"email": "邮件", "routine": "日程"}
 LIVE = ("active", "conflicted")
 CARD_FACTS = 6
@@ -48,6 +55,17 @@ def parse_ref(value: str, prefixes: str = "efvc") -> tuple[str, int]:
 
 def normalize(text: str) -> str:
     return re.sub(r"[\s\"'“”‘’\\`]+", "", text).casefold()
+
+
+@dataclass(frozen=True, slots=True)
+class Proof:
+    """Where a memory came from: authority, source ref, verbatim quote and when it was said."""
+
+    authority: str
+    source: str
+    quote: str
+    observed: float
+    verdict: str = "quoted"
 
 
 def is_live(item: dict) -> bool:
@@ -599,6 +617,85 @@ class MemoryManager:
             )
         return result
 
+    async def create_entity(
+        self, kind: str, name: str, aliases: list[str], source: str, *, confirmed: bool = False
+    ) -> int:
+        stamp = now().timestamp()
+        async with self.tx() as db:
+            cursor = await db.execute(
+                "INSERT INTO mem_entity(kind,name,status,created,updated) VALUES(?,?,?,?,?)",
+                (kind, name, "confirmed" if confirmed else "candidate", stamp, stamp),
+            )
+            key = cursor.lastrowid or 0
+        await self.add_aliases(key, aliases, source)
+        log.log(f"记忆中新认识了{LABELS.get(kind, '事物')}：{name}")
+        return key
+
+    async def add_aliases(self, entity: int, aliases: list[str], source: str) -> None:
+        stamp = now().timestamp()
+        rows = await self.rows("SELECT name FROM mem_entity WHERE id=?", (entity,))
+        name = rows[0]["name"].casefold() if rows else ""
+        values = [
+            (alias, entity, source, stamp, stamp)
+            for alias in dict.fromkeys(a.strip() for a in aliases)
+            if alias and alias.casefold() != name
+        ]
+        if values:
+            async with self.tx() as db:
+                await db.executemany(
+                    "INSERT INTO mem_alias VALUES(?,?,?,?,?) ON CONFLICT(alias,entity) "
+                    "DO UPDATE SET last_seen=excluded.last_seen",
+                    values,
+                )
+
+    async def identity_entity(self, identity: str) -> int | None:
+        """The live entity a platform identity belongs to, following merges."""
+        rows = await self.rows("SELECT entity FROM mem_identity WHERE identity=?", (identity,))
+        if not rows:
+            return None
+        entity = await self.row("e", rows[0]["entity"])
+        if entity["status"] == "archived":
+            return entity["merged_into"]
+        return entity["id"]
+
+    async def bind_identity(self, identity: str, entity: int, display: str = "") -> None:
+        stamp = now().timestamp()
+        await self.store.execute(
+            "INSERT INTO mem_identity VALUES(?,?,?,?,?) ON CONFLICT(identity) DO UPDATE SET "
+            "entity=excluded.entity,display=excluded.display,last_seen=excluded.last_seen",
+            (identity, entity, display, stamp, stamp),
+        )
+
+    async def sighted(self, entities: set[int], confirmed: set[int]) -> None:
+        """Count a sighting; candidates seen three times or vouched for by the owner are kept."""
+        stamp = now().timestamp()
+        async with self.tx() as db:
+            for entity in entities:
+                await db.execute(
+                    "UPDATE mem_entity SET seen_count=seen_count+1,last_seen=?,"
+                    "status=CASE WHEN status='candidate' AND (seen_count+1>=3 OR ?) "
+                    "THEN 'confirmed' ELSE status END WHERE id=?",
+                    (stamp, entity in confirmed, entity),
+                )
+
+    async def reuse_fact(self, row: dict, proof: Proof) -> None:
+        """Another piece of evidence for an existing fact."""
+        stronger = max(row["authority"], proof.authority, key=AUTHORITY.__getitem__)
+        async with self.tx() as db:
+            await db.execute(
+                "UPDATE mem_fact SET as_of=MAX(as_of,?),authority=?,confidence=MAX(confidence,?),"
+                "updated=? WHERE id=?",
+                (
+                    proof.observed,
+                    stronger,
+                    CONFIDENCE[proof.authority],
+                    now().timestamp(),
+                    row["id"],
+                ),
+            )
+            await self.add_evidence(db, ref("f", row["id"]), proof)
+        await self.index([ref("f", row["id"])])
+
     async def merge_entities(self, target: int, source: int) -> None:
         if source == await self.owner_id():
             raise PublicError("不能把主人合并到其他实体")
@@ -656,6 +753,168 @@ class MemoryManager:
         if rows and authority != "owner":
             raise PublicError("这条内容曾被要求忘掉；只有主人本轮明确要求时才能重新记录")
 
+    # Low-level writes shared by the tools and automatic extraction; callers hold tx().
+
+    async def add_evidence(self, db, target: str, proof: Proof) -> None:
+        await db.execute(
+            "INSERT INTO mem_evidence(target,source,quote,observed_at,verdict) VALUES(?,?,?,?,?)",
+            (target, proof.source, proof.quote.strip()[:2000], proof.observed, proof.verdict),
+        )
+
+    async def open_conflict(self, db, kind: str, items: list[str], note: str) -> str:
+        cursor = await db.execute(
+            "INSERT INTO mem_conflict(kind,items,note,status,created) VALUES(?,?,?,'open',?)",
+            (kind, json.dumps(items), note, now().timestamp()),
+        )
+        return ref("c", cursor.lastrowid or 0)
+
+    async def write_fact(
+        self,
+        subject: int | None,
+        content: str,
+        proof: Proof,
+        *,
+        valid_from: float | None = None,
+        old: dict | None = None,
+        equal_wins: bool = True,
+        history: bool = False,
+    ) -> tuple[int, str]:
+        """Record a fact, reusing a duplicate; `old` is the fact it replaces.
+
+        A stronger source replaces `old`; an equal one only when `equal_wins` (an explicit
+        correction rather than a contradiction); otherwise both become a conflict for the
+        owner. `history` stores an older state already replaced by `old`.
+        """
+        stamp = now().timestamp()
+        same = await self.rows(
+            "SELECT * FROM mem_fact WHERE subject IS ? AND status IN ('active','conflicted')",
+            (subject,),
+        )
+        duplicate = next((r for r in same if normalize(r["content"]) == normalize(content)), None)
+        refs = []
+        async with self.tx() as db:
+            if duplicate and (old is None or duplicate["id"] == old["id"]):
+                key = duplicate["id"]
+                stronger = max(duplicate["authority"], proof.authority, key=AUTHORITY.__getitem__)
+                await db.execute(
+                    "UPDATE mem_fact SET as_of=MAX(as_of,?),authority=?,"
+                    "confidence=MAX(confidence,?),updated=? WHERE id=?",
+                    (proof.observed, stronger, CONFIDENCE[proof.authority], stamp, key),
+                )
+                await self.add_evidence(db, ref("f", key), proof)
+                result = "已存在，已刷新确认时间"
+            else:
+                status = "superseded" if history else "active"
+                cursor = await db.execute(
+                    "INSERT INTO mem_fact(subject,content,valid_from,valid_to,as_of,authority,"
+                    "confidence,status,superseded_by,created,updated) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        subject,
+                        content,
+                        valid_from,
+                        proof.observed if history else None,
+                        proof.observed,
+                        proof.authority,
+                        CONFIDENCE[proof.authority],
+                        status,
+                        old["id"] if history and old else None,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                key = cursor.lastrowid or 0
+                await self.add_evidence(db, ref("f", key), proof)
+                result = f"已作为 f{old['id']} 之前的旧状态记录" if history and old else "已记录"
+                if old and not history:
+                    strength = AUTHORITY[proof.authority] - AUTHORITY[old["authority"]]
+                    if strength > 0 or (strength == 0 and equal_wins):
+                        await db.execute(
+                            "UPDATE mem_fact SET status='superseded',superseded_by=?,valid_to=?,"
+                            "updated=? WHERE id=?",
+                            (key, proof.observed, stamp, old["id"]),
+                        )
+                        result = f"已记录，并取代 f{old['id']}"
+                    else:
+                        # The owner decides between sources that cannot overrule each other.
+                        await db.execute(
+                            "UPDATE mem_fact SET status='conflicted',updated=? WHERE id IN (?,?)",
+                            (stamp, old["id"], key),
+                        )
+                        conflict = await self.open_conflict(
+                            db,
+                            "fact",
+                            [ref("f", old["id"]), ref("f", key)],
+                            f"「{brief(old['content'], 80)}」与「{brief(content, 80)}」互相矛盾",
+                        )
+                        result = f"已记录，但与 f{old['id']} 冲突（{conflict}），需要主人确认"
+                    refs.append(ref("f", old["id"]))
+        await self.index([ref("f", key), *refs])
+        log.log(f"记忆事实{result}：{brief(content, 80)}")
+        return key, result
+
+    async def write_event(
+        self,
+        content: str,
+        proof: Proof,
+        occurred: float | None,
+        granularity: str,
+        *,
+        time_text: str = "",
+        phase: str = "happened",
+        people: list[int] | None = None,
+        old: dict | None = None,
+        same_as: int | None = None,
+    ) -> tuple[int, str]:
+        """Record an event, or add evidence to `same_as` / an exact duplicate."""
+        stamp = now().timestamp()
+        if same_as is None and old is None:
+            found = await self.rows(
+                "SELECT id FROM mem_event WHERE status='active' AND occurred_at IS ? AND content=?",
+                (occurred, content),
+            )
+            same_as = found[0]["id"] if found else None
+        async with self.tx() as db:
+            if same_as is not None:
+                key = same_as
+                result = "已存在，已补充证据"
+            else:
+                cursor = await db.execute(
+                    "INSERT INTO mem_event(content,occurred_at,tz,granularity,time_text,phase,"
+                    "authority,status,created,updated) VALUES(?,?,?,?,?,?,?,'active',?,?)",
+                    (
+                        content,
+                        occurred,
+                        str(self.zone),
+                        granularity,
+                        time_text.strip(),
+                        phase,
+                        proof.authority,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                key = cursor.lastrowid or 0
+                result = "已记录"
+            await db.executemany(
+                "INSERT OR IGNORE INTO mem_participant VALUES(?,?)",
+                [(key, p) for p in dict.fromkeys(people or [])],
+            )
+            await self.add_evidence(db, ref("v", key), proof)
+            if old and old["id"] != key:
+                if AUTHORITY[proof.authority] < AUTHORITY[old["authority"]]:
+                    raise PublicError(
+                        f"v{old['id']} 来自更可靠的来源，只有主人本轮明确更正时才能取代"
+                    )
+                await db.execute(
+                    "UPDATE mem_event SET status='superseded',superseded_by=?,updated=? WHERE id=?",
+                    (key, stamp, old["id"]),
+                )
+                result = f"已记录，并更正 v{old['id']}"
+        await self.index([ref("v", key), *([ref("v", old["id"])] if old else [])])
+        log.log(f"记忆事件{result}：{brief(content, 80)}")
+        return key, result
+
     async def save_fact(
         self,
         ctx: Context,
@@ -670,73 +929,10 @@ class MemoryManager:
         await self.guard_tombstone(content, authority)
         subject_id = await self.resolve_entity(subject) if subject else None
         start = parse_time(valid_from, self.zone)[0] if valid_from else None
-        old = None
-        if replaces:
-            prefix, key = parse_ref(replaces, "f")
-            old = await self.row(prefix, key)
-        stamp = now().timestamp()
-        same = await self.rows(
-            "SELECT * FROM mem_fact WHERE subject IS ? AND status IN ('active','conflicted')",
-            (subject_id,),
-        )
-        duplicate = next((r for r in same if normalize(r["content"]) == normalize(content)), None)
-        async with self.tx() as db:
-            if duplicate and not old:
-                key = duplicate["id"]
-                stronger = max(duplicate["authority"], authority, key=AUTHORITY.__getitem__)
-                await db.execute(
-                    "UPDATE mem_fact SET as_of=?,authority=?,confidence=MAX(confidence,?),updated=? WHERE id=?",
-                    (stamp, stronger, CONFIDENCE[authority], stamp, key),
-                )
-                result = "已存在，已刷新确认时间"
-            else:
-                cursor = await db.execute(
-                    "INSERT INTO mem_fact(subject,content,valid_from,as_of,authority,confidence,"
-                    "status,created,updated) VALUES(?,?,?,?,?,?,'active',?,?)",
-                    (
-                        subject_id,
-                        content,
-                        start,
-                        stamp,
-                        authority,
-                        CONFIDENCE[authority],
-                        stamp,
-                        stamp,
-                    ),
-                )
-                key = cursor.lastrowid or 0
-                result = "已记录"
-            await db.execute(
-                "INSERT INTO mem_evidence(target,source,quote,observed_at,verdict) VALUES(?,?,?,?,'quoted')",
-                (ref("f", key), source, evidence.strip()[:2000], stamp),
-            )
-            conflict = None
-            if old and old["id"] != key:
-                if AUTHORITY[authority] >= AUTHORITY[old["authority"]]:
-                    await db.execute(
-                        "UPDATE mem_fact SET status='superseded',superseded_by=?,valid_to=?,updated=? WHERE id=?",
-                        (key, stamp, stamp, old["id"]),
-                    )
-                    result = f"已记录，并取代 f{old['id']}"
-                else:
-                    # A weaker source cannot overrule a stronger one; the owner decides.
-                    await db.execute(
-                        "UPDATE mem_fact SET status='conflicted',updated=? WHERE id IN (?,?)",
-                        (stamp, old["id"], key),
-                    )
-                    cursor = await db.execute(
-                        "INSERT INTO mem_conflict(kind,items,note,status,created) VALUES('fact',?,?,'open',?)",
-                        (
-                            json.dumps([ref("f", old["id"]), ref("f", key)]),
-                            f"「{brief(old['content'], 80)}」与「{brief(content, 80)}」互相矛盾",
-                            stamp,
-                        ),
-                    )
-                    conflict = ref("c", cursor.lastrowid or 0)
-                    result = f"已记录，但与 f{old['id']} 冲突（{conflict}），需要主人确认"
-        await self.index([ref("f", key), *([ref("f", old["id"])] if old else [])])
+        old = await self.row(*parse_ref(replaces, "f")) if replaces else None
+        proof = Proof(authority, source, evidence, now().timestamp())
+        key, result = await self.write_fact(subject_id, content, proof, valid_from=start, old=old)
         item = (await self.load([ref("f", key)]))[ref("f", key)]
-        log.log(f"记忆事实{result}：{brief(content, 80)}")
         return {
             "id": ref("f", key),
             "result": result,
@@ -769,61 +965,19 @@ class MemoryManager:
         stamp = now().timestamp()
         if phase == "happened" and occurred is not None and occurred > stamp + 3600:
             raise PublicError("已发生的事件时间不能晚于现在；将来的安排请用 phase=planned")
-        people = list(dict.fromkeys([await self.resolve_entity(p) for p in participants or []]))
-        old = None
-        if replaces:
-            prefix, key = parse_ref(replaces, "v")
-            old = await self.row(prefix, key)
-        duplicate = (
-            await self.rows(
-                "SELECT * FROM mem_event WHERE status='active' AND occurred_at IS ? AND content=?",
-                (occurred, content),
-            )
-            if not old
-            else []
+        people = [await self.resolve_entity(p) for p in participants or []]
+        old = await self.row(*parse_ref(replaces, "v")) if replaces else None
+        key, result = await self.write_event(
+            content,
+            Proof(authority, source, evidence, stamp),
+            occurred,
+            granularity,
+            time_text=time_text,
+            phase=phase,
+            people=people,
+            old=old,
         )
-        async with self.tx() as db:
-            if duplicate:
-                key = duplicate[0]["id"]
-                result = "已存在，已补充证据"
-            else:
-                cursor = await db.execute(
-                    "INSERT INTO mem_event(content,occurred_at,tz,granularity,time_text,phase,"
-                    "authority,status,created,updated) VALUES(?,?,?,?,?,?,?,'active',?,?)",
-                    (
-                        content,
-                        occurred,
-                        str(self.zone),
-                        granularity,
-                        time_text.strip(),
-                        phase,
-                        authority,
-                        stamp,
-                        stamp,
-                    ),
-                )
-                key = cursor.lastrowid or 0
-                result = "已记录"
-            await db.executemany(
-                "INSERT OR IGNORE INTO mem_participant VALUES(?,?)", [(key, p) for p in people]
-            )
-            await db.execute(
-                "INSERT INTO mem_evidence(target,source,quote,observed_at,verdict) VALUES(?,?,?,?,'quoted')",
-                (ref("v", key), source, evidence.strip()[:2000], stamp),
-            )
-            if old and old["id"] != key:
-                if AUTHORITY[authority] < AUTHORITY[old["authority"]]:
-                    raise PublicError(
-                        f"v{old['id']} 来自更可靠的来源，只有主人本轮明确更正时才能取代"
-                    )
-                await db.execute(
-                    "UPDATE mem_event SET status='superseded',superseded_by=?,updated=? WHERE id=?",
-                    (key, stamp, old["id"]),
-                )
-                result = f"已记录，并更正 v{old['id']}"
-        await self.index([ref("v", key), *([ref("v", old["id"])] if old else [])])
         item = (await self.load([ref("v", key)]))[ref("v", key)]
-        log.log(f"记忆事件{result}：{brief(content, 80)}")
         return {
             "id": ref("v", key),
             "result": result,

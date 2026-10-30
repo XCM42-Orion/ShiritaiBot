@@ -90,7 +90,13 @@ function baseConfig(): Settings {
       inject_chars: 4000,
       query_tool: true,
     },
-    memory: { inject: true, inject_chars: 1500 },
+    memory: {
+      inject: true,
+      inject_chars: 1500,
+      extract: true,
+      extract_messages: 20,
+      extract_idle_minutes: 10,
+    },
   };
 }
 

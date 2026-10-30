@@ -86,7 +86,7 @@ class MemoryRecall:
         slots: dict[str, tuple[str, dict | None, list[dict]]] = {}
         lines: dict[str, str] = {}
         delivered: dict[str, str] = {}
-        conflicts: set[int] = set()
+        conflicts: set[str] = set()
         used = 0
         for key in order:
             item = items[key]
@@ -120,7 +120,9 @@ class MemoryRecall:
             if entity is not None:
                 delivered[entity["ref"]] = fingerprint(memory.plain(entity))
             if item["type"] == "fact" and item["status"] == "conflicted":
-                conflicts.add(item["id"])
+                conflicts.add(key)
+            if entity is not None and entity["status"] == "candidate":
+                conflicts.add(entity["ref"])  # A new name may be someone already known.
         if not lines:
             return ""
         asks = await self.conflict_lines(conflicts)
@@ -152,11 +154,11 @@ class MemoryRecall:
                 )
         return result
 
-    async def conflict_lines(self, facts: set[int]) -> dict[str, str]:
-        if not facts:
+    async def conflict_lines(self, wanted: set[str]) -> dict[str, str]:
+        """Open conflicts touching shown conflicted facts or new entities."""
+        if not wanted:
             return {}
         rows = await self.memory.rows("SELECT * FROM mem_conflict WHERE status='open'")
-        wanted = {ref("f", key) for key in facts}
         stamp = now().timestamp()
         result = {}
         for row in rows:
