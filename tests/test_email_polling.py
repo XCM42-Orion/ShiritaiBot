@@ -161,3 +161,21 @@ def test_custom_time_filter_requires_aware_cutoff_and_accepts_empty_default():
             EmailSettings(**values, time_filter="custom", filter_before=cutoff)
     cfg = EmailSettings(**values, time_filter="custom", filter_before="2026-10-28T09:00:00+08:00")
     assert cfg.filter_before.utcoffset() == timedelta(hours=8)
+
+
+def test_html_mail_keeps_only_readable_body():
+    from email.message import EmailMessage
+
+    from shiritaibot.plugin.email.main import describe
+
+    message = EmailMessage()
+    message["Subject"] = "扣账通知"
+    message.set_content(
+        "<html><head><style>.a{color:red}</style><title>t</title></head>"
+        "<body><script>track()</script><div class='a'>您的账户&nbsp;支出</div>"
+        "<table><tr><td>金额</td><td>CNY 12.00</td></tr></table>"
+        "<!-- hidden --><p>​谢谢</p></body></html>",
+        subtype="html",
+    )
+    snippet = describe(message.as_bytes(), 2000)["snippet"]
+    assert snippet == "您的账户 支出\n金额\nCNY 12.00\n谢谢"

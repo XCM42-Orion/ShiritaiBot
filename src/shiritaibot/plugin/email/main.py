@@ -6,6 +6,7 @@ worker thread so the shared event loop never blocks.
 
 import asyncio
 import hashlib
+import html
 import imaplib
 import json
 import re
@@ -16,6 +17,7 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import formatdate, make_msgid
+from html.parser import HTMLParser
 from time import mktime
 from typing import Literal
 
@@ -70,6 +72,68 @@ class EmailSettings(BaseModel):
         return self
 
 
+class _TextExtractor(HTMLParser):
+    """Collect human-readable body text, dropping styles, scripts and other markup."""
+
+    SKIP = {"head", "style", "script", "noscript", "template", "svg", "title", "xml"}
+    BLOCK = {
+        "address", "article", "blockquote", "br", "dd", "div", "dl", "dt", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "ol", "p", "pre",
+        "section", "table", "tbody", "td", "th", "thead", "tr", "ul",
+    }  # fmt: skip
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skipping = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self.skipping += 1
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+        elif tag == "img" and not self.skipping:
+            alt = (dict(attrs).get("alt") or "").strip()
+            if alt:
+                self.parts.append(f" {alt} ")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag not in self.SKIP:
+            self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP:
+            self.skipping = max(0, self.skipping - 1)
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.skipping:
+            self.parts.append(data)
+
+
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\ufeff\u00ad\u034f]")
+_LOOKS_HTML = re.compile(r"<\s*(html|body|div|table|p|br|style|span)\b", re.I)
+
+
+def html_to_text(markup: str) -> str:
+    """Strip markup, inline CSS and scripts; keep the readable body with line breaks."""
+    parser = _TextExtractor()
+    try:
+        parser.feed(markup)
+        parser.close()
+        text = "".join(parser.parts)
+    except Exception:
+        text = html.unescape(re.sub(r"<[^>]+>", " ", markup))
+    return clean_text(text)
+
+
+def clean_text(text: str) -> str:
+    text = _INVISIBLE.sub("", text).replace("\xa0", " ")
+    lines = (" ".join(line.split()) for line in text.splitlines())
+    return "\n".join(line for line in lines if line)
+
+
 def describe(raw: bytes, max_chars: int) -> dict:
     message = BytesParser(policy=policy.default).parsebytes(raw)
     text = ""
@@ -79,15 +143,18 @@ def describe(raw: bytes, max_chars: int) -> dict:
             text = body.get_content()
         except (LookupError, ValueError):
             text = ""
-        if body.get_content_type() == "text/html":
-            text = re.sub(r"<[^>]+>", " ", text)
+        # Some senders put HTML in their text/plain part as well.
+        if body.get_content_type() == "text/html" or _LOOKS_HTML.search(text):
+            text = html_to_text(text)
+        else:
+            text = clean_text(text)
     return {
         "message_id": str(message.get("Message-ID", "")),
         "from": str(message.get("From", "")),
         "to": str(message.get("To", "")),
         "subject": str(message.get("Subject", "")) or "(无主题)",
         "date": str(message.get("Date", "")),
-        "snippet": " ".join(text.split())[:max_chars],
+        "snippet": text[:max_chars],
         "attachments": [p.get_filename() for p in message.iter_attachments() if p.get_filename()][
             :20
         ],
