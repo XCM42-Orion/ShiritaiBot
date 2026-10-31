@@ -8,7 +8,8 @@ $native = ((& $native -p process.execPath) | Out-String).Trim()
 $nodeHash = (Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash
 $npmPackage = Join-Path (Split-Path -Parent $native) 'node_modules/npm'
 if (-not (Test-Path -LiteralPath $npmPackage)) { throw 'The Windows test runner needs a complete Node.js installation.' }
-$scratch = Join-Path ([IO.Path]::GetTempPath()) ('shiritai-windows-install-' + [Guid]::NewGuid().ToString('N'))
+# Keep the scratch tree short: stock Windows refuses paths beyond MAX_PATH during extraction.
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('swi-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $scratch
 try {
     $tools = Join-Path $scratch 'tools'
@@ -28,7 +29,7 @@ public class UvFixture {
     & $compiler /nologo /target:exe ("/out:" + (Join-Path $tools 'uv.exe')) $uvSource
     if ($LASTEXITCODE -ne 0) { throw 'Unable to compile the isolated uv fixture.' }
 
-    $nodeImage = Join-Path $scratch 'node-v24.0.0-win-x64'
+    $nodeImage = Join-Path $scratch 'n'
     $null = New-Item -ItemType Directory -Path (Join-Path $nodeImage 'node_modules') -Force
     Copy-Item -LiteralPath $native -Destination (Join-Path $nodeImage 'node.exe')
     Copy-Item -LiteralPath $npmPackage -Destination (Join-Path $nodeImage 'node_modules/npm') -Recurse
@@ -63,7 +64,7 @@ public class UvFixture {
     }
 
     foreach ($scenario in @('existing', 'missing', 'broken-private', 'repair-private')) {
-        $destination = Join-Path $scratch ("$scenario user's folder & " + [char]0x4e2d + [char]0x6587)
+        $destination = Join-Path $scratch ("$scenario & " + [char]0x4e2d + [char]0x6587)
         $casePath = $originalPath
         if ($scenario -in @('missing', 'repair-private')) {
             $casePath = (($originalPath -split ';' | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $_ 'node.exe')) }) -join ';')

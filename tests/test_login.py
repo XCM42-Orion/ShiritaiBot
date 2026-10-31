@@ -100,3 +100,23 @@ def test_token_retrieval_does_not_create_a_different_instance_token(tmp_path):
     assert "无法读取管理令牌" in result.output
     assert "--home" in result.output
     assert not home.exists()
+
+
+def test_token_creation_prepares_an_unstarted_instance(tmp_path):
+    home = tmp_path / "not-started"
+    result = CliRunner().invoke(cli.cli, ["token", "--home", str(home), "--create"])
+    assert result.exit_code == 0
+    value = result.output.strip()
+    assert len(value) >= 32
+    assert (home / "web.token").read_text(encoding="utf-8").strip() == value
+
+
+def test_token_creation_reuses_an_existing_token(tmp_path):
+    home = tmp_path / "started"
+    home.mkdir()
+    path = home / "web.token"
+    path.write_text("existing-token", encoding="utf-8")
+    result = CliRunner().invoke(cli.cli, ["token", "--home", str(home), "--create"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "existing-token"
+    assert path.read_text(encoding="utf-8") == "existing-token"

@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import stat
 import sys
 import zipfile
@@ -51,7 +52,7 @@ async def test_scan_registers_plugins_and_settings_with_old_config_and_bad_neigh
     app.config.value.plugins = [PluginConfig(id="missing", settings={"keep": 7})]
     directory = app.home / "plugins" / "new_plugin"
     directory.mkdir(parents=True)
-    (directory / "plugin.toml").write_text(MANIFEST)
+    (directory / "plugin.toml").write_text(MANIFEST, encoding="utf-8")
     (directory / "main.py").write_text("from shiritaibot.plugin_api import Plugin as Entry")
     broken = directory.with_name("broken")
     broken.mkdir()
@@ -184,7 +185,12 @@ def test_configured_ids_without_directories_never_appear_in_plugin_api(tmp_path)
     [
         {"../escape": "bad", "plugin.toml": MANIFEST, "main.py": SOURCE},
         {"/absolute": "bad", "plugin.toml": MANIFEST, "main.py": SOURCE},
-        {"folder\\escape": "bad", "plugin.toml": MANIFEST, "main.py": SOURCE},
+        pytest.param(
+            {"folder\\escape": "bad", "plugin.toml": MANIFEST, "main.py": SOURCE},
+            marks=pytest.mark.skipif(
+                os.sep == "\\", reason="zipfile normalizes backslashes into separators on Windows"
+            ),
+        ),
         {"plugin.toml": "api = 999", "main.py": SOURCE},
         {"plugin.toml": MANIFEST, "main.py": "syntax error :"},
         {"plugin.toml": 'api = 1\nsettings_schema = "bad"', "main.py": SOURCE},
@@ -265,7 +271,7 @@ default = ""
     saved = next(p for p in app.config.value.plugins if p.id == cfg.id)
     assert saved.settings["service_key"].startswith("secret:")
     assert await app.vault.resolve(saved.settings["service_key"]) == "private-schema-key"
-    assert "private-schema-key" not in app.config.path.read_text()
+    assert "private-schema-key" not in app.config.path.read_text(encoding="utf-8")
     plugin = app.plugins.loaded[cfg.id]
     assert plugin.context.settings["interval"] == 60
     saved.settings["interval"] = "invalid-value"

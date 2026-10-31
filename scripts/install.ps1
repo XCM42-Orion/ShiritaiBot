@@ -1,12 +1,13 @@
 ﻿param(
     [string]$InstallDir,
     [ValidateRange(1, 65535)][int]$Port = 8765,
+    [string]$PypiIndex,
     [switch]$NoStart
 )
 
 # Isolate variables/functions when invoked through: irm URL/install.ps1 | iex
 & {
-    param($Destination, $ListenPort, $InstallOnly)
+    param($Destination, $ListenPort, $PackageIndex, $InstallOnly)
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version 2
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
@@ -40,7 +41,7 @@
     $staging = Join-Path $ShiritaiRoot ('.install-' + [Guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $bin, $data, $staging -Force
     $savedEnvironment = @{}
-    foreach ($key in @('PATH', 'UV_PYTHON_INSTALL_DIR', 'UV_PYTHON_BIN_DIR', 'UV_CACHE_DIR', 'UV_UNMANAGED_INSTALL', 'npm_config_cache')) {
+    foreach ($key in @('PATH', 'UV_PYTHON_INSTALL_DIR', 'UV_PYTHON_BIN_DIR', 'UV_CACHE_DIR', 'UV_UNMANAGED_INSTALL', 'UV_DEFAULT_INDEX', 'npm_config_cache')) {
         $savedEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
     }
     $savedTls = [Net.ServicePointManager]::SecurityProtocol
@@ -52,6 +53,7 @@
         $env:UV_PYTHON_BIN_DIR = $bin
         $env:UV_CACHE_DIR = Join-Path $runtime 'cache/uv'
         $env:npm_config_cache = Join-Path $runtime 'cache/npm'
+        if ($PackageIndex) { $env:UV_DEFAULT_INDEX = $PackageIndex }
 
         function Invoke-ShiritaiDownload([string]$Url, [string]$Path) {
             for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -179,7 +181,7 @@ $env:UV_PYTHON_BIN_DIR = Join-Path $ShiritaiRoot 'runtime/bin'
 $env:UV_CACHE_DIR = Join-Path $ShiritaiRoot 'runtime/cache/uv'
 Set-Location -LiteralPath (Join-Path $ShiritaiRoot 'app')
 if ($Token) {
-    & $ShiritaiUv run --frozen --no-sync python -m shiritaibot.cli token --home (Join-Path $ShiritaiRoot 'data')
+    & $ShiritaiUv run --frozen --no-sync python -m shiritaibot.cli token --home (Join-Path $ShiritaiRoot 'data') --create
 } else {
     & $ShiritaiUv run --frozen --no-sync python -m shiritaibot.cli run --home (Join-Path $ShiritaiRoot 'data') --port $Port
 }
@@ -209,4 +211,4 @@ exit $LASTEXITCODE
         [Net.ServicePointManager]::SecurityProtocol = $savedTls
         if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     }
-} $InstallDir $Port $NoStart.IsPresent
+} $InstallDir $Port $PypiIndex $NoStart.IsPresent

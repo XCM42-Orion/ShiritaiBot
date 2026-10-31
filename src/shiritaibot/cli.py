@@ -60,9 +60,16 @@ def run(
 
 
 @cli.command()
-def token(home: Path = Path("data")):
+def token(
+    home: Path = Path("data"),
+    create: bool = typer.Option(False, help="目录尚未启动过时生成新令牌"),
+):
     """Display the local admin token for signing into WebUI."""
-    path = home.resolve() / "web.token"
+    home = home.resolve()
+    if create:
+        typer.echo(ensure_token(home))
+        return
+    path = home / "web.token"
     try:
         value = path.read_text(encoding="utf-8").strip()
     except OSError as error:

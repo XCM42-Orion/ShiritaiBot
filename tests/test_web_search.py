@@ -148,7 +148,7 @@ def test_search_settings_migration_encryption_and_validation(tmp_path):
         assert client.put("/api/config", json=config).status_code == 200
         saved = client.get("/api/config")
         assert "private-key" not in saved.text
-        assert "private-key" not in (tmp_path / "config.toml").read_text()
+        assert "private-key" not in (tmp_path / "config.toml").read_text(encoding="utf-8")
         assert b"private-key" not in (tmp_path / "state.sqlite3").read_bytes()
         assert client.put("/api/config", json=saved.json()).status_code == 200
         config["web_search"]["provider"] = "unknown"

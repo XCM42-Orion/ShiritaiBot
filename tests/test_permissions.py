@@ -1,5 +1,6 @@
 import asyncio
 import json
+import shutil
 
 import pytest
 
@@ -342,6 +343,7 @@ async def test_plugin_registration_requires_explicit_valid_safety(app):
     assert [tool.safe for tool in context.tools] == [True, False, False, False]
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the shell tool runs bash")
 async def test_shell_executes_without_approval_in_full_access(app):
     app.config.value.policy.owner_default.preset = "full_access"
     result = json.loads(await app.registry.execute(OWNER, "shell", {"command": "printf permitted"}))

@@ -207,7 +207,10 @@ async def fake_imap(box: dict, logins: list):
             tag, command, *rest = line.split(" ", 2)
             args, done = (rest[0] if rest else ""), f"{tag} OK done\r\n".encode()
             command = command.upper()
-            if command == "LOGIN":
+            if command == "CAPABILITY":
+                # imaplib refreshes capabilities after LOGIN; the greeting copy is consumed.
+                await send(b"* CAPABILITY IMAP4rev1\r\n" + done)
+            elif command == "LOGIN":
                 logins.append(shlex.split(args))
                 await send(done)
             elif command in {"SELECT", "EXAMINE"}:

@@ -21,7 +21,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
 |---|---|---|
 | 安装目录 | `--dir PATH` | `-InstallDir PATH` |
 | 端口（默认 8765） | `--port 8765` | `-Port 8765` |
+| Python 包镜像 | `--index URL` | `-PypiIndex URL` |
 | 安装完成后暂不启动 | `--no-start` | `-NoStart` |
+
+`--index` / `-PypiIndex` 只影响本次安装，导出为 `uv` 的 `UV_DEFAULT_INDEX`。不传时
+沿用环境里已有的值；网络访问 PyPI 慢时可以用它指定镜像，例如
+`--index https://pypi.tuna.tsinghua.edu.cn/simple`。
 
 默认目录是 macOS 的 `~/Library/Application Support/ShiritaiBot`、Linux 的
 `${XDG_DATA_HOME:-~/.local/share}/shiritaibot`、Windows 的
@@ -30,8 +35,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
 
 安装输出会给出管理页面、重启命令和获取令牌的命令。Bash 使用安装目录里的
 `start.sh` 启动、`start.sh token` 获取令牌；Windows 使用输出的 PowerShell
-命令启动，附加 `-Token` 获取令牌。在管理页面添加模型并连接 QQ；按 Ctrl+C
-停止前台服务。
+命令启动，附加 `-Token` 获取令牌。尚未启动过时也能直接运行令牌命令，它会当场
+生成并保存令牌。在管理页面添加模型并连接 QQ；按 Ctrl+C 停止前台服务。
 
 macOS / Linux 还会在 `~/.local/bin` 添加 `shiritaibot` 快捷入口。
 该目录已在 PATH 中时，可从任意目录运行 `shiritaibot token`，获取的始终是

@@ -4,14 +4,15 @@ set -Eeuo pipefail
 
 shiritai_install() {
   local target='' port=8765 no_start=0 platform arch temp_dir='' uv_bin node_dir node_bin npm_bin
-  local command_dir command_entry=''
+  local command_dir command_entry='' pypi_index=''
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dir) [ "$#" -ge 2 ] || { printf '%s\n' '--dir 需要目录参数。' >&2; return 1; }; target=$2; shift 2 ;;
       --port) [ "$#" -ge 2 ] || { printf '%s\n' '--port 需要端口参数。' >&2; return 1; }; port=$2; shift 2 ;;
+      --index) [ "$#" -ge 2 ] || { printf '%s\n' '--index 需要 URL 参数。' >&2; return 1; }; pypi_index=$2; shift 2 ;;
       --no-start) no_start=1; shift ;;
       --help|-h)
-        printf '%s\n' 'ShiritaiBot 一键部署' '用法: bash install.sh [--dir PATH] [--port 8765] [--no-start]' '默认安装后在当前终端启动；Ctrl+C 停止。'; return 0 ;;
+        printf '%s\n' 'ShiritaiBot 一键部署' '用法: bash install.sh [--dir PATH] [--port 8765] [--index URL] [--no-start]' '--index 指定 PyPI 镜像（导出为 UV_DEFAULT_INDEX）。' '默认安装后在当前终端启动；Ctrl+C 停止。'; return 0 ;;
       *) printf '未知参数: %s\n' "$1" >&2; return 1 ;;
     esac
   done
@@ -52,6 +53,7 @@ shiritai_install() {
   export UV_PYTHON_BIN_DIR="$target/runtime/bin"
   export UV_CACHE_DIR="$target/runtime/cache/uv"
   export npm_config_cache="$target/runtime/cache/npm"
+  if [ -n "$pypi_index" ]; then export UV_DEFAULT_INDEX="$pypi_index"; fi
   export PATH="$target/runtime/bin:$target/runtime/node/bin:$PATH"
 
   shiritai_download() {
@@ -148,7 +150,7 @@ export UV_PYTHON_BIN_DIR="$SHIRITAI_ROOT/runtime/bin"
 export UV_CACHE_DIR="$SHIRITAI_ROOT/runtime/cache/uv"
 cd "$SHIRITAI_ROOT/app"
 case "${1:-run}" in
-  token) shift; exec "$SHIRITAI_UV" run --frozen --no-sync python -m shiritaibot.cli token --home "$SHIRITAI_ROOT/data" "$@" ;;
+  token) shift; exec "$SHIRITAI_UV" run --frozen --no-sync python -m shiritaibot.cli token --home "$SHIRITAI_ROOT/data" --create "$@" ;;
   run) [ "$#" -eq 0 ] || shift; exec "$SHIRITAI_UV" run --frozen --no-sync python -m shiritaibot.cli run --home "$SHIRITAI_ROOT/data" --port "$SHIRITAI_PORT" "$@" ;;
   *) printf '%s\n' '用法: start.sh [run|token]'; exit 1 ;;
 esac

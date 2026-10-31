@@ -72,6 +72,9 @@ shutil.copyfile(fixtures / source, output)
 import json, os, sys
 with open(os.environ['SHIRITAI_TEST_LOG'], 'a') as f:
     f.write(json.dumps(['uv'] + sys.argv[1:]) + '\\n')
+if os.environ.get('UV_DEFAULT_INDEX'):
+    f.write(json.dumps(['uv-index', os.environ['UV_DEFAULT_INDEX']]) + '\\n')
+    f.flush()
 if sys.argv[1:] == ['--version']:
     print('uv fixture')
 elif sys.argv[1] == 'sync' and os.environ.get('SHIRITAI_TEST_UV_FAILURE'):
@@ -151,7 +154,7 @@ if os.environ.get('SHIRITAI_TEST_NPM_FAILURE') == sys.argv[-1]:
         token = subprocess.run([str(self.target / "start.sh"), "token"], env=self.env, text=True, capture_output=True)
         self.assertEqual(token.returncode, 0, token.stderr)
         self.assertEqual(token.stdout.strip(), "fixture-token")
-        self.assertIn(["uv", "run", "--frozen", "--no-sync", "python", "-m", "shiritaibot.cli", "token", "--home", str(self.target / "data")], self.calls())
+        self.assertIn(["uv", "run", "--frozen", "--no-sync", "python", "-m", "shiritaibot.cli", "token", "--home", str(self.target / "data"), "--create"], self.calls())
 
     def test_rerun_keeps_source_edits_and_data(self):
         self.assertEqual(self.install().returncode, 0)
@@ -173,7 +176,7 @@ if os.environ.get('SHIRITAI_TEST_NPM_FAILURE') == sys.argv[-1]:
         result = subprocess.run([str(command), "token"], cwd=self.root, env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "fixture-token")
-        self.assertIn(["uv", "run", "--frozen", "--no-sync", "python", "-m", "shiritaibot.cli", "token", "--home", str(self.target / "data")], self.calls())
+        self.assertIn(["uv", "run", "--frozen", "--no-sync", "python", "-m", "shiritaibot.cli", "token", "--home", str(self.target / "data"), "--create"], self.calls())
 
     def test_existing_unrelated_command_is_preserved(self):
         self.command_dir.mkdir()
@@ -283,6 +286,11 @@ if os.environ.get('SHIRITAI_TEST_NPM_FAILURE') == sys.argv[-1]:
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(), '#!/bin/sh\nexit 1\n')
         self.assert_no_staging()
+
+    def test_index_option_reaches_uv_for_this_run_only(self):
+        result = self.install("--index", "https://mirror.example/simple")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(["uv-index", "https://mirror.example/simple"], self.calls())
 
     def test_invalid_port_and_help_do_not_install(self):
         for port in ("0", "65536", "-1", "oops"):
