@@ -19,7 +19,7 @@ class Model:
         self.extract, self.judge, self.prompts = [], [], []
         self.fail = False
 
-    async def complete(self, route, system, messages, tools, settings=None):
+    async def complete(self, route, system, messages, tools, settings=None, **kwargs):
         assert route == "memory" and settings.routes["memory"] == ["fake"]
         if self.fail:
             raise RuntimeError("model down")

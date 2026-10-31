@@ -182,7 +182,7 @@ async def test_session_mode_overrides_transport_and_controls_tool_exposure(app, 
     done = asyncio.Event()
 
     class LLM:
-        async def complete(self, selected_route, system, messages, tools, settings):
+        async def complete(self, selected_route, system, messages, tools, settings, **kwargs):
             assert selected_route == route
             names = {tool["function"]["name"] for tool in tools}
             assert "current_time" in names

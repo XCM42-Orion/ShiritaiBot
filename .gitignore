@@ -8,6 +8,7 @@ data/
 web/node_modules/
 web/dist/
 *.tsbuildinfo
+.claude/
 .local/
 
 # Concrete plugins are managed separately; retain only the plugin host core.

@@ -46,7 +46,7 @@ def picked(choice, confidence):
 class TextModel(Model):
     """The text memory model; routes now list Jev first."""
 
-    async def complete(self, route, system, messages, tools, settings=None):
+    async def complete(self, route, system, messages, tools, settings=None, **kwargs):
         assert route == "memory" and settings.routes["memory"] == ["jev", "fake"]
         self.prompts.append((system, messages[0]["content"]))
         queue = self.extract if system == EXTRACT_PROMPT else self.judge

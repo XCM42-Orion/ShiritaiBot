@@ -577,6 +577,7 @@ class AgentRuntime:
                         history,
                         tools,
                         settings=cfg,
+                        scope=ctx.session,
                     )
                     message = {
                         "role": "assistant",

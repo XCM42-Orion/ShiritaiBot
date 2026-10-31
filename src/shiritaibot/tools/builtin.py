@@ -4,11 +4,11 @@ import asyncio
 import hashlib
 import json
 from datetime import datetime
-from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from shiritaibot.adapters.onebot11 import qq_download_url
 from shiritaibot.core import PublicError, Tool, now
 from shiritaibot.core.process import run_process
 from shiritaibot.memory.tools import memory_tools
@@ -196,17 +196,7 @@ async def register_builtin(app) -> None:
         else:
             resource = await bot.call("get_file", {"file_id": file_id})
         url = resource.get("url", "")
-        parsed = urlparse(url)
-        host = parsed.hostname or ""
-        if (
-            parsed.scheme != "https"
-            or parsed.username
-            or parsed.password
-            or not any(
-                host == d or host.endswith("." + d)
-                for d in ("qq.com", "qq.com.cn", "qpic.cn", "gtimg.cn")
-            )
-        ):
+        if not qq_download_url(url):
             raise PublicError("OneBot 没有返回受支持的 QQ HTTPS 下载地址；不读取协议端本地路径")
         folder = session_dir(app.home, "files", ctx.session)
         await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)

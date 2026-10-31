@@ -11,6 +11,7 @@ import httpx
 
 from shiritaibot.core import PublicError, Reply, canonical, uid
 from shiritaibot.core.logs import get_logger
+from shiritaibot.llm.media import ImageResolver
 
 log = get_logger("模型")
 
@@ -30,12 +31,63 @@ def merge_body(base: dict, extra: dict) -> dict:
     return result
 
 
+# Providers bill an image by its pixels, not its base64 length; this is a typical cost.
+IMAGE_TOKENS = 1600
+
+
 def estimated_tokens(body: dict) -> int:
     # A shared heuristic, not a provider tokenizer: ASCII ~4 chars/token,
     # other characters ~1 token. Include system text, tool schemas and opaque state.
-    text = json.dumps(body, ensure_ascii=False)
+    images = 0
+
+    def strip(value: Any) -> Any:
+        nonlocal images
+        if isinstance(value, str) and value.startswith("data:image/"):
+            images += 1
+            return ""
+        if isinstance(value, dict):
+            if "data" in value and value.keys() & {"media_type", "mimeType"}:
+                images += 1
+                return {}
+            return {k: strip(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [strip(v) for v in value]
+        return value
+
+    text = json.dumps(strip(body), ensure_ascii=False)
     ascii_chars = sum(character.isascii() for character in text)
-    return math.ceil(ascii_chars / 4) + len(text) - ascii_chars
+    return math.ceil(ascii_chars / 4) + len(text) - ascii_chars + images * IMAGE_TOKENS
+
+
+def content_parts(protocol: str, content: str | list[dict]) -> list[dict]:
+    """Protocol blocks for message content; lists use Chat Completions text/image_url parts."""
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}] if content else []
+    result = []
+    for part in content:
+        if part["type"] == "text":
+            if protocol == "responses":
+                result.append({"type": "input_text", "text": part["text"]})
+            elif protocol == "gemini":
+                result.append({"text": part["text"]})
+            else:
+                result.append(part)
+            continue
+        url = part["image_url"]["url"]
+        if protocol == "responses":
+            result.append({"type": "input_image", "image_url": url})
+            continue
+        if protocol == "chat_completions":
+            result.append(part)
+            continue
+        mime, data = url.removeprefix("data:").split(";base64,", 1)
+        if protocol == "anthropic":
+            result.append(
+                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+            )
+        else:
+            result.append({"inlineData": {"mimeType": mime, "data": data}})
+    return result
 
 
 def request_payload(
@@ -75,8 +127,11 @@ def request_payload(
                     }
                 )
             else:
-                if message.get("content"):
-                    items.append({"role": message["role"], "content": message["content"]})
+                content = message.get("content")
+                if isinstance(content, list):
+                    content = content_parts(protocol, content)
+                if content:
+                    items.append({"role": message["role"], "content": content})
                 for call in message.get("tool_calls", []):
                     items.append(
                         {"type": "function_call", "call_id": call["id"], **call["function"]}
@@ -106,9 +161,7 @@ def request_payload(
                     }
                 ]
             else:
-                blocks = (
-                    [{"type": "text", "text": message["content"]}] if message.get("content") else []
-                )
+                blocks = content_parts(protocol, message.get("content") or "")
                 blocks += [
                     {
                         "type": "tool_use",
@@ -156,7 +209,7 @@ def request_payload(
                     }
                 ]
             else:
-                parts = [{"text": message["content"]}] if message.get("content") else []
+                parts = content_parts(protocol, message.get("content") or "")
                 parts += [
                     {
                         "functionCall": {
@@ -374,66 +427,73 @@ class ProviderManager:
             raise PublicError("无法读取提供商模型列表，请检查连接和接口协议") from None
 
     async def complete(
-        self, route: str, system: str, messages: list[dict], tools: list[dict], settings=None
+        self,
+        route: str,
+        system: str,
+        messages: list[dict],
+        tools: list[dict],
+        settings=None,
+        scope: str | None = None,
     ) -> Reply:
+        """`scope` is the session whose QQ image refs may be resolved for this call."""
         cfg = settings or self.config.value
         candidates = cfg.routes.get(route, [])
         if not candidates:
             raise PublicError(f"尚未配置 {route} 模型路由，请在 WebUI 配置 Provider、模型和路由")
-        async with self.semaphore:
-            context_skipped = decision_only = False
-            for model_id in candidates:
-                model = next((m for m in cfg.models if m.id == model_id and m.enabled), None)
-                provider = next(
-                    (p for p in cfg.providers if model and p.id == model.provider and p.enabled),
-                    None,
-                )
-                if not model or not provider or model.kind == "embedding":
-                    continue
-                if provider.protocol == "systemone":
-                    decision_only = True
-                    continue
-                path, body = request_payload(
-                    provider.protocol, model.model, system, messages, tools, model.max_output
-                )
-                body = merge_body(body, model.extra_body)
-                if provider.protocol == "chat_completions" and "max_tokens" in model.extra_body:
-                    body.pop("max_completion_tokens", None)
-                generation = body.get("generationConfig")
-                output_limit = {
-                    "chat_completions": body.get("max_tokens", body.get("max_completion_tokens")),
-                    "responses": body.get("max_output_tokens"),
-                    "anthropic": body.get("max_tokens"),
-                    "gemini": generation.get("maxOutputTokens")
-                    if isinstance(generation, dict)
-                    else None,
-                }[provider.protocol]
-                reserved_output = (
-                    output_limit
-                    if isinstance(output_limit, int) and output_limit > 0
-                    else model.max_output
-                )
-                if (
-                    model.max_context
-                    and estimated_tokens(body) + reserved_output > model.max_context
-                ):
-                    context_skipped = True
-                    log.warning(f"{model.id} 的估算上下文超过上限 {model.max_context}，跳过", route)
-                    await self.store.activity("provider.context_limit", model.id)
-                    continue
-                ref = provider.api_key
-                token = (
-                    await self.vault.resolve(ref) if ref.startswith(("env:", "secret:")) else ref
-                )
-                headers = {"Content-Type": "application/json"}
-                if provider.protocol == "anthropic":
-                    headers.update({"x-api-key": token, "anthropic-version": "2023-06-01"})
-                elif provider.protocol == "gemini":
-                    headers["x-goog-api-key"] = token
-                elif token:
-                    headers["Authorization"] = f"Bearer {token}"
-                started = time.monotonic()
-                try:
+        images = ImageResolver(self, scope, cfg) if scope else None
+        if images and not images.present(messages):
+            images = None
+        context_skipped = decision_only = False
+        for model_id in candidates:
+            model = next((m for m in cfg.models if m.id == model_id and m.enabled), None)
+            provider = next(
+                (p for p in cfg.providers if model and p.id == model.provider and p.enabled),
+                None,
+            )
+            if not model or not provider or model.kind == "embedding":
+                continue
+            if provider.protocol == "systemone":
+                decision_only = True
+                continue
+            # Captioning calls complete() itself, so it must run outside the semaphore.
+            sent = await images.render(messages, model) if images else messages
+            path, body = request_payload(
+                provider.protocol, model.model, system, sent, tools, model.max_output
+            )
+            body = merge_body(body, model.extra_body)
+            if provider.protocol == "chat_completions" and "max_tokens" in model.extra_body:
+                body.pop("max_completion_tokens", None)
+            generation = body.get("generationConfig")
+            output_limit = {
+                "chat_completions": body.get("max_tokens", body.get("max_completion_tokens")),
+                "responses": body.get("max_output_tokens"),
+                "anthropic": body.get("max_tokens"),
+                "gemini": generation.get("maxOutputTokens")
+                if isinstance(generation, dict)
+                else None,
+            }[provider.protocol]
+            reserved_output = (
+                output_limit
+                if isinstance(output_limit, int) and output_limit > 0
+                else model.max_output
+            )
+            if model.max_context and estimated_tokens(body) + reserved_output > model.max_context:
+                context_skipped = True
+                log.warning(f"{model.id} 的估算上下文超过上限 {model.max_context}，跳过", route)
+                await self.store.activity("provider.context_limit", model.id)
+                continue
+            ref = provider.api_key
+            token = await self.vault.resolve(ref) if ref.startswith(("env:", "secret:")) else ref
+            headers = {"Content-Type": "application/json"}
+            if provider.protocol == "anthropic":
+                headers.update({"x-api-key": token, "anthropic-version": "2023-06-01"})
+            elif provider.protocol == "gemini":
+                headers["x-goog-api-key"] = token
+            elif token:
+                headers["Authorization"] = f"Bearer {token}"
+            started = time.monotonic()
+            try:
+                async with self.semaphore:
                     response = await self._request(
                         provider,
                         "POST",
@@ -441,24 +501,24 @@ class ProviderManager:
                         json=body,
                         headers=headers,
                     )
-                    reply = parse_reply(provider.protocol, model.model, response.json())
-                    await self.store.put(
-                        "usage",
-                        uid(),
-                        {"model": model.id, "protocol": provider.protocol, "usage": reply.usage},
-                    )
-                    log.debug(
-                        f"{model.id} 应答，用时 {time.monotonic() - started:.1f}s"
-                        + (f"，请求调用 {len(reply.calls)} 个工具" if reply.calls else ""),
-                        route,
-                    )
-                    return reply
-                except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
-                    log.warning(
-                        f"{model.id} 调用失败（{failure(provider.id, exc)}），尝试下一个候选模型",
-                        route,
-                    )
-                    await self.store.activity("provider.failed", failure(provider.id, exc))
+                reply = parse_reply(provider.protocol, model.model, response.json())
+                await self.store.put(
+                    "usage",
+                    uid(),
+                    {"model": model.id, "protocol": provider.protocol, "usage": reply.usage},
+                )
+                log.debug(
+                    f"{model.id} 应答，用时 {time.monotonic() - started:.1f}s"
+                    + (f"，请求调用 {len(reply.calls)} 个工具" if reply.calls else ""),
+                    route,
+                )
+                return reply
+            except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+                log.warning(
+                    f"{model.id} 调用失败（{failure(provider.id, exc)}），尝试下一个候选模型",
+                    route,
+                )
+                await self.store.activity("provider.failed", failure(provider.id, exc))
         if context_skipped:
             raise PublicError(
                 "候选模型调用失败，部分模型的估算上下文超过上限，请减少输入或调整模型上下文配置"

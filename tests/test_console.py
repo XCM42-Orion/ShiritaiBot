@@ -194,7 +194,7 @@ async def test_commands_reset_archive_model_and_no_llm(app):
     finished = asyncio.Event()
 
     class LLM:
-        async def complete(self, route, system, messages, tools, settings):
+        async def complete(self, route, system, messages, tools, settings, **kwargs):
             assert settings.routes[route] == ["GLM-5.3-Flash"]
             assert len(messages) == 1 and "old context" not in str(messages)
             assert "/help" not in str(messages)

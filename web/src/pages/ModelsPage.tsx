@@ -2,13 +2,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Download, Plus, Search, Trash2 } from "lucide-react";
 import type { ModelConfig, Protocol, ProviderConfig } from "../api/types";
-import { Field, jsonObjectError } from "../components/FieldForm";
+import { Field, FieldForm, jsonObjectError } from "../components/FieldForm";
 import { ModelTestButton } from "../components/ModelTestButton";
 import { EmptyState } from "../components/EmptyState";
 import {
   EMBEDDING_MODEL_FIELDS,
   MODEL_FIELDS,
   PROVIDER_FIELDS,
+  VISION_FIELDS,
   createProvider,
 } from "../config/schema";
 import { uniqueId } from "../lib/utils";
@@ -53,6 +54,11 @@ const ROUTES: { key: string; label: string; help: string }[] = [
     help: "做什么：权限为“模型自动审批”的工具调用前，独立审查工具、完整参数与用户请求，决定批准或拒绝。不调用工具。适合：判断严谨、能稳定输出 JSON 的文本模型；Jev 等判断模型可放在文本模型之前，只有把握足够时直接采用，否则改用后面的文本模型。全部失败、超时或返回无效时拒绝执行。留空时使用分诊与摘要模型。",
   },
   {
+    key: "vision",
+    label: "图像转述模型",
+    help: "做什么：主模型不支持图像输入时，把上下文中的图片描述成文字，结果按图片缓存。适合：便宜、看图准确、能转录图中文字的多模态模型。只能选择模态包含图像的模型。",
+  },
+  {
     key: "embedding",
     label: "Embedding 模型",
     help: "做什么：为记忆条目和查询计算向量，用于语义检索。适合：支持中文的 Embedding 模型。只使用第一个可用模型；更换后后台全量重算，期间只用关键词检索。留空时记忆检索只用名称链接和关键词。",
@@ -89,6 +95,7 @@ const CATEGORIES: {
       "light",
       "memory",
       "approval",
+      "vision",
     ],
     protocols: TEXT_PROTOCOLS,
   },
@@ -152,6 +159,7 @@ export function ModelsPage({
   function routeAccepts(key: string, model: ModelConfig) {
     if (model.kind === "embedding") return key === "embedding";
     if (key === "embedding") return false;
+    if (key === "vision" && !model.modalities.includes("image")) return false;
     const protocol = config.providers.find(
       (item) => item.id === model.provider,
     )?.protocol;
@@ -441,6 +449,15 @@ export function ModelsPage({
                             <option key={model.id}>{model.id}</option>
                           ))}
                       </select>
+                      {key === "vision" && (
+                        <FieldForm
+                          value={config.vision}
+                          fields={VISION_FIELDS}
+                          onChange={(vision) =>
+                            setConfig({ ...config, vision })
+                          }
+                        />
+                      )}
                     </div>
                   );
                 },

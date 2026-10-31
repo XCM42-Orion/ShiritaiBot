@@ -6,6 +6,7 @@ import json
 import random
 import re
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from websockets.asyncio.client import connect
 
@@ -59,6 +60,21 @@ def describe(parts: list[dict]) -> str:
         elif kind in labels:
             out.append(labels[kind])
     return "".join(out).strip()[:2000]
+
+
+def qq_download_url(url: str) -> bool:
+    """Only QQ's own HTTPS CDNs; never protocol-side local paths or arbitrary hosts."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    return (
+        parsed.scheme == "https"
+        and not parsed.username
+        and not parsed.password
+        and any(
+            host == d or host.endswith("." + d)
+            for d in ("qq.com", "qq.com.cn", "qpic.cn", "gtimg.cn")
+        )
+    )
 
 
 async def file_ref(store, adapter: str, group_id: str, data: dict, session: str) -> str:

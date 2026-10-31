@@ -17,7 +17,7 @@ class CaptureLLM:
     def __init__(self):
         self.calls = []
 
-    async def complete(self, route, system, messages, tools, settings):
+    async def complete(self, route, system, messages, tools, settings, **kwargs):
         self.calls.append((list(messages), [t["function"]["name"] for t in tools]))
         return Reply(text="收到")
 
@@ -137,7 +137,7 @@ async def test_chat_mode_can_call_basic_tools_over_multiple_steps(app):
     seen = []
 
     class LLM:
-        async def complete(self, route, system, messages, tools, settings):
+        async def complete(self, route, system, messages, tools, settings, **kwargs):
             if messages[-1]["role"] == "tool":
                 seen.append(messages[-1]["content"])
                 return Reply(text="暗号是蓝鲸")

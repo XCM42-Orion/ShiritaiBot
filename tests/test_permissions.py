@@ -236,7 +236,7 @@ async def test_auto_review_is_independent_strict_and_audited(app, response, appr
         async def decide(self, *args, **kwargs):
             return None  # no decision model in the route
 
-        async def complete(self, route, system, messages, tools, settings):
+        async def complete(self, route, system, messages, tools, settings, **kwargs):
             calls.append((route, system, messages, tools, settings))
             if response is None:
                 raise TimeoutError

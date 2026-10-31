@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -96,6 +97,7 @@ function baseConfig(): Settings {
       extract_messages: 20,
       extract_idle_minutes: 10,
     },
+    vision: { caption: true, max_images: 4 },
   };
 }
 
@@ -549,6 +551,29 @@ describe("model categories", () => {
         .querySelectorAll("option"),
     ).map((option) => option.textContent);
     expect(options).not.toContain(snapshot!.models[1].id);
+  });
+
+  it("offers only image models for the vision route and its caption settings", async () => {
+    const client = fakeClient();
+    let snapshot: Settings | null = null;
+    renderModels(client, (next) => (snapshot = next));
+    const user = userEvent.setup();
+    await user.click(screen.getByText("手动添加"));
+    await user.click(screen.getByText("手动添加"));
+    const [, second] = screen.getAllByRole("group", {
+      name: "模态支持（输入）",
+    });
+    await user.click(within(second).getByLabelText("图像"));
+    expect(snapshot!.models[1].modalities).toEqual(["text", "image"]);
+
+    await user.click(screen.getByText("模型路由"));
+    expect(screen.getByText("图像转述模型")).toBeTruthy();
+    const options = Array.from(
+      screen.getByLabelText("添加 vision 路由模型").querySelectorAll("option"),
+    ).map((option) => option.textContent);
+    expect(options).toEqual(["＋ 添加模型", snapshot!.models[1].id]);
+    await user.click(screen.getByLabelText("启用图像转述"));
+    expect(snapshot!.vision.caption).toBe(false);
   });
 
   it("creates Jev providers in the decision tab and explains each route", async () => {

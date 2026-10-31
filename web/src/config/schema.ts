@@ -104,7 +104,7 @@ export const MODEL_FIELDS: FieldSpec[] = [
     kind: "multiselect",
     options: ["text", "image", "audio", "video"],
     optionLabels: { text: "文本", image: "图像", audio: "音频", video: "视频" },
-    help: "至少选择一项。用于记录模型能力；当前消息链路仍为文本，勾选不会开启媒体上传或转换。",
+    help: "至少选择一项。勾选图像后，QQ 收到的图片会直接发给此模型；未勾选时按图像转述设置改为文字描述或 [图片] 占位。音频、视频暂未接入。",
     full: true,
   },
   {
@@ -445,6 +445,23 @@ export const GROUP_CONTEXT_FIELDS: FieldSpec[] = [
     label: "提供 group_context_query 工具",
     kind: "boolean",
     help: "允许 Bot 按关键词查询或向前翻阅本群记录，并在提示词中提醒其按需查询。仍受工具权限控制。",
+  },
+];
+
+export const VISION_FIELDS: FieldSpec[] = [
+  {
+    key: "caption",
+    label: "启用图像转述",
+    kind: "boolean",
+    help: "主模型不支持图像输入时，用图像转述模型把图片描述成文字，每张图片只转述一次并缓存。关闭或未配置转述模型时，图片以 [图片] 占位。",
+  },
+  {
+    key: "max_images",
+    label: "每次请求最多直接发送的图片数",
+    kind: "number",
+    min: 0,
+    max: 20,
+    help: "支持图像的模型只收到上下文中最近的这么多张图片，更早的图片按转述或占位处理，避免每轮重复发送大量图片。",
   },
 ];
 

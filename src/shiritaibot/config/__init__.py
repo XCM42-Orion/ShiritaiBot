@@ -159,6 +159,13 @@ class MemoryConfig(Model):
     extract_idle_minutes: int = Field(default=10, ge=1, le=1440)
 
 
+class VisionConfig(Model):
+    # Models without image input read captions from the vision route; off means placeholders.
+    caption: bool = True
+    # Image-capable models receive only the most recent images; older ones fall back to text.
+    max_images: int = Field(default=4, ge=0, le=20)
+
+
 class GroupContextConfig(Model):
     enabled: bool = False
     # 0 disables injection; the Bot can still query when the tool is enabled.
@@ -261,6 +268,7 @@ ROUTE_KEYS = (
     "memory",
     "approval",
     "embedding",
+    "vision",
 )
 # Routes whose callers can use a decision model; other candidates still serve text calls.
 DECISION_ROUTES = ("router", "light", "memory", "approval")
@@ -274,7 +282,7 @@ class Settings(Model):
     # chat: Chat 默认；agent: Agent Work（长程任务，含 Main/Proactive Loop）；
     # agent_chat: Agent 模式日常对话；router: Work/Chat 分流；light: 主动事件分诊；
     # memory: 记忆抽取与判断（空则用 light）；approval: 工具自动审批（空则用 light）；
-    # embedding: 记忆向量。
+    # embedding: 记忆向量；vision: 为不支持图像输入的模型转述图片。
     routes: dict[str, list[str]] = Field(default_factory=lambda: {k: [] for k in ROUTE_KEYS})
     # When off, every Agent-mode turn uses the Agent Work route.
     agent_split: bool = False
@@ -295,6 +303,7 @@ class Settings(Model):
     context: ContextConfig = Field(default_factory=ContextConfig)
     group_context: GroupContextConfig = Field(default_factory=GroupContextConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -390,6 +399,8 @@ class Settings(Model):
             for p in self.providers
         ):
             raise ValueError("embedding models need an OpenAI-compatible or Gemini provider")
+        if any(m.id in self.routes["vision"] and "image" not in m.modalities for m in self.models):
+            raise ValueError("vision route models must accept image input")
         if self.context.compression_model in decision | embedding:
             raise ValueError("compression models must generate text")
         if self.default_persona and not any(

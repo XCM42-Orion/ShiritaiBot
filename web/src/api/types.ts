@@ -100,6 +100,11 @@ export interface MemoryConfig {
   extract_idle_minutes: number;
 }
 
+export interface VisionConfig {
+  caption: boolean;
+  max_images: number;
+}
+
 export interface GroupContextConfig {
   enabled: boolean;
   inject_messages: number;
@@ -188,6 +193,7 @@ export interface Settings {
   context: ContextConfig;
   group_context: GroupContextConfig;
   memory: MemoryConfig;
+  vision: VisionConfig;
 }
 
 export interface Health {
