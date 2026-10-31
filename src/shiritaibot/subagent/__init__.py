@@ -138,13 +138,23 @@ class SubagentManager:
                     key[:8],
                 )
             await self.store.put("subagent_run", key, row, ctx.session)
+            # Owner-requested work: PE delivers it as a high-priority turn instead of Main polling.
             await self.emit(
                 ExternalEvent(
                     source="subagent",
                     kind="subagent.completed",
                     dedup_key=key,
                     title=f"子代理 {config.id}: {row['status']}",
-                    payload={"run_id": key, "result": row.get("result", "")[:4000]},
+                    urgency="normal" if row["status"] == "cancelled" else "high",
+                    payload={
+                        "run_id": key,
+                        "instance": config.id,
+                        "status": row["status"],
+                        "session": ctx.session,
+                        "task": prompt[:2000],
+                        "result": row.get("result", "")[:4000],
+                        **({"error": row["error"]} if row.get("error") else {}),
+                    },
                 )
             )
 

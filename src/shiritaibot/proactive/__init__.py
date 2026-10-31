@@ -220,6 +220,15 @@ def grade(decision: Decision) -> Literal["drop", "run"]:
     return "drop" if decision.importance == 0 else "run"
 
 
+def delegated(event: dict) -> bool:
+    """A finished subagent run the owner asked for: always reported back, never re-triaged."""
+    return (
+        event["source"] == "subagent"
+        and event["kind"] == "subagent.completed"
+        and event.get("payload", {}).get("status") in {"completed", "failed"}
+    )
+
+
 def quiet_hours(start: str, end: str, local: datetime) -> bool:
     time = local.strftime("%H:%M")
     if start == end:
@@ -371,13 +380,23 @@ class ProactiveEngine:
         scheduled = event.source == "routine" and event.kind in {"routine.reminder", "routine.job"}
         # Memory's own questions for the owner are never discarded, but never urgent either.
         internal = event.source == "memory"
-        if not self.config.value.proactive.enabled and not scheduled:
+        requested = delegated(row["event"])
+        if not self.config.value.proactive.enabled and not scheduled and not requested:
             event_log(key).log("主动性引擎未启用，事件仅记录")
             row.update(status="processed", action="record", reason="主动性引擎未启用")
             await self.store.put("event", key, row)
             await self.short_term.record(key, "logged", row["reason"])
             return
-        decision = await self.judge(event)
+        if requested:
+            # The owner is waiting on this result; Main ended its turn expecting PE to deliver it.
+            decision = Decision(
+                importance=4,
+                decision="notify",
+                message=event.title,
+                reason="主人委派的子代理任务已结束，结果需要转告主人",
+            )
+        else:
+            decision = await self.judge(event)
         if scheduled:
             # Explicit owner instructions cannot be discarded by the classifier.
             decision = decision.model_copy(
@@ -431,6 +450,12 @@ class ProactiveEngine:
             + "\n\n【分诊模型的初步判断】\n"
             + describe_decision(decision)
         )
+        if delegated(event):
+            prompt += (
+                "\n\n这是主人刚才在对话中委派给子代理的任务，主人正在等结果。"
+                "无需再用 subagent_list 或 shell 核查，直接根据上面的任务和结果，"
+                "用人设口吻把结论整理好转告主人（失败时说明情况）。"
+            )
         if event["source"] == "routine" and event["kind"] == "routine.job":
             prompt += "\n\n这是主人保存的定时任务，请执行任务要求：" + event["title"]
         row.update(status="running", loop_started=now().timestamp())

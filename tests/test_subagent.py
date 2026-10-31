@@ -94,6 +94,7 @@ async def test_agent_discovers_instance_then_starts_it_with_existing_approval(ap
                 args = {"instance": results[0][0]["id"], "prompt": "hello"}
             else:
                 assert results[1]["instance"] == "local"
+                assert "结束本轮" in results[1]["note"]
                 done.set()
                 return Reply(text="已委派")
             return Reply(

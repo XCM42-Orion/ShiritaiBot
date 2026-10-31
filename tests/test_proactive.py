@@ -357,3 +357,41 @@ async def test_proactive_prompt_is_prose_and_result_comes_from_report_tool(loop)
     assert "重要性 3/4" in prompt
     assert any(t["function"]["name"] == "proactive_report" for t in tools)
     assert len(loop.runtime.llm.inputs) == 1
+
+
+@pytest.mark.parametrize("status", ["completed", "failed"])
+async def test_delegated_subagent_result_skips_triage_and_is_always_reported(loop, status):
+    judge = loop.proactive.llm
+    loop.runtime.llm = Agent(notify=False)
+    loop.config.value.proactive.quiet_start = "00:00"
+    loop.config.value.proactive.quiet_end = "23:59"
+    event = ExternalEvent(
+        source="subagent",
+        kind="subagent.completed",
+        dedup_key="run-1",
+        title=f"子代理 coder: {status}",
+        urgency="high",
+        payload={"run_id": "run-1", "status": status, "task": "数文件", "result": "42"},
+    )
+    key = await loop.proactive.emit(event)
+    await loop.proactive.tick()
+    row = await finished(loop, key)
+    assert judge.calls == 0 and row["decision"]["importance"] == 4
+    prompt = loop.runtime.llm.inputs[0][0][-1]["content"]
+    assert "主人正在等结果" in prompt and "数文件" in prompt and "42" in prompt
+    await loop.proactive.tick()
+    assert (await loop.store.get("notification", key))["status"] == "sent"
+
+
+async def test_cancelled_subagent_goes_through_normal_triage(loop):
+    event = ExternalEvent(
+        source="subagent",
+        kind="subagent.completed",
+        dedup_key="run-2",
+        title="子代理 coder: cancelled",
+        payload={"run_id": "run-2", "status": "cancelled"},
+    )
+    key = await loop.proactive.emit(event)
+    await loop.proactive.tick()
+    await finished(loop, key)
+    assert loop.proactive.llm.calls == 1

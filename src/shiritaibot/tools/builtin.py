@@ -147,7 +147,15 @@ async def register_builtin(app) -> None:
         return app.subagents.instances()
 
     async def subagent_start(ctx, args):
-        return await app.subagents.start(ctx, args["instance"], args["prompt"])
+        row = await app.subagents.start(ctx, args["instance"], args["prompt"])
+        return {
+            "id": row["id"],
+            "instance": row["instance"],
+            "status": row["status"],
+            # The result comes back as a high-priority Proactive turn; Main must not wait.
+            "note": "子代理已在后台启动。完成后结果会自动转告主人，无需等待或用 subagent_list 轮询。"
+            "请直接简短告诉对方任务已委派、稍后回报结果，然后结束本轮回复。",
+        }
 
     async def subagent_list(ctx, args):
         return await app.store.list("subagent_run", scope=ctx.session)
@@ -261,7 +269,8 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "shell",
-            "在会话工作目录执行 bash，调用受当前工具权限配置约束。",
+            "在会话工作目录执行 bash，调用受当前工具权限配置约束。"
+            "不要用它启动 codex / claude 等外部 Agent，请改用 subagent_instances + subagent_start。",
             schema(
                 {"command": TEXT, "timeout": {"type": "integer", "minimum": 1, "maximum": 120}},
                 ["command"],
@@ -328,7 +337,9 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "subagent_instances",
-            "查询当前已启用、可供 subagent_start 委派的子代理实例，返回 id、kind、model、permission。"
+            "查询当前已启用、可供 subagent_start 委派的子代理实例（如 Codex、Claude Code），"
+            "返回 id、kind、model、permission。需要用 Codex / Claude Code 等外部 Agent 写代码、"
+            "查资料或做多步任务时，优先先调用本工具，而不是用 shell 直接运行 codex / claude 命令。"
             "model 为空表示使用 CLI 默认模型；permission 为 read_only（只读）或 edit（可编辑）。"
             "空列表表示没有已启用实例；此查询不会启动子代理或探测 CLI 是否安装。",
             schema({}),
@@ -337,14 +348,23 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "subagent_start",
-            "启动已配置的外部 Agent 实例，返回任务 ID；先用 subagent_instances 查询可用实例，"
-            "将返回的 id 作为 instance 参数。",
+            "在后台启动已配置的外部 Agent 实例（Codex、Claude Code 等），立即返回任务 ID。"
+            "委派给 Codex / Claude Code 时必须优先用本工具，不要用 shell 直接运行 codex / claude："
+            "本工具会使用配置好的模型与权限、隔离工作目录、限制并发与超时，并自动回报结果，"
+            "shell 直接启动则可能卡在交互界面或残留进程。"
+            "先用 subagent_instances 查询可用实例，将返回的 id 作为 instance 参数；"
+            "prompt 要写清楚完整任务，子代理看不到当前对话。子代理异步运行，完成后系统会自动把结果转告主人；"
+            "启动后请告知已委派并结束本轮，不要等待或轮询结果。",
             schema({"instance": TEXT, "prompt": TEXT}, ["instance", "prompt"]),
             subagent_start,
             risk="dangerous",
         ),
         Tool(
-            "subagent_list", "查看当前会话的子代理任务结果", schema({}), subagent_list, risk="safe"
+            "subagent_list",
+            "查看当前会话的子代理任务状态与结果；仅在被问到任务进度时使用，不要用来等待刚启动的任务",
+            schema({}),
+            subagent_list,
+            risk="safe",
         ),
         Tool(
             "subagent_cancel",
