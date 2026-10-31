@@ -3,6 +3,8 @@ name = "shiritaibot"
 version = "0.1.0"
 description = "An event-driven personal agent for OneBot"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = [
   "aiosqlite>=0.20,<1", "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1",
   "httpx[socks]>=0.28,<1", "websockets>=15,<17", "pydantic>=2.10,<3",
