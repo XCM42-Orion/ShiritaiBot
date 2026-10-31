@@ -1,5 +1,9 @@
 # ShiritaiBot
 
+## 许可证
+
+本项目采用 GNU Affero General Public License v3.0（仅第 3 版，`AGPL-3.0-only`）许可。完整条款见 [LICENSE](LICENSE)。
+
 面向个人的事件驱动 Agent。Python / asyncio 后端，SQLite 持久化，TypeScript + React + Vite 管理界面。
 
 这是根据 [设计草案](docs/DESIGN.md) 落地的 **0.1 基础实现**。各模块已有运行路径，完整设计中的高级功能尚未全部实现，范围见 [实现状态](docs/IMPLEMENTATION.md)。
