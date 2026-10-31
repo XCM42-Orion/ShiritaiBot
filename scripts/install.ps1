@@ -199,7 +199,13 @@ exit $LASTEXITCODE
         }
     } finally {
         if ($locationPushed) { Pop-Location }
-        foreach ($key in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key, $savedEnvironment[$key], 'Process') }
+        foreach ($key in $savedEnvironment.Keys) {
+            if ($null -eq $savedEnvironment[$key]) {
+                Remove-Item -LiteralPath "Env:$key" -ErrorAction SilentlyContinue
+            } else {
+                Set-Item -LiteralPath "Env:$key" -Value $savedEnvironment[$key]
+            }
+        }
         [Net.ServicePointManager]::SecurityProtocol = $savedTls
         if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     }
