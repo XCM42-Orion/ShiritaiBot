@@ -145,7 +145,6 @@ export interface Policy {
   group_default: SessionPolicy;
   sessions: Record<string, SessionPolicy>;
   proactive_default: ToolPolicy;
-  approval_model: string;
   denied_tools: string[];
   scope_tools: Record<string, string[]>;
   approval_timeout: number;

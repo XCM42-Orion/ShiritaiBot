@@ -7,14 +7,14 @@
 | AgentLoop | 会话串行/跨会话并发、同一发送者消息去抖、插话、取消、工具参数校验、步数/墙钟/重复调用限制、消息持久化、中断历史修复 | 完整 recall、epoch 摘要压缩、优先级信号量、只读工具并行、按日费用预算 |
 | 权限 | Main 会话 Chat / Agent、四档逐工具权限和四种预设；会话及私聊/群聊默认；Proactive 创建时权限快照；人工/独立模型审批与审计；插件安全等级必填；兼容全局白名单 | Admin 角色、完整七层配置来源展示、操作系统沙箱 |
 | 工具 | Tavily、bash、时间、QQ（收发消息/文件/合并转发、撤回、消息历史、好友与申请、群成员分页、精华、公告、禁言、踢人、群邀请卡片）、记忆、日程、子代理、大输出 artifact 分页 | 网页正文、文档解析、OCR、完整文件管理 |
-| OneBot | 多实例正向 Universal WS、Bearer、echo、登录身份校验、ping/pong、重连、CQ 数组/字符串、白名单、持久化 Outbox、分段、文件引用 | 反向 WS、HTTP、NapCat heartbeat 事件超时、全面平台扩展、撤回处理、图像渲染 |
+| OneBot | 多实例正向 Universal WS、Bearer、echo、登录身份校验、ping/pong、重连、CQ 数组/字符串、白名单、持久化 Outbox、分段、文件引用、收到的图片/视频转为可下载引用并触发会话 | 反向 WS、HTTP、NapCat heartbeat 事件超时、全面平台扩展、撤回处理、图像渲染、图片直接作为多模态输入交给模型 |
 | LLM | 多 Provider / 模型 / 路由；四种 wire protocol；模型目录拉取及分页；不透明推理状态同模型回传；提供商可配置超时重试轮数及 HTTP(S)/SOCKS5 代理；模型自定义 JSON 请求参数、上下文估算上限及输入模态声明；HTTP 限流重试和候选 fallback；usage 落库及跨协议统计 | SSE、原生联网搜索、完整多模态、精确 tokenizer、细粒度计价、embedding |
 | Subagent | 多 Codex / Claude Code / Generic CLI 实例；stdin prompt、工作目录隔离、三并发、超时、取消、完成事件、CLI 版本检测 | 原生会话续接、实时事件解析、app-server/ACP、MCP 审批桥接、登录状态检测 |
 | 插件 | manifest 发现、启停、手动热重载、冲突检查、加载失败保留旧实例、公共 API、独立数据目录、主动通知通道注册；随仓库提供邮件插件（IMAP 收件事件源，可选 SMTP 通知） | 自动文件监视、依赖安装、MCP、完整 hook/command/source 装饰器 |
 | 飞书 | 本地只读 CLI 插件，固定操作/参数白名单、独立 profile、结构化脱敏 | 写操作、真实账号联调 |
 | Learn | 通用 stdio 子集、查询/下载工具、持久化同步基线和变化事件；本地清华登录/短信验证工具、查询/附件适配 | 正式协议完整实现、多个学校实例聚合、作业提交、课表转换、真实账号联调 |
 | Memory | Main/Proactive 每轮模型短期摘要（7 天）、持久化失败重试和会话隔离；长期记忆 P1（[MEMORY.md](MEMORY.md)）：人物/事物实体与别名、带有效期的事实、绝对时间事件、原文证据、冲突与取代、tombstone、实体合并；`memory_search/get/save/forget/resolve` 工具，证据由代码校验；名称链接 + jieba BM25 + 可选 Embedding（numpy 余弦）RRF 融合，按门槛注入分段记忆块并会话内去重；旧记忆一次性迁移；P2 自动抽取：主人私聊按条数/空闲切窗口、已处理的 Proactive 事件逐条读取，`ExternalEvent.actors` 身份绑定，代码校验证据/说话人/时间/编号，实体对齐与身份冲突，事实取代/历史/冲突合并 ；P3 框架：Jev 判断层（写入闸门、证据核验、实体对齐、事实合并、事件去重、注入门槛、召回重排）与判定日志、每日维护 | Jev 阈值的真实数据校准、群备忘、关注群 |
-| Routine | SQLite 待办/日程/提醒/cron；heapq 调度；UTC 持久化、时区 cron、重启后迟到提醒 | ICS 导入/订阅/导出、RRULE、free slots、snooze、过期提醒汇总策略 |
+| Routine | SQLite 待办/日程/提醒/cron；新建、修改（改时间自动重新排程）、删除工具；heapq 调度；UTC 持久化、时区 cron、重启后迟到提醒 | ICS 导入/订阅/导出、RRULE、free slots、snooze、过期提醒汇总策略 |
 | Proactive | 统一单条/批量事件入口与状态 API；预处理、持久化去重、light 分类 Filter（0–4）；0 丢弃、其余按重要度启动按默认权限快照调用工具的 Proactive Loop；4 强制通知；Loop 最终消息经通知策略后回写 Main context；失败/超时兜底；审计与每轮模型摘要分开 | Markdown Playbook、细粒度动作模板、反馈学习、关注群、课程日程感知 |
 | WebUI | 登录、12 个管理视图、哈希路由（可深链和刷新）、类型化 API 客户端、按页面拆分的组件、配置草稿与底部保存条、内联密钥填写、模型发现和加号添加、错误弹窗、会话模式和逐工具权限编辑、四种预设、自动审批记录、24h/3d/7d 逐小时看板、斜杠菜单、工具审批、日程/记忆操作、子代理状态、当前表单模型测试、插件重载、WS 指数退避重连与缓存失效 | 手机端实机验收、密码/QQ 验证码登录、生产级 Cookie session、完整 schema 自动表单、日历视图 |
 

@@ -56,7 +56,6 @@ function baseConfig(): Settings {
       group_default: { mode: "chat", preset: "safe_manual", tools: {} },
       proactive_default: { preset: "safe_manual", tools: {} },
       sessions: {},
-      approval_model: "",
       shell_command: ["bash", "--noprofile", "--norc", "-c"],
       max_steps: 25,
       max_turn_seconds: 1200,

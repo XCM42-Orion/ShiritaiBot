@@ -211,8 +211,93 @@ def test_decision_models_are_limited_to_decision_routes():
             providers=providers,
             models=models,
             routes={"light": ["jev"]},
-            policy={"approval_model": "jev"},
+            context={"compression_model": "jev"},
         )
+    # Auto-approval is a decision route, so Jev may lead it like router / light / memory.
+    assert Settings(providers=providers, models=models, routes={"approval": ["jev"]}).routes[
+        "approval"
+    ] == ["jev"]
+
+
+def test_legacy_approval_model_becomes_the_approval_route():
+    from shiritaibot.config import Settings
+
+    providers = [ProviderConfig(id="p", base_url="https://fake.test/v1")]
+    models = [
+        ModelConfig(id="m1", provider="p", model="a"),
+        ModelConfig(id="m2", provider="p", model="b"),
+    ]
+    old = Settings(providers=providers, models=models, policy={"approval_model": "m1"})
+    assert old.routes["approval"] == ["m1"]
+    assert "approval_model" not in old.model_dump()["policy"]
+    # An explicit route wins over the legacy field.
+    both = Settings(
+        providers=providers,
+        models=models,
+        routes={"approval": ["m2", "m1"]},
+        policy={"approval_model": "m1"},
+    )
+    assert both.routes["approval"] == ["m2", "m1"]
+    assert Settings.model_validate(old.model_dump()).routes["approval"] == ["m1"]
+    with pytest.raises(ValueError, match="unknown model"):
+        Settings(providers=providers, models=models, policy={"approval_model": "missing"})
+
+
+@pytest.mark.parametrize(
+    ("allow", "text_reply", "approved", "reviewer"),
+    [
+        (0.95, None, True, "Jev"),  # confident Jev verdict is final
+        (0.03, None, False, "Jev"),
+        (0.6, '{"allow":true,"reason":"文本模型复核通过"}', True, "文本模型"),
+        (0.6, None, False, "none"),  # unsure Jev and no text model: never approve alone
+    ],
+)
+async def test_auto_approval_uses_jev_then_falls_back_to_text(
+    app, allow, text_reply, approved, reviewer
+):
+    from shiritaibot.core import Context, Tool
+    from shiritaibot.tools import schema
+
+    routes = ["jev", "text"] if text_reply else ["jev"]
+    jev_config(app, {"approval": routes, "light": []})
+    seen = []
+
+    async def handle(req):
+        body = json.loads(req.content)
+        if req.url.host == "jev.test":
+            seen.append("jev")
+            assert body["questions"]["verdict"]["type"] == "choice"
+            assert body["state"]["tool"] == "reviewed" and body["state"]["arguments"] == {"v": 1}
+            answer = {
+                "type": "choice",
+                "choice": "allow" if allow > 0.5 else "deny",
+                "probabilities": {"allow": allow, "deny": 1 - allow},
+            }
+            return httpx.Response(200, json={"answers": {"verdict": answer}})
+        seen.append("text")
+        return httpx.Response(200, json={"choices": [{"message": {"content": text_reply}}]})
+
+    await use_transport(app, handle)
+    effects = []
+
+    async def run(ctx, args):
+        effects.append(args)
+        return {"ok": True}
+
+    app.config.value.policy.owner_default.tools["reviewed"] = "auto"
+    app.registry.add(
+        Tool("reviewed", "", schema({"v": {"type": "integer"}}), run, risk="dangerous")
+    )
+    owner = Context("web:owner", "owner", "agent", True)
+    result = json.loads(await app.registry.execute(owner, "reviewed", {"v": 1}))
+    assert bool(result.get("ok")) is approved and len(effects) == int(approved)
+    assert seen == (["jev", "text"] if text_reply else ["jev"])
+    row = (await app.store.list("approval"))[0]
+    assert row["status"] == ("approved" if approved else "denied")
+    if reviewer == "Jev":
+        assert "Jev" in row["reason"]
+    elif reviewer == "文本模型":
+        assert row["reason"] == "文本模型复核通过"
 
 
 @pytest.mark.parametrize(("chat", "expected"), [(0.8, "agent_chat"), (0.55, "agent")])

@@ -91,3 +91,88 @@ def test_routine_requires_timezone_and_valid_cron():
         RoutineItem(kind="reminder", title="x", due="2026-10-27T12:00:00")
     with pytest.raises(ValueError):
         RoutineItem(kind="job", title="x", cron="invalid")
+
+
+async def routine_tool(app, name, args):
+    import json
+
+    app.config.value.policy.owner_default.tools[name] = "allow"
+    return json.loads(
+        await app.registry.execute(Context("web:owner", "owner", "agent", True), name, args)
+    )
+
+
+async def test_routine_update_tool_edits_and_reschedules(app):
+    for task in app.tasks:
+        task.cancel()
+    await asyncio.gather(*app.tasks, return_exceptions=True)
+    row = await app.routine.create(
+        RoutineItem(kind="reminder", title="交报告", due=now() - timedelta(seconds=5))
+    )
+    await app.routine.tick()
+    assert (await app.store.get("routine", row["id"]))["status"] == "fired"
+    later = (now() + timedelta(hours=2)).isoformat()
+    result = await routine_tool(
+        app, "routine_update", {"id": row["id"], "title": "交实验报告", "due": later}
+    )
+    assert result["title"] == "交实验报告" and result["kind"] == "reminder"
+    # A new time re-arms an already fired reminder.
+    assert result["status"] == "scheduled"
+    assert result["next_fire"] == datetime.fromisoformat(later).timestamp()
+    title_only = await routine_tool(app, "routine_update", {"id": row["id"], "title": "改名"})
+    assert title_only["next_fire"] == result["next_fire"] and title_only["due"] == result["due"]
+
+    job = await app.routine.create(RoutineItem(kind="job", title="周报", cron="0 9 * * 1"))
+    moved = await routine_tool(app, "routine_update", {"id": job["id"], "cron": "30 20 * * 0"})
+    assert moved["cron"] == "30 20 * * 0" and moved["next_fire"] != job["next_fire"]
+
+    done = await app.routine.create(
+        RoutineItem(kind="reminder", title="已完成", due=now() + timedelta(hours=1))
+    )
+    await app.routine.update_status(done["id"], "completed")
+    kept = await routine_tool(app, "routine_update", {"id": done["id"], "due": later})
+    assert kept["status"] == "completed" and kept["next_fire"] is None
+
+
+@pytest.mark.parametrize(
+    "args,error",
+    [
+        ({"id": "missing", "title": "x"}, "不存在"),
+        ({"id": "ROW"}, "只能修改"),
+        ({"id": "ROW", "kind": "todo"}, "参数"),  # kind is not in the schema
+        ({"id": "ROW", "due": "2026-11-01T09:00:00"}, "无效"),  # no timezone
+        ({"id": "ROW", "end": "2000-01-01T00:00:00+08:00"}, "无效"),  # end before due
+    ],
+)
+async def test_routine_update_rejects_invalid_changes(app, args, error):
+    row = await app.routine.create(
+        RoutineItem(kind="event", title="组会", due=now() + timedelta(days=1))
+    )
+    args = {k: (row["id"] if v == "ROW" else v) for k, v in args.items()}
+    result = await routine_tool(app, "routine_update", args)
+    assert error in result["error"]
+    assert (await app.store.get("routine", row["id"]))["title"] == "组会"
+
+
+async def test_routine_delete_tool_removes_and_stops_reminders(app):
+    for task in app.tasks:
+        task.cancel()
+    await asyncio.gather(*app.tasks, return_exceptions=True)
+    row = await app.routine.create(
+        RoutineItem(kind="reminder", title="会删掉", due=now() - timedelta(seconds=1))
+    )
+    result = await routine_tool(app, "routine_delete", {"id": row["id"]})
+    assert result == {"deleted": row["id"], "kind": "reminder", "title": "会删掉"}
+    assert await app.store.get("routine", row["id"]) is None
+    await app.routine.tick()
+    assert await app.store.list("event") == []
+    again = await routine_tool(app, "routine_delete", {"id": row["id"]})
+    assert "不存在" in again["error"]
+
+
+async def test_routine_edit_tools_need_approval_and_stay_out_of_chat(app):
+    owner = Context("web:owner", "owner", "agent", True)
+    group = Context("group:a:1", "owner", "agent", True, True)
+    for name in ("routine_update", "routine_delete"):
+        assert app.permissions.decision(owner, app.registry.tools[name]) == "approve"
+        assert app.permissions.decision(group, app.registry.tools[name]) == "deny"
