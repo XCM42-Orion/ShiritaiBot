@@ -68,14 +68,28 @@
             & $File @Arguments
             if ($LASTEXITCODE -ne 0) { throw "$File exited with status $LASTEXITCODE" }
         }
-        function Test-ShiritaiNode {
-            $node = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-            $npm = Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $node -or -not $npm) { return $false }
-            try {
-                & $node.Source -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit((a===20&&b>=19)||(a===22&&b>=12)||a>=24?0:1)' 2>$null
-                return ($LASTEXITCODE -eq 0)
-            } catch { return $false }
+        function Find-ShiritaiNode {
+            param([string[]]$Candidates = @(Get-Command node.exe -CommandType Application -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source }))
+            foreach ($candidate in $Candidates) {
+                try {
+                    # Windows PowerShell 5.1 removes embedded quotes from node -e arguments.
+                    $version = ((& $candidate --version 2>$null) | Out-String).Trim()
+                    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^v(\d+)\.(\d+)\.(\d+)$') { continue }
+                    $major = [int]$Matches[1]
+                    $minor = [int]$Matches[2]
+                    if (-not (($major -eq 20 -and $minor -ge 19) -or ($major -eq 22 -and $minor -ge 12) -or $major -ge 24)) { continue }
+                    # Resolve version-manager shims and invoke npm with this same Node binary.
+                    $executable = ((& $candidate -p process.execPath 2>$null) | Out-String).Trim()
+                    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $executable -PathType Leaf)) { continue }
+                    $directory = Split-Path -Parent $executable
+                    $npmCli = Join-Path $directory 'node_modules/npm/bin/npm-cli.js'
+                    if (-not (Test-Path -LiteralPath $npmCli -PathType Leaf)) { continue }
+                    $npmVersion = ((& $executable $npmCli --version 2>$null) | Out-String).Trim()
+                    if ($LASTEXITCODE -ne 0 -or -not $npmVersion) { continue }
+                    return [pscustomobject]@{ Executable = $executable; Directory = $directory; NpmCli = $npmCli; Version = $version }
+                } catch { continue }
+            }
+            return $null
         }
         function Test-ShiritaiSource([string]$Path) {
             return ((Test-Path -LiteralPath (Join-Path $Path 'src/shiritaibot/cli.py')) -and
@@ -113,9 +127,10 @@
         $uvExe = $uv.Source
         Invoke-ShiritaiNative -File $uvExe -Arguments @('--version')
 
-        if (-not (Test-ShiritaiNode)) {
+        $node = Find-ShiritaiNode
+        if (-not $node) {
+            Write-Host 'Preparing Node.js 24 inside the installation directory.'
             $nodeDestination = Join-Path $runtime 'node'
-            if (Test-Path -LiteralPath $nodeDestination) { throw "Installed Node.js cannot run. Check $nodeDestination or choose a new -InstallDir." }
             $manifest = Join-Path $staging 'SHASUMS256.txt'
             Invoke-ShiritaiDownload 'https://nodejs.org/download/release/latest-v24.x/SHASUMS256.txt' $manifest
             $entry = Get-Content -LiteralPath $manifest | Where-Object { $_ -match "^[a-fA-F0-9]{64}\s+node-v24\.\d+\.\d+-win-$architecture\.zip$" } | Select-Object -First 1
@@ -128,20 +143,28 @@
             Expand-Archive -LiteralPath $nodeArchive -DestinationPath $nodeStage
             $nodeFolders = @(Get-ChildItem -LiteralPath $nodeStage -Directory)
             if ($nodeFolders.Count -ne 1) { throw 'Node.js archive is incomplete.' }
-            Invoke-ShiritaiNative -File (Join-Path $nodeFolders[0].FullName 'node.exe') -Arguments @('--version')
+            $stagedNode = Find-ShiritaiNode -Candidates @((Join-Path $nodeFolders[0].FullName 'node.exe'))
+            if (-not $stagedNode) { throw 'Downloaded Node.js/npm could not be validated.' }
+            if (Test-Path -LiteralPath $nodeDestination) {
+                $previousNode = Join-Path $runtime ('.node-backup-' + [Guid]::NewGuid().ToString('N'))
+                Move-Item -LiteralPath $nodeDestination -Destination $previousNode
+            }
             Move-Item -LiteralPath $nodeFolders[0].FullName -Destination $nodeDestination
+            $node = Find-ShiritaiNode -Candidates @((Join-Path $nodeDestination 'node.exe'))
         }
-        if (-not (Test-ShiritaiNode)) { throw 'Node.js/npm cannot run on this system.' }
-        $nodeDir = Split-Path -Parent (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+        if (-not $node) { throw 'Node.js/npm could not be validated in the installation directory.' }
+        $nodeExe = $node.Executable
+        $nodeDir = $node.Directory
+        $npmCli = $node.NpmCli
         $env:PATH = "$nodeDir;$env:PATH"
-        $npmExe = (Get-Command npm.cmd -CommandType Application | Select-Object -First 1).Source
+        Write-Host "Using Node.js $($node.Version): $nodeExe"
 
         Write-Host '[3/4] Installing dependencies and building the control panel'
         Push-Location -LiteralPath $app
         $locationPushed = $true
         Invoke-ShiritaiNative -File $uvExe -Arguments @('sync', '--frozen', '--no-dev')
-        Invoke-ShiritaiNative -File $npmExe -Arguments @('--prefix', 'web', 'ci', '--no-audit', '--no-fund')
-        Invoke-ShiritaiNative -File $npmExe -Arguments @('--prefix', 'web', 'run', 'build')
+        Invoke-ShiritaiNative -File $nodeExe -Arguments @($npmCli, '--prefix', 'web', 'ci', '--no-audit', '--no-fund')
+        Invoke-ShiritaiNative -File $nodeExe -Arguments @($npmCli, '--prefix', 'web', 'run', 'build')
 
         $launcher = Join-Path $ShiritaiRoot 'start.ps1'
         $settings = "param([switch]`$Token, [ValidateRange(1, 65535)][int]`$Port = $ListenPort)`r`n"
@@ -156,9 +179,9 @@ $env:UV_PYTHON_BIN_DIR = Join-Path $ShiritaiRoot 'runtime/bin'
 $env:UV_CACHE_DIR = Join-Path $ShiritaiRoot 'runtime/cache/uv'
 Set-Location -LiteralPath (Join-Path $ShiritaiRoot 'app')
 if ($Token) {
-    & $ShiritaiUv run --frozen --no-sync shiritaibot token --home (Join-Path $ShiritaiRoot 'data')
+    & $ShiritaiUv run --frozen --no-sync python -m shiritaibot.cli token --home (Join-Path $ShiritaiRoot 'data')
 } else {
-    & $ShiritaiUv run --frozen --no-sync shiritaibot run --home (Join-Path $ShiritaiRoot 'data') --port $Port
+    & $ShiritaiUv run --frozen --no-sync python -m shiritaibot.cli run --home (Join-Path $ShiritaiRoot 'data') --port $Port
 }
 exit $LASTEXITCODE
 '@

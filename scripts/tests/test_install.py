@@ -29,10 +29,15 @@ class InstallerTests(unittest.TestCase):
         self.command_dir = self.root / "command shortcuts"
         self.bin.mkdir()
         self.fixtures.mkdir()
+        # Keep host-installed Node/npm out of the fixture PATH on Linux runners.
+        for utility in ('bash', 'sh', 'tar', 'awk', 'mktemp', 'chmod', 'mkdir', 'mv', 'rm', 'cp', 'cat', 'dirname', 'ls', 'sed', 'sha256sum', 'shasum', 'gzip', 'python3'):
+            resolved = shutil.which(utility)
+            if resolved:
+                (self.bin / utility).symlink_to(resolved)
         self.env = {
             **os.environ,
             "HOME": str(self.root / "user-home"),
-            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "PATH": str(self.bin),
             "SHIRITAI_TEST_FIXTURES": str(self.fixtures),
             "SHIRITAI_TEST_LOG": str(self.log),
             "SHIRITAI_COMMAND_DIR": str(self.command_dir),
@@ -214,7 +219,7 @@ if os.environ.get('SHIRITAI_TEST_NPM_FAILURE') == sys.argv[-1]:
     def test_dependency_failure_stops_before_build_and_start(self):
         result = self.install(SHIRITAI_TEST_UV_FAILURE="yes")
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(call[0] == "npm" for call in self.calls()))
+        self.assertFalse(any(call[0] == "npm" and '--prefix' in call for call in self.calls()))
         self.assertFalse((self.target / "start.sh").exists())
         self.assert_no_staging()
 
@@ -239,6 +244,45 @@ if os.environ.get('SHIRITAI_TEST_NPM_FAILURE') == sys.argv[-1]:
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.target / "runtime/node/bin/node").is_file())
+
+    def test_broken_private_node_does_not_hide_healthy_existing_node(self):
+        self.target.mkdir()
+        (self.target / '.shiritaibot-installer').write_text('shiritaibot-installer-v1')
+        private = self.target / 'runtime/node/bin'
+        private.mkdir(parents=True)
+        self.executable(private / 'node', '#!/bin/sh\nexit 1\n')
+        old = (private / 'node').read_bytes()
+        shutil.copy2(self.fixtures / 'uv', self.bin / 'uv')
+        shutil.copy2(self.fixtures / 'node-v24.0.0-darwin-arm64/bin/node', self.bin / 'node')
+        shutil.copy2(self.fixtures / 'node-v24.0.0-darwin-arm64/bin/npm', self.bin / 'npm')
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((private / 'node').read_bytes(), old)
+        self.assertEqual(len([call for call in self.calls() if call[0] == 'curl']), 1)
+        self.assertIn(str(self.bin / 'node'), result.stdout)
+
+    def test_missing_or_broken_npm_gets_private_pair_without_changing_existing_node(self):
+        shutil.copy2(self.fixtures / 'node-v24.0.0-darwin-arm64/bin/node', self.bin / 'node')
+        self.executable(self.bin / 'npm', '#!/bin/sh\nexit 1\n')
+        original = (self.bin / 'node').read_bytes()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.target / 'runtime/node/bin/npm').is_file())
+        self.assertEqual((self.bin / 'node').read_bytes(), original)
+        self.assertEqual((self.bin / 'npm').read_text(), '#!/bin/sh\nexit 1\n')
+
+    def test_corrupt_private_runtime_is_backed_up_and_repaired(self):
+        self.target.mkdir()
+        (self.target / '.shiritaibot-installer').write_text('shiritaibot-installer-v1')
+        private = self.target / 'runtime/node/bin'
+        private.mkdir(parents=True)
+        self.executable(private / 'node', '#!/bin/sh\nexit 1\n')
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        backups = list((self.target / 'runtime').glob('.node-backup-*/node/bin/node'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), '#!/bin/sh\nexit 1\n')
+        self.assert_no_staging()
 
     def test_invalid_port_and_help_do_not_install(self):
         for port in ("0", "65536", "-1", "oops"):

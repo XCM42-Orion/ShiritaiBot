@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 shiritai_install() {
-  local target='' port=8765 no_start=0 platform arch temp_dir='' uv_bin node_dir
+  local target='' port=8765 no_start=0 platform arch temp_dir='' uv_bin node_dir node_bin npm_bin
   local command_dir command_entry=''
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -58,8 +58,19 @@ shiritai_install() {
     curl --fail --show-error --location --retry 2 --connect-timeout 20 --output "$2" "$1"
   }
   shiritai_node_works() {
-    command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
-      node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit((a===20&&b>=19)||(a===22&&b>=12)||a>=24?0:1)' >/dev/null 2>&1
+    local candidate candidate_dir candidate_npm
+    while IFS= read -r candidate; do
+      "$candidate" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit((a===20&&b>=19)||(a===22&&b>=12)||a>=24?0:1)' >/dev/null 2>&1 || continue
+      candidate_dir=$(dirname "$candidate")
+      candidate_npm="$candidate_dir/npm"
+      if [ ! -x "$candidate_npm" ]; then candidate_npm=$(type -P npm 2>/dev/null) || continue; fi
+      PATH="$candidate_dir:$PATH" "$candidate_npm" --version >/dev/null 2>&1 || continue
+      node_bin=$candidate
+      node_dir=$candidate_dir
+      npm_bin=$candidate_npm
+      return 0
+    done < <(type -aP node 2>/dev/null || true)
+    return 1
   }
 
   if [ -d "$target/app" ]; then
@@ -88,9 +99,7 @@ shiritai_install() {
 
   if ! shiritai_node_works; then
     local archive expected actual
-    if [ -e "$target/runtime/node" ]; then
-      printf '%s\n' '安装目录中的 Node.js 无法运行；请检查 runtime/node 或使用新的 --dir。' >&2; return 1
-    fi
+    printf '%s\n' '准备安装目录内的 Node.js 24。'
     shiritai_download 'https://nodejs.org/download/release/latest-v24.x/SHASUMS256.txt' "$temp_dir/SHASUMS256.txt"
     archive=$(awk -v suffix="-$platform-$arch.tar.gz" '$2 ~ (suffix "$") && $2 ~ /^node-v24\./ { print $2; exit }' "$temp_dir/SHASUMS256.txt")
     [ -n "$archive" ] || { printf '%s\n' '未找到适合当前系统的 Node.js 24。' >&2; return 1; }
@@ -108,18 +117,24 @@ shiritai_install() {
     mkdir "$temp_dir/node"
     tar -xzf "$temp_dir/node.tar.gz" -C "$temp_dir/node" --strip-components=1
     "$temp_dir/node/bin/node" --version
+    PATH="$temp_dir/node/bin:$PATH" "$temp_dir/node/bin/npm" --version
+    if [ -e "$target/runtime/node" ]; then
+      local previous_node
+      previous_node=$(mktemp -d "$target/runtime/.node-backup-XXXXXX")
+      mv "$target/runtime/node" "$previous_node/node"
+    fi
     mv "$temp_dir/node" "$target/runtime/node"
     hash -r
   fi
   shiritai_node_works || { printf '%s\n' 'Node.js/npm 无法运行，请检查系统兼容性。' >&2; return 1; }
-  node_dir=$(dirname "$(type -P node)")
   export PATH="$node_dir:$PATH"
+  printf '使用 Node.js %s: %s\n' "$("$node_bin" --version)" "$node_bin"
 
   printf '%s\n' '[3/4] 安装依赖并构建管理页面'
   cd "$target/app"
   "$uv_bin" sync --frozen --no-dev
-  npm --prefix web ci --no-audit --no-fund
-  npm --prefix web run build
+  "$npm_bin" --prefix web ci --no-audit --no-fund
+  "$npm_bin" --prefix web run build
 
   # Save executable locations without sourcing editable shell configuration.
   {
