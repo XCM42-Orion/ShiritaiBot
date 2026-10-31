@@ -77,7 +77,9 @@ class Vault:
             provider.api_key = await protect(provider.api_key)
         for adapter in result.adapters:
             adapter.token = await protect(adapter.token)
-        result.tavily_key = await protect(result.tavily_key)
+        for search_provider in ("tavily", "serpapi", "deepseek"):
+            search = getattr(result.web_search, search_provider)
+            search.api_key = await protect(search.api_key)
 
         async def walk(value):
             if isinstance(value, dict):

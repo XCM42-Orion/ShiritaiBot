@@ -346,6 +346,35 @@
   min-height: 54px;
 }
 
+.field-toggle > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-toggle .field-name {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.field-toggle .field-help {
+  display: block;
+  font-size: 11px;
+}
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 .field-toggle input[type="checkbox"] {
   appearance: none;
   width: 34px;

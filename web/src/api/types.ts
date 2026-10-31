@@ -175,6 +175,23 @@ export interface ProactiveConfig {
   throttle_seconds: number;
 }
 
+export interface WebSearchConfig {
+  enabled: boolean;
+  provider: "tavily" | "serpapi" | "deepseek";
+  max_results: number;
+  timeout: number;
+  tavily: { api_key: string; search_depth: string; topic: string };
+  serpapi: { api_key: string; hl: string; gl: string };
+  deepseek: { api_key: string; need_content: boolean; localization: string };
+}
+
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface Settings {
   providers: ProviderConfig[];
   models: ModelConfig[];
@@ -185,7 +202,7 @@ export interface Settings {
   plugins: PluginConfig[];
   policy: Policy;
   proactive: ProactiveConfig;
-  tavily_key: string;
+  web_search: WebSearchConfig;
   concurrency: number;
   persona: string;
   personas: PersonaConfig[];

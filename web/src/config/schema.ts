@@ -39,7 +39,12 @@ export const PROVIDER_FIELDS: FieldSpec[] = [
     kind: "text",
     help: "作为模型引用和路由里的标识，只能使用字母、数字、点、下划线或短横线。",
   },
-  { key: "enabled", label: "启用提供商", kind: "boolean" },
+  {
+    key: "enabled",
+    label: "启用提供商",
+    kind: "boolean",
+    help: "允许调用此提供商下已启用的模型。",
+  },
   {
     key: "protocol",
     label: "接口协议",
@@ -90,7 +95,12 @@ export const MODEL_FIELDS: FieldSpec[] = [
     min: 64,
     max: 128000,
   },
-  { key: "enabled", label: "启用", kind: "boolean" },
+  {
+    key: "enabled",
+    label: "启用",
+    kind: "boolean",
+    help: "允许路由使用此模型处理请求。",
+  },
   {
     key: "max_context",
     label: "最大上下文 tokens",
@@ -126,7 +136,12 @@ export const EMBEDDING_MODEL_FIELDS: FieldSpec[] = [
     kind: "text",
     placeholder: "text-embedding-3-small",
   },
-  { key: "enabled", label: "启用", kind: "boolean" },
+  {
+    key: "enabled",
+    label: "启用",
+    kind: "boolean",
+    help: "允许使用此模型生成记忆向量。",
+  },
   {
     key: "dims",
     label: "向量维度",
@@ -147,7 +162,12 @@ export const EMBEDDING_MODEL_FIELDS: FieldSpec[] = [
 
 export const ADAPTER_FIELDS: FieldSpec[] = [
   { key: "id", label: "实例标识", kind: "text" },
-  { key: "enabled", label: "启用连接", kind: "boolean" },
+  {
+    key: "enabled",
+    label: "启用连接",
+    kind: "boolean",
+    help: "保存后连接此协议端，接收消息并发送回复。",
+  },
   {
     key: "url",
     label: "WebSocket 地址",
@@ -185,7 +205,12 @@ export const ADAPTER_FIELDS: FieldSpec[] = [
 
 export const SUBAGENT_FIELDS: FieldSpec[] = [
   { key: "id", label: "实例标识", kind: "text" },
-  { key: "enabled", label: "启用实例", kind: "boolean" },
+  {
+    key: "enabled",
+    label: "启用实例",
+    kind: "boolean",
+    help: "允许助手将任务交给此子代理实例。",
+  },
   {
     key: "kind",
     label: "类型",
@@ -275,6 +300,15 @@ export const POLICY_FIELDS: FieldSpec[] = [
     max: 1000000,
   },
   {
+    key: "denied_tools",
+    label: "禁用工具",
+    kind: "list",
+    help: "每行一个工具名，支持通配符，例如 shell 或 web_*。",
+  },
+];
+
+export const MESSAGE_MERGE_FIELDS: FieldSpec[] = [
+  {
     key: "debounce_enabled",
     label: "合并连续消息",
     kind: "boolean",
@@ -302,16 +336,15 @@ export const POLICY_FIELDS: FieldSpec[] = [
     kind: "list",
     help: "每行一个，消息以其中任意一项结尾时不再等待；留空则总是等满时间。",
   },
-  {
-    key: "denied_tools",
-    label: "禁用工具",
-    kind: "list",
-    help: "每行一个工具名，支持通配符，例如 shell 或 web_*。",
-  },
 ];
 
 export const PROACTIVE_FIELDS: FieldSpec[] = [
-  { key: "enabled", label: "启用主动性引擎", kind: "boolean" },
+  {
+    key: "enabled",
+    label: "启用主动性引擎",
+    kind: "boolean",
+    help: "处理外部事件，并按免打扰和通知策略主动联系主人。",
+  },
   {
     key: "timezone",
     label: "时区",
@@ -336,12 +369,6 @@ export const BASIC_SETTINGS_FIELDS: FieldSpec[] = [
     kind: "textarea",
     full: true,
     help: "未选择命名人格时使用。完整提示词仅在管理界面编辑，斜杠命令只显示人格标识和名称。",
-  },
-  {
-    key: "tavily_key",
-    label: "Tavily API Key",
-    kind: "secret",
-    help: "配置后才注册 web_search 工具。",
   },
   {
     key: "concurrency",
@@ -383,7 +410,12 @@ export const PERSONA_FIELDS: FieldSpec[] = [
     help: "用于 /persona 标识 切换。只允许字母、数字、下划线和短横线，不能使用 default。",
   },
   { key: "name", label: "人格名称", kind: "text" },
-  { key: "enabled", label: "启用人格", kind: "boolean" },
+  {
+    key: "enabled",
+    label: "启用人格",
+    kind: "boolean",
+    help: "允许将此人格设为默认，或在会话中切换使用。",
+  },
   {
     key: "prompt",
     label: "人格提示词",
@@ -553,3 +585,87 @@ export function createSubagent(rows: SubagentConfig[]): SubagentConfig {
     model: "",
   };
 }
+
+export const WEB_SEARCH_FIELDS: FieldSpec[] = [
+  {
+    key: "enabled",
+    label: "启用网页搜索",
+    kind: "boolean",
+    help: "开启并配置所选提供商的密钥后，助手可调用网页搜索。",
+  },
+  {
+    key: "provider",
+    label: "搜索提供商",
+    kind: "select",
+    options: ["tavily", "serpapi", "deepseek"],
+    optionLabels: {
+      tavily: "Tavily",
+      serpapi: "SerpAPI",
+      deepseek: "DeepSeek",
+    },
+  },
+  {
+    key: "max_results",
+    label: "默认结果数量",
+    kind: "number",
+    min: 1,
+    max: 10,
+    help: "助手可在调用时调整，最多返回 10 条。",
+  },
+  { key: "timeout", label: "搜索超时（秒）", kind: "number", min: 5, max: 120 },
+];
+
+export const WEB_SEARCH_PROVIDER_FIELDS: Record<string, FieldSpec[]> = {
+  tavily: [
+    { key: "api_key", label: "Tavily API Key", kind: "secret" },
+    {
+      key: "search_depth",
+      label: "搜索深度",
+      kind: "select",
+      options: ["basic", "advanced", "fast", "ultra-fast"],
+      optionLabels: {
+        basic: "基础",
+        advanced: "深入",
+        fast: "快速",
+        "ultra-fast": "极速",
+      },
+    },
+    {
+      key: "topic",
+      label: "搜索类别",
+      kind: "select",
+      options: ["general", "news", "finance"],
+      optionLabels: { general: "综合", news: "新闻", finance: "财经" },
+    },
+  ],
+  serpapi: [
+    { key: "api_key", label: "SerpAPI API Key", kind: "secret" },
+    {
+      key: "hl",
+      label: "搜索语言",
+      kind: "text",
+      help: "Google 搜索语言代码，例如 zh-cn 或 en。",
+    },
+    {
+      key: "gl",
+      label: "搜索地区",
+      kind: "text",
+      help: "国家或地区代码，例如 cn 或 us。",
+    },
+  ],
+  deepseek: [
+    { key: "api_key", label: "DeepSeek API Key", kind: "secret" },
+    {
+      key: "need_content",
+      label: "返回网页正文",
+      kind: "boolean",
+      help: "除了标题和摘要，同时获取来源网页正文。",
+    },
+    {
+      key: "localization",
+      label: "本地化 IP",
+      kind: "text",
+      help: "可选，用于本地化搜索结果的 IP 地址；留空使用默认结果。",
+    },
+  ],
+};

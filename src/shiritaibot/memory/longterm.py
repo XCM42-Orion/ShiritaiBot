@@ -1275,6 +1275,59 @@ class MemoryManager:
             if not (i["type"] == "entity" and i["role"] == "owner")
         ][:limit]
 
+    async def browse_page(
+        self, kind: str = "", query: str = "", page: int = 1, page_size: int = 20
+    ) -> dict:
+        """Browse all records, including history and conflicts, without recall candidate limits."""
+        # Text browsing searches names, aliases, related people, content and conflict notes.
+        entities = (
+            "SELECT e.id FROM mem_entity e WHERE instr(lower(e.name||' '||e.summary),lower(?))>0 "
+            "OR EXISTS (SELECT 1 FROM mem_alias a WHERE a.entity=e.id AND instr(lower(a.alias),lower(?))>0)"
+        )
+        branches, args = [], []
+        for prefix, table in TABLES.items():
+            if kind and TYPES[prefix] != kind:
+                continue
+            stamp = "COALESCE(resolved,created)" if prefix == "c" else "updated"
+            where = "role!='owner'" if prefix == "e" else "1=1"
+            if query:
+                if prefix == "e":
+                    where += f" AND id IN ({entities})"
+                    args.extend([query, query])
+                elif prefix in "fv":
+                    relation = (
+                        f"subject IN ({entities})"
+                        if prefix == "f"
+                        else f"id IN (SELECT event FROM mem_participant WHERE entity IN ({entities}))"
+                    )
+                    where += f" AND (instr(lower(content),lower(?))>0 OR {relation})"
+                    args.extend([query, query, query])
+                else:
+                    where += " AND instr(lower(note||' '||resolution||' '||items),lower(?))>0"
+                    args.append(query)
+            branches.append(
+                f"SELECT '{prefix}'||id AS ref,{stamp} AS stamp FROM {table} WHERE {where}"
+            )
+        sql = " UNION ALL ".join(branches)
+        async with self.store.lock:
+            async with self.store.db.execute(
+                f"SELECT COUNT(*) FROM ({sql})", tuple(args)
+            ) as cursor:
+                total = (await cursor.fetchone())[0]
+            page = min(page, max(1, (total + page_size - 1) // page_size))
+            async with self.store.db.execute(
+                f"SELECT ref FROM ({sql}) ORDER BY stamp DESC,ref DESC LIMIT ? OFFSET ?",
+                (*args, page_size, (page - 1) * page_size),
+            ) as cursor:
+                refs = [row[0] for row in await cursor.fetchall()]
+        items = await self.load(refs)
+        results = [
+            {"id": i["ref"], "type": i["type"], "status": i["status"], "text": self.line(i)}
+            for key in refs
+            if (i := items.get(key)) is not None
+        ]
+        return {"items": results, "total": total, "page": page, "page_size": page_size}
+
     # ---- background embedding ------------------------------------------------
 
     async def run(self) -> None:

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
+import { Pagination, PAGE_SIZE } from "../components/Pagination";
 import type { MemoryKind } from "../api/types";
 import type { PageProps } from "./common";
 
@@ -30,9 +31,10 @@ export function MemoryPage({ client }: PageProps) {
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState("");
+  const [page, setPage] = useState(1);
   const memories = useQuery({
-    queryKey: ["memory", kind, query],
-    queryFn: () => client.memories(kind, query),
+    queryKey: ["memory", kind, query, page],
+    queryFn: () => client.memoriesPage(kind, query, page, PAGE_SIZE),
     refetchInterval: 10000,
   });
   const detail = useQuery({
@@ -53,7 +55,11 @@ export function MemoryPage({ client }: PageProps) {
                 key={key || "all"}
                 className={kind === key ? "selected" : ""}
                 aria-pressed={kind === key}
-                onClick={() => setKind(key)}
+                onClick={() => {
+                  setKind(key);
+                  setPage(1);
+                  setOpen("");
+                }}
               >
                 {label}
               </button>
@@ -69,6 +75,8 @@ export function MemoryPage({ client }: PageProps) {
           onSubmit={(event) => {
             event.preventDefault();
             setQuery(draft.trim());
+            setPage(1);
+            setOpen("");
           }}
         >
           <input
@@ -87,7 +95,7 @@ export function MemoryPage({ client }: PageProps) {
             message={`读取记忆失败：${memories.error.message}`}
           />
         )}
-        {memories.data?.map((row) => (
+        {memories.data?.items.map((row) => (
           <article className="record" key={row.id}>
             <div className="panel-head">
               <span className="tag">
@@ -156,15 +164,28 @@ export function MemoryPage({ client }: PageProps) {
             )}
           </article>
         ))}
-        {!memories.data?.length && !memories.error && (
-          <EmptyState
-            text={
-              query
-                ? "没有匹配的记忆。"
-                : "还没有记忆。在私聊里告诉 Agent 需要记住的人和事，它会记录在这里。"
-            }
-          />
-        )}
+        {!memories.data?.items.length &&
+          !memories.error &&
+          !memories.isPending && (
+            <EmptyState
+              text={
+                query
+                  ? "没有匹配的记忆。"
+                  : "还没有记忆。在私聊里告诉 Agent 需要记住的人和事，它会记录在这里。"
+              }
+            />
+          )}
+        {memories.isPending && <p className="muted">正在读取记忆…</p>}
+        <Pagination
+          label="记忆库"
+          page={memories.data?.page ?? page}
+          total={memories.data?.total ?? 0}
+          loading={memories.isFetching}
+          onChange={(next) => {
+            setPage(next);
+            setOpen("");
+          }}
+        />
       </section>
     </>
   );

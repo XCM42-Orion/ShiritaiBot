@@ -102,7 +102,9 @@ Proactive Loop 不提供逐会话编辑。**新 Proactive Loop 默认**配置 `p
 
 唤起关键词每行一个，消息包含任意关键词即可触发；群聊也可通过 @ 触发，白名单和忽略规则仍有效。主人私聊默认不需要关键词，可开启“主人私聊 Agent 需要关键词”，开启时须至少配置一个关键词。斜杠命令、停止和审批指令始终可用，WebUI 不受关键词限制。
 
-同一发送者的连续消息默认在 1.5 秒内合并为一轮，持续发送时最多等 6 秒；以问号、句号或感叹号结尾立即开始。不同发送者不合并，WebUI 会话和后台任务不受影响。是否开启、两项等待时间和立即开始的结尾后缀均可在 **工具与权限** 页调整。
+同一发送者的连续消息默认在 1.5 秒内合并为一轮，持续发送时最多等 6 秒；以问号、句号或感叹号结尾立即开始。不同发送者不合并，WebUI 会话和后台任务不受影响。是否开启、两项等待时间和立即开始的结尾后缀均可在 **设置 → 消息合并** 中调整。
+
+**设置 → 网页搜索** 可选择 [Tavily](https://docs.tavily.com/documentation/api-reference/endpoint/search)、[SerpAPI](https://serpapi.com/search-api) 或 [DeepSeek Search](https://api-docs.deepseek.com/api/search)，分别配置密钥及搜索选项。默认读取 `TAVILY_API_KEY`、`SERPAPI_API_KEY`、`DEEPSEEK_API_KEY` 环境变量，也可直接输入密钥并加密保存；切换提供商会保留各家的配置。保存后按所选提供商和启用状态注册 `web_search` 工具。原有 `tavily_key` 自动迁移到 `web_search.tavily.api_key`。工具列表、主动动态、记忆库及审批记录均按每页 20 条显示；历史记录由后端分页读取。
 
 上下文支持 `discard`（超限丢弃旧轮次，默认）和 `compress`（压缩旧轮次为摘要）。`context.max_turns` 默认 50，包含即将开始的一轮；一轮内的工具调用、工具结果和插话整体保留或处理。字符上限沿用 `policy.max_context_chars`。压缩时保留 `context.keep_recent_turns` 个最近完整轮次（默认 10，须小于最大轮数）；字符空间不足时会压缩更多旧轮次。`context.compression_model` 可指定已启用的模型标识，留空使用 `light` 路由。摘要与裁剪位置持久化，后续压缩会合并已有摘要。
 

@@ -7,7 +7,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -207,7 +207,12 @@ def create_app(
         return {"ok": True}
 
     @api.get("/api/records/{kind}", dependencies=protected)
-    async def records(kind: str):
+    async def records(
+        kind: str,
+        page: int | None = Query(default=None, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+        approval_filter: str = Query(default="", pattern=r"^(pending|history)?$"),
+    ):
         if kind not in {
             "activity",
             "turn",
@@ -227,6 +232,8 @@ def create_app(
             "usage",
         }:
             raise HTTPException(404)
+        if page is not None:
+            return await runtime.store.page(kind, page, page_size, approval_filter)
         return await runtime.store.list(kind)
 
     @api.get("/api/logs/raw", dependencies=protected)
@@ -275,7 +282,16 @@ def create_app(
 
     # Read-only: the Agent maintains memory through tools (DESIGN.md §1.1).
     @api.get("/api/memory", dependencies=protected)
-    async def memories(kind: str = "", q: str = ""):
+    async def memories(
+        kind: str = "",
+        q: str = "",
+        page: int | None = Query(default=None, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+    ):
+        if kind not in {"", "entity", "fact", "event", "conflict"}:
+            raise HTTPException(422, "无效的记忆类型")
+        if page is not None:
+            return await runtime.memory.browse_page(kind, q[:200], page, page_size)
         return await runtime.memory.browse(kind[:20], q[:200])
 
     @api.get("/api/memory/status", dependencies=protected)

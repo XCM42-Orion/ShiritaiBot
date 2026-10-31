@@ -2,12 +2,15 @@ import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useQuery } from "@tanstack/react-query";
 import { Details } from "../components/Details";
 import { EmptyState } from "../components/EmptyState";
+import { useState } from "react";
+import { Pagination, PAGE_SIZE } from "../components/Pagination";
 import type { PageProps } from "./common";
 
 export function EventsPage({ client }: PageProps) {
+  const [page, setPage] = useState(1);
   const events = useQuery({
-    queryKey: ["records", "event"],
-    queryFn: () => client.records("event"),
+    queryKey: ["records", "event", page],
+    queryFn: () => client.recordsPage("event", page, PAGE_SIZE),
     refetchInterval: 4000,
   });
 
@@ -17,7 +20,7 @@ export function EventsPage({ client }: PageProps) {
       {events.error && (
         <QueryErrorNotice message={`读取事件失败：${events.error.message}`} />
       )}
-      {events.data?.map((row) => (
+      {events.data?.items.map((row) => (
         <article className="record" key={row.id}>
           <div className="panel-head">
             <strong>{row.event.title}</strong>
@@ -30,9 +33,17 @@ export function EventsPage({ client }: PageProps) {
           <Details value={row} />
         </article>
       ))}
-      {!events.data?.length && !events.error && (
+      {!events.data?.items.length && !events.error && !events.isPending && (
         <EmptyState text="来自插件、提醒和子代理的事件会汇集在这里。" />
       )}
+      {events.isPending && <p className="muted">正在读取事件…</p>}
+      <Pagination
+        label="主动动态"
+        page={events.data?.page ?? page}
+        total={events.data?.total ?? 0}
+        onChange={setPage}
+        loading={events.isFetching}
+      />
     </section>
   );
 }

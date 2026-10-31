@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApprovalCard } from "../components/ApprovalCard";
+import { Pagination, PAGE_SIZE } from "../components/Pagination";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/FieldForm";
 import { QueryErrorNotice } from "../components/QueryErrorNotice";
@@ -55,6 +56,9 @@ export function ApprovalsPage({
   const [sessionInput, setSessionInput] = useState("web:owner");
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
+  const [toolPage, setToolPage] = useState(1);
+  const [pendingPage, setPendingPage] = useState(1);
+  const [reviewPage, setReviewPage] = useState(1);
   const catalog = useQuery({
     queryKey: ["tools"],
     queryFn: () => client.tools(),
@@ -65,16 +69,19 @@ export function ApprovalsPage({
     queryFn: () => client.records("session"),
   });
   const approvals = useQuery({
-    queryKey: ["records", "approval"],
-    queryFn: () => client.records("approval"),
+    queryKey: ["records", "approval", "pending", pendingPage],
+    queryFn: () =>
+      client.recordsPage("approval", pendingPage, PAGE_SIZE, "pending"),
     refetchInterval: 4000,
   });
-  const pending = (approvals.data ?? []).filter(
-    (row) => row.status === "pending" && row.reviewer !== "model",
-  );
-  const reviews = (approvals.data ?? [])
-    .filter((row) => row.reviewer === "model")
-    .slice(0, 20);
+  const history = useQuery({
+    queryKey: ["records", "approval", "history", reviewPage],
+    queryFn: () =>
+      client.recordsPage("approval", reviewPage, PAGE_SIZE, "history"),
+    refetchInterval: 4000,
+  });
+  const pending = approvals.data?.items ?? [];
+  const reviews = history.data?.items ?? [];
   const policy = config.policy;
   const row = sessions.data?.find((row) => row.id === session);
   const owner =
@@ -110,6 +117,21 @@ export function ApprovalsPage({
       ...Object.keys(profile.tools),
     ]),
   ].sort();
+
+  const filteredTools = toolNames.filter((name) => {
+    const tool = tools.find((tool) => tool.name === name);
+    return `${name} ${tool?.plugin ?? ""} ${tool?.description ?? ""}`
+      .toLowerCase()
+      .includes(search.toLowerCase());
+  });
+  const currentToolPage = Math.min(
+    toolPage,
+    Math.max(1, Math.ceil(filteredTools.length / PAGE_SIZE)),
+  );
+  const visibleTools = filteredTools.slice(
+    (currentToolPage - 1) * PAGE_SIZE,
+    currentToolPage * PAGE_SIZE,
+  );
 
   function update(next: ToolPolicy | SessionPolicy) {
     setConfig({
@@ -152,7 +174,10 @@ export function ApprovalsPage({
             配置范围
             <select
               value={target}
-              onChange={(event) => setTarget(event.target.value as Target)}
+              onChange={(event) => {
+                setTarget(event.target.value as Target);
+                setToolPage(1);
+              }}
             >
               <option value="session">指定 Main 会话</option>
               <option value="owner_default">主人私聊 / WebUI 默认</option>
@@ -278,78 +303,83 @@ export function ApprovalsPage({
           <input
             type="search"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setToolPage(1);
+            }}
             placeholder="工具名、插件或说明"
           />
         </label>
         <div className="tool-permission-list">
-          {toolNames
-            .filter((name) => {
-              const tool = tools.find((tool) => tool.name === name);
-              return `${name} ${tool?.plugin ?? ""} ${tool?.description ?? ""}`
-                .toLowerCase()
-                .includes(search.toLowerCase());
-            })
-            .map((name) => {
-              const tool = tools.find((tool) => tool.name === name);
-              const permission =
-                profile.tools[name] ?? inherited(profile, tool);
-              return (
-                <article className="tool-permission-row" key={name}>
-                  <div>
-                    <strong>{name}</strong>
-                    <span className="badge">{tool?.plugin ?? "未加载"}</span>
-                    <span className="badge">
-                      {tool?.safe
-                        ? "安全"
-                        : tool
-                          ? `非安全 · ${tool.risk}`
-                          : "安全性未知"}
-                    </span>
-                    <p className="muted">
-                      {tool?.description ??
-                        "插件未加载，保留的权限配置将在工具重新注册后使用。"}
-                    </p>
-                    <small className="muted">
-                      {!tool || (mode === "chat" && !tool.chat)
-                        ? "当前不可用"
-                        : `权限：${PERMISSIONS[permission]}`}
-                    </small>
-                  </div>
-                  <label className="field">
-                    {name} 权限
-                    <select
-                      value={profile.tools[name] ?? "inherit"}
-                      onChange={(event) => {
-                        const next = { ...profile.tools };
-                        if (event.target.value === "inherit") delete next[name];
-                        else next[name] = event.target.value as ToolPermission;
-                        update({ ...profile, tools: next });
-                      }}
-                    >
-                      <option value="inherit">
-                        跟随预设 · {PERMISSIONS[inherited(profile, tool)]}
+          {visibleTools.map((name) => {
+            const tool = tools.find((tool) => tool.name === name);
+            const permission = profile.tools[name] ?? inherited(profile, tool);
+            return (
+              <article className="tool-permission-row" key={name}>
+                <div>
+                  <strong>{name}</strong>
+                  <span className="badge">{tool?.plugin ?? "未加载"}</span>
+                  <span className="badge">
+                    {tool?.safe
+                      ? "安全"
+                      : tool
+                        ? `非安全 · ${tool.risk}`
+                        : "安全性未知"}
+                  </span>
+                  <p className="muted">
+                    {tool?.description ??
+                      "插件未加载，保留的权限配置将在工具重新注册后使用。"}
+                  </p>
+                  <small className="muted">
+                    {!tool || (mode === "chat" && !tool.chat)
+                      ? "当前不可用"
+                      : `权限：${PERMISSIONS[permission]}`}
+                  </small>
+                </div>
+                <label className="field">
+                  {name} 权限
+                  <select
+                    value={profile.tools[name] ?? "inherit"}
+                    onChange={(event) => {
+                      const next = { ...profile.tools };
+                      if (event.target.value === "inherit") delete next[name];
+                      else next[name] = event.target.value as ToolPermission;
+                      update({ ...profile, tools: next });
+                    }}
+                  >
+                    <option value="inherit">
+                      跟随预设 · {PERMISSIONS[inherited(profile, tool)]}
+                    </option>
+                    {Object.entries(PERMISSIONS).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
                       </option>
-                      {Object.entries(PERMISSIONS).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </article>
-              );
-            })}
+                    ))}
+                  </select>
+                </label>
+              </article>
+            );
+          })}
           {!catalog.isPending && !toolNames.length && (
             <EmptyState text="尚无已注册工具。" />
           )}
+          {!catalog.isPending &&
+            toolNames.length > 0 &&
+            !filteredTools.length && <EmptyState text="没有匹配的工具。" />}
         </div>
+        <Pagination
+          label="工具列表"
+          page={currentToolPage}
+          total={filteredTools.length}
+          onChange={setToolPage}
+        />
       </section>
       <section className="panel">
         <h2>审批与执行设置</h2>
         <p className="muted">
-          自动审批模型在“模型与服务 → 工具自动审批模型”路由中设置，可配置备用模型和
-          Jev 判断模型；Jev 拒绝或把握不足时可交给路由里的文本模型复核。最终拒绝、
+          自动审批模型在“模型与服务 →
+          工具自动审批模型”路由中设置，可配置备用模型和 Jev 判断模型；Jev
+          拒绝或把握不足时可交给路由里的文本模型复核。最终拒绝、
           超时或返回无效时均不执行。
         </p>
         <div className="field-grid">
@@ -398,52 +428,72 @@ export function ApprovalsPage({
         </details>
       </section>
       <section className="panel">
-        <h2>待人工审批 · {pending.length}</h2>
+        <h2>待人工审批 · {approvals.data?.total ?? 0}</h2>
         {approvals.error && (
           <QueryErrorNotice
             message={`读取审批失败：${approvals.error.message}`}
           />
         )}
-        {pending.length ? (
-          pending.map((row) => (
-            <ApprovalCard
-              key={row.id}
-              approval={row}
-              busy={busy}
-              onResolve={(allow) => void resolve(row.id, allow)}
-            />
-          ))
-        ) : (
-          <EmptyState text="当前没有待人工审批操作。" />
-        )}
+        {pending.length
+          ? pending.map((row) => (
+              <ApprovalCard
+                key={row.id}
+                approval={row}
+                busy={busy}
+                onResolve={(allow) => void resolve(row.id, allow)}
+              />
+            ))
+          : !approvals.isPending &&
+            !approvals.error && <EmptyState text="当前没有待人工审批操作。" />}
+        <Pagination
+          label="待人工审批"
+          page={approvals.data?.page ?? pendingPage}
+          total={approvals.data?.total ?? 0}
+          loading={approvals.isFetching || busy}
+          onChange={setPendingPage}
+        />
       </section>
       <section className="panel">
-        <h2>模型自动审批记录</h2>
-        {reviews.length ? (
-          reviews.map((row) => (
-            <article className="tool-permission-row" key={row.id}>
-              <div>
-                <strong>{row.tool}</strong>
-                <span className="badge">
-                  {row.status === "approved"
-                    ? "已批准"
-                    : row.status === "denied"
-                      ? "已拒绝"
-                      : row.status}
-                </span>
-                <p className="muted">
-                  {row.scope} · {row.reason ?? "正在审查"}
-                </p>
-                <details>
-                  <summary>调用参数</summary>
-                  <pre>{JSON.stringify(row.args, null, 2)}</pre>
-                </details>
-              </div>
-            </article>
-          ))
-        ) : (
-          <EmptyState text="暂无模型自动审批记录。" />
+        <h2>审批记录</h2>
+        {history.error && (
+          <QueryErrorNotice
+            message={`读取审批记录失败：${history.error.message}`}
+          />
         )}
+        {reviews.length
+          ? reviews.map((row) => (
+              <article className="tool-permission-row" key={row.id}>
+                <div>
+                  <strong>{row.tool}</strong>
+                  <span className="badge">
+                    {row.reviewer === "model" ? "模型自动审批" : "人工审批"}
+                  </span>
+                  <span className="badge">
+                    {row.status === "approved"
+                      ? "已批准"
+                      : row.status === "denied"
+                        ? "已拒绝"
+                        : row.status}
+                  </span>
+                  <p className="muted">
+                    {row.scope} · {row.reason ?? "正在审查"}
+                  </p>
+                  <details>
+                    <summary>调用参数</summary>
+                    <pre>{JSON.stringify(row.args, null, 2)}</pre>
+                  </details>
+                </div>
+              </article>
+            ))
+          : !history.isPending &&
+            !history.error && <EmptyState text="暂无审批记录。" />}
+        <Pagination
+          label="审批记录"
+          page={history.data?.page ?? reviewPage}
+          total={history.data?.total ?? 0}
+          loading={history.isFetching}
+          onChange={setReviewPage}
+        />
       </section>
     </>
   );

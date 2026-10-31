@@ -88,6 +88,28 @@ class Store:
     async def delete(self, kind: str, key: str) -> None:
         await self.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, key))
 
+    async def page(self, kind: str, page: int, page_size: int, approval_filter: str = "") -> dict:
+        where = "kind=?"
+        if kind == "approval" and approval_filter == "pending":
+            where += " AND json_extract(data,'$.status')='pending' AND COALESCE(json_extract(data,'$.reviewer'),'')!='model'"
+        elif kind == "approval" and approval_filter == "history":
+            where += " AND (COALESCE(json_extract(data,'$.status'),'')!='pending' OR json_extract(data,'$.reviewer')='model')"
+        # Count and read under one lock so a concurrent approval cannot empty the last page.
+        async with self.lock:
+            async with self.db.execute(
+                f"SELECT COUNT(*) FROM records WHERE {where}", (kind,)
+            ) as cursor:
+                count_row = await cursor.fetchone()
+                assert count_row is not None
+                total = count_row[0]
+            page = min(page, max(1, (total + page_size - 1) // page_size))
+            async with self.db.execute(
+                f"SELECT data FROM records WHERE {where} ORDER BY updated DESC,id DESC LIMIT ? OFFSET ?",
+                (kind, page_size, (page - 1) * page_size),
+            ) as cursor:
+                items = [json.loads(row[0]) for row in await cursor.fetchall()]
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
+
     async def with_status(
         self, kind: str, statuses: tuple[str, ...], limit: int = 1000
     ) -> list[dict]:

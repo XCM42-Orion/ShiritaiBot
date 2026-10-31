@@ -73,7 +73,23 @@ function baseConfig(): Settings {
       quiet_end: "08:00",
       throttle_seconds: 600,
     },
-    tavily_key: "env:TAVILY_API_KEY",
+    web_search: {
+      enabled: true,
+      provider: "tavily",
+      max_results: 5,
+      timeout: 30,
+      tavily: {
+        api_key: "env:TAVILY_API_KEY",
+        search_depth: "basic",
+        topic: "general",
+      },
+      serpapi: { api_key: "env:SERPAPI_API_KEY", hl: "zh-cn", gl: "cn" },
+      deepseek: {
+        api_key: "env:DEEPSEEK_API_KEY",
+        need_content: false,
+        localization: "",
+      },
+    },
     concurrency: 4,
     persona: "test",
     personas: [],
@@ -127,6 +143,12 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     }),
     saveConfig: vi.fn().mockResolvedValue({ ok: true, version: 2 }),
     records: vi.fn().mockResolvedValue([]),
+    recordsPage: vi
+      .fn()
+      .mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 }),
+    memoriesPage: vi
+      .fn()
+      .mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 }),
     rawLogs: vi.fn().mockResolvedValue({ lines: [] }),
     logs: vi.fn().mockResolvedValue({ entries: [], sources: [] }),
     logLevel: vi.fn().mockResolvedValue({ level: "info" }),
@@ -602,14 +624,19 @@ describe("model categories", () => {
 describe("memory page", () => {
   it("browses memories and shows evidence without offering edits", async () => {
     const client = fakeClient({
-      memories: vi.fn().mockResolvedValue([
-        {
-          id: "v1",
-          type: "event",
-          status: "active",
-          text: "[事件] 2026-10-29（周四） 梦寻发邮件说 issue #3 已处理完成  #v1",
-        },
-      ]),
+      memoriesPage: vi.fn().mockResolvedValue({
+        total: 1,
+        page: 1,
+        page_size: 20,
+        items: [
+          {
+            id: "v1",
+            type: "event",
+            status: "active",
+            text: "[事件] 2026-10-29（周四） 梦寻发邮件说 issue #3 已处理完成  #v1",
+          },
+        ],
+      }),
       memory: vi.fn().mockResolvedValue({
         id: "v1",
         type: "event",
@@ -631,7 +658,7 @@ describe("memory page", () => {
     await user.click(screen.getByText("详情与证据"));
     expect(await screen.findByText(/issue #3 已经处理完成/)).toBeTruthy();
     await user.click(screen.getByText("事件"));
-    expect(client.memories).toHaveBeenLastCalledWith("event", "");
+    expect(client.memoriesPage).toHaveBeenLastCalledWith("event", "", 1, 20);
   });
 });
 
@@ -1510,26 +1537,35 @@ describe("session tool permissions", () => {
   it("shows model review results separately from human approvals", async () => {
     const { ApprovalsPage } = await import("../src/pages/ApprovalsPage");
     const client = fakeClient({
-      records: vi.fn().mockResolvedValue([
-        {
-          id: "human",
-          tool: "shell",
-          status: "pending",
-          reviewer: "human",
-          args: { command: "echo hi" },
-          scope: "web:owner",
-          expires: 2000000000,
-        },
-        {
-          id: "model",
-          tool: "shell",
-          status: "denied",
-          reviewer: "model",
-          args: { command: "rm file" },
-          scope: "background:proactive:a",
-          reason: "未获明确授权",
-        },
-      ]),
+      recordsPage: vi
+        .fn()
+        .mockImplementation(async (_kind, page, page_size, filter) => {
+          const items = [
+            {
+              id: "human",
+              tool: "shell",
+              status: "pending",
+              reviewer: "human",
+              args: { command: "echo hi" },
+              scope: "web:owner",
+              expires: 2000000000,
+            },
+            {
+              id: "model",
+              tool: "shell",
+              status: "denied",
+              reviewer: "model",
+              args: { command: "rm file" },
+              scope: "background:proactive:a",
+              reason: "未获明确授权",
+            },
+          ].filter((row) =>
+            filter === "pending"
+              ? row.status === "pending" && row.reviewer !== "model"
+              : row.status !== "pending" || row.reviewer === "model",
+          );
+          return { items, total: items.length, page, page_size };
+        }),
     });
     render(
       withQuery(
@@ -1549,5 +1585,155 @@ describe("session tool permissions", () => {
     );
     expect(screen.getByText(/未获明确授权/)).toBeTruthy();
     expect(screen.getByText("已拒绝")).toBeTruthy();
+  });
+});
+
+describe("paginated lists and web search settings", () => {
+  it("pages events through the API", async () => {
+    const { EventsPage } = await import("../src/pages/EventsPage");
+    const recordsPage = vi
+      .fn()
+      .mockImplementation(async (_kind, page, pageSize) => ({
+        items: [
+          {
+            id: `event-${page}`,
+            status: "done",
+            event: { title: `事件第${page}页`, source: "test", kind: "test" },
+          },
+        ],
+        total: 21,
+        page,
+        page_size: pageSize,
+      }));
+    render(
+      withQuery(<EventsPage client={fakeClient({ recordsPage })} act={act} />),
+    );
+    await screen.findByText("事件第1页");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "主动动态下一页" }));
+    await screen.findByText("事件第2页");
+    expect(recordsPage).toHaveBeenLastCalledWith("event", 2, 20);
+    expect(screen.queryByText("事件第1页")).toBeNull();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "主动动态下一页",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
+  it("resets memory pagination when searching or changing category", async () => {
+    const memoriesPage = vi
+      .fn()
+      .mockImplementation(async (kind, query, page, pageSize) => ({
+        items: [
+          {
+            id: "f1",
+            type: "fact",
+            status: "active",
+            text: `记忆 ${kind} ${query} 第${page}页`,
+          },
+        ],
+        total: 21,
+        page,
+        page_size: pageSize,
+      }));
+    render(
+      withQuery(<MemoryPage client={fakeClient({ memoriesPage })} act={act} />),
+    );
+    const user = userEvent.setup();
+    await screen.findByText("记忆 第1页");
+    await user.click(screen.getByRole("button", { name: "记忆库下一页" }));
+    await screen.findByText("记忆 第2页");
+    await user.type(screen.getByLabelText("搜索记忆"), "关键词");
+    await user.click(screen.getByRole("button", { name: "搜索" }));
+    await waitFor(() =>
+      expect(memoriesPage).toHaveBeenLastCalledWith("", "关键词", 1, 20),
+    );
+    await user.click(screen.getByRole("button", { name: "记忆库下一页" }));
+    await waitFor(() =>
+      expect(memoriesPage).toHaveBeenLastCalledWith("", "关键词", 2, 20),
+    );
+    await user.click(screen.getByRole("button", { name: "事实" }));
+    await waitFor(() =>
+      expect(memoriesPage).toHaveBeenLastCalledWith("fact", "关键词", 1, 20),
+    );
+  });
+
+  it("keeps tool edits across pages and searches the complete catalog", async () => {
+    const { ApprovalsPage } = await import("../src/pages/ApprovalsPage");
+    const tools = Array.from({ length: 41 }, (_, i) => ({
+      name: `tool_${String(i).padStart(2, "0")}`,
+      plugin: "builtin",
+      safe: true,
+      risk: "safe",
+      chat: true,
+      description: "说明",
+    }));
+    const client = fakeClient({ tools: vi.fn().mockResolvedValue({ tools }) });
+    let latest = baseConfig();
+    function Harness() {
+      const [config, setConfig] = useState(latest);
+      latest = config;
+      return (
+        <ApprovalsPage
+          client={client}
+          config={config}
+          setConfig={setConfig}
+          act={act}
+        />
+      );
+    }
+    render(withQuery(<Harness />));
+    const user = userEvent.setup();
+    await screen.findByLabelText("tool_00 权限");
+    expect(screen.queryByLabelText("tool_20 权限")).toBeNull();
+    expect(screen.queryByLabelText("合并连续消息")).toBeNull();
+    await user.selectOptions(screen.getByLabelText("tool_00 权限"), "deny");
+    await user.click(screen.getByRole("button", { name: "工具列表下一页" }));
+    expect(screen.getByLabelText("tool_20 权限")).toBeTruthy();
+    await user.type(screen.getByLabelText("搜索工具"), "tool_40");
+    expect(screen.getByLabelText("tool_40 权限")).toBeTruthy();
+    expect(screen.queryByLabelText("tool_20 权限")).toBeNull();
+    await user.clear(screen.getByLabelText("搜索工具"));
+    expect(
+      (screen.getByLabelText("tool_00 权限") as HTMLSelectElement).value,
+    ).toBe("deny");
+    expect(latest.policy.sessions["web:owner"].tools.tool_00).toBe("deny");
+  });
+
+  it("edits provider-specific search options without losing other providers", async () => {
+    let latest = baseConfig();
+    function Harness() {
+      const [config, setConfig] = useState(latest);
+      latest = config;
+      return (
+        <SettingsPage
+          client={fakeClient()}
+          config={config}
+          setConfig={setConfig}
+          act={act}
+        />
+      );
+    }
+    render(withQuery(<Harness />));
+    const user = userEvent.setup();
+    expect(screen.getByLabelText("合并连续消息")).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText("搜索深度"), "advanced");
+    await user.selectOptions(screen.getByLabelText("搜索提供商"), "serpapi");
+    await user.clear(screen.getByLabelText("搜索地区"));
+    await user.type(screen.getByLabelText("搜索地区"), "us");
+    await user.selectOptions(screen.getByLabelText("搜索提供商"), "deepseek");
+    await user.click(screen.getByLabelText("返回网页正文"));
+    await user.click(screen.getByLabelText("启用网页搜索"));
+    expect(latest.web_search.deepseek.need_content).toBe(true);
+    expect(latest.web_search.enabled).toBe(false);
+    expect(latest.web_search.serpapi.gl).toBe("us");
+    await user.selectOptions(screen.getByLabelText("搜索提供商"), "tavily");
+    expect((screen.getByLabelText("搜索深度") as HTMLSelectElement).value).toBe(
+      "advanced",
+    );
+    expect(latest.web_search.tavily.api_key).toBe("env:TAVILY_API_KEY");
   });
 });

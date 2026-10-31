@@ -19,6 +19,7 @@ import type {
   Settings,
   Statistics,
   ToolCatalog,
+  Paginated,
 } from "./types";
 
 export class ApiError extends Error {
@@ -46,6 +47,12 @@ export interface ApiClient {
   tools(session?: string): Promise<ToolCatalog>;
   saveConfig(settings: Settings): Promise<ConfigSaveResult>;
   records<K extends RecordKind>(kind: K): Promise<RecordMap[K][]>;
+  recordsPage<K extends RecordKind>(
+    kind: K,
+    page: number,
+    pageSize: number,
+    approvalFilter?: "pending" | "history",
+  ): Promise<Paginated<RecordMap[K]>>;
   stats(hours: number): Promise<Statistics>;
   commands(): Promise<CommandInfo[]>;
   history(session: string): Promise<HistoryMessage[]>;
@@ -56,6 +63,12 @@ export interface ApiClient {
   sendMessage(text: string, session: string): Promise<unknown>;
   resolveApproval(id: string, allow: boolean): Promise<unknown>;
   memories(kind?: string, query?: string): Promise<MemoryRecord[]>;
+  memoriesPage(
+    kind: string,
+    query: string,
+    page: number,
+    pageSize: number,
+  ): Promise<Paginated<MemoryRecord>>;
   memory(id: string): Promise<MemoryDetail>;
   memoryStatus(): Promise<MemoryStatus>;
   createRoutine(draft: RoutineDraft): Promise<RoutineRecord>;
@@ -126,6 +139,22 @@ export function createClient(getToken: () => string): ApiClient {
       request<ConfigSaveResult>("/config", "PUT", settings),
     records: <K extends RecordKind>(kind: K) =>
       request<RecordMap[K][]>("/records/" + kind),
+    recordsPage: <K extends RecordKind>(
+      kind: K,
+      page: number,
+      pageSize: number,
+      approvalFilter = "",
+    ) =>
+      request<Paginated<RecordMap[K]>>(
+        "/records/" +
+          kind +
+          "?" +
+          new URLSearchParams({
+            page: String(page),
+            page_size: String(pageSize),
+            approval_filter: approvalFilter,
+          }),
+      ),
     stats: (hours) => request<Statistics>("/stats?hours=" + hours),
     commands: () => request<CommandInfo[]>("/commands"),
     history: (session) =>
@@ -156,6 +185,16 @@ export function createClient(getToken: () => string): ApiClient {
     memories: (kind = "", query = "") =>
       request<MemoryRecord[]>(
         "/memory?" + new URLSearchParams({ kind, q: query }).toString(),
+      ),
+    memoriesPage: (kind, query, page, pageSize) =>
+      request<Paginated<MemoryRecord>>(
+        "/memory?" +
+          new URLSearchParams({
+            kind,
+            q: query,
+            page: String(page),
+            page_size: String(pageSize),
+          }),
       ),
     memory: (id) => request<MemoryDetail>("/memory/" + encodeURIComponent(id)),
     memoryStatus: () => request<MemoryStatus>("/memory/status"),

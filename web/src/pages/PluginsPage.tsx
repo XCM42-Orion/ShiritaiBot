@@ -283,7 +283,12 @@ export function PluginsPage({
                   </p>
                 )}
                 <Field
-                  spec={{ key: "enabled", label: "启用插件", kind: "boolean" }}
+                  spec={{
+                    key: "enabled",
+                    label: "启用插件",
+                    kind: "boolean",
+                    help: "保存后加载插件，注册其工具和通知通道。",
+                  }}
                   value={plugin.enabled}
                   onChange={(enabled) => update({ enabled })}
                 />

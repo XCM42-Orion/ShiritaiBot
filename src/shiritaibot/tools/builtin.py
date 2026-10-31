@@ -15,6 +15,7 @@ from shiritaibot.memory.tools import memory_tools
 from shiritaibot.routine import FINISHED, KEEP_FINISHED, RoutineItem
 from shiritaibot.tools import TEXT, schema
 from shiritaibot.tools.qq import qq_tools, session_dir
+from shiritaibot.tools.web_search import search_token, search_web
 
 
 async def register_builtin(app) -> None:
@@ -31,21 +32,7 @@ async def register_builtin(app) -> None:
         }
 
     async def search(ctx, args):
-        token = await app.vault.resolve(app.config.value.tavily_key)
-        if not token:
-            raise PublicError("未配置 Tavily API Key")
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "query": args["query"],
-                    "max_results": args.get("max_results", 5),
-                    "search_depth": "basic",
-                },
-            )
-            response.raise_for_status()
-            return response.json()
+        return await search_web(app.config.value.web_search, app.vault, args)
 
     async def shell(ctx, args):
         workspace = session_dir(app.home, "workspaces", ctx.session)
@@ -386,14 +373,14 @@ async def register_builtin(app) -> None:
     ]
     entries += memory_tools(app.memory)
     entries += qq_tools(app)
-    if await app.vault.resolve(app.config.value.tavily_key):
+    if await search_token(app.config.value.web_search, app.vault):
         entries.append(
             Tool(
                 "web_search",
-                "使用 Tavily 搜索网页，返回来源链接",
+                "搜索网页，返回标题、内容摘要和来源链接；query 为 1–128 字符，支持 site: 等搜索语法",
                 schema(
                     {
-                        "query": TEXT,
+                        "query": {"type": "string", "minLength": 1, "maxLength": 128},
                         "max_results": {"type": "integer", "minimum": 1, "maximum": 10},
                     },
                     ["query"],

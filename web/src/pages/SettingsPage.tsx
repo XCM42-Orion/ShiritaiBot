@@ -8,6 +8,9 @@ import {
   CONTEXT_FIELDS,
   GROUP_CONTEXT_FIELDS,
   MEMORY_FIELDS,
+  MESSAGE_MERGE_FIELDS,
+  WEB_SEARCH_FIELDS,
+  WEB_SEARCH_PROVIDER_FIELDS,
   createPersona,
 } from "../config/schema";
 import type { ConfigPageProps } from "./common";
@@ -22,13 +25,49 @@ export function SettingsPage({ config, setConfig }: ConfigPageProps) {
             <Field
               key={spec.key}
               spec={spec}
-              value={
-                config[spec.key as "persona" | "tavily_key" | "concurrency"]
-              }
+              value={config[spec.key as "persona" | "concurrency"]}
               onChange={(next) => setConfig({ ...config, [spec.key]: next })}
             />
           ))}
         </div>
+      </section>
+      <section className="panel">
+        <h2>网页搜索</h2>
+        <FieldForm
+          value={config.web_search}
+          fields={WEB_SEARCH_FIELDS}
+          onChange={(web_search) => setConfig({ ...config, web_search })}
+        />
+        <h3>
+          {
+            { tavily: "Tavily", serpapi: "SerpAPI", deepseek: "DeepSeek" }[
+              config.web_search.provider
+            ]
+          }{" "}
+          配置
+        </h3>
+        <FieldForm
+          key={config.web_search.provider}
+          value={config.web_search[config.web_search.provider]}
+          fields={WEB_SEARCH_PROVIDER_FIELDS[config.web_search.provider]}
+          onChange={(provider) =>
+            setConfig({
+              ...config,
+              web_search: {
+                ...config.web_search,
+                [config.web_search.provider]: provider,
+              },
+            })
+          }
+        />
+      </section>
+      <section className="panel">
+        <h2>消息合并</h2>
+        <FieldForm
+          value={config.policy}
+          fields={MESSAGE_MERGE_FIELDS}
+          onChange={(policy) => setConfig({ ...config, policy })}
+        />
       </section>
       <section className="panel">
         <h2>称呼与唤起</h2>
