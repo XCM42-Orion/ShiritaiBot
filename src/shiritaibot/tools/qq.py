@@ -37,9 +37,10 @@ def session_dir(home: Path, kind: str, session: str) -> Path:
 
 
 def owner_only(ctx: Context) -> None:
-    # Acting as the bot account is the owner's capability, never a chat member's.
-    if not ctx.owner or ctx.mode != "agent" or ctx.group:
-        raise PublicError("仅限主人 Agent 操作 QQ 账号")
+    # Acting as the bot account is the owner's capability, never a chat member's. Groups
+    # qualify only once their session policy runs in Agent mode; per-tool policy still applies.
+    if not ctx.owner or ctx.mode != "agent":
+        raise PublicError("仅限主人在 Agent 模式下操作 QQ 账号")
 
 
 def qq_tools(app) -> list[Tool]:

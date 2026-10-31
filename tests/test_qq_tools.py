@@ -50,6 +50,22 @@ async def test_qq_tools_are_owner_agent_only(app, bot, ctx):
     assert bot.calls == []
 
 
+async def test_owner_may_use_qq_tools_in_an_agent_mode_group(app, bot):
+    from shiritaibot.config import SessionPolicy
+
+    bot.replies["get_group_list"] = [{"group_id": 9, "group_name": "G", "member_count": 3}]
+    app.config.value.policy.sessions["group:qq:9"] = SessionPolicy(
+        mode="agent", tools={"qq_group_list": "allow"}
+    )
+    owner = app.permissions.context(Context("group:qq:9", "1", "chat", True, True))
+    member = app.permissions.context(Context("group:qq:9", "2", "chat", False, True))
+    assert await run(app, "qq_group_list", {}, owner) == [
+        {"group_id": 9, "name": "G", "members": 3}
+    ]
+    assert "error" in await run(app, "qq_group_list", {}, member)
+    assert bot.calls == [("get_group_list", {})]
+
+
 async def test_send_message_builds_segments_and_records_group_context(app, bot):
     app.config.value.group_context.enabled = True
     result = await run(

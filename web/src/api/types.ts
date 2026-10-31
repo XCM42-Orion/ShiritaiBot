@@ -153,6 +153,10 @@ export interface Policy {
   denied_tools: string[];
   scope_tools: Record<string, string[]>;
   approval_timeout: number;
+  approval_allow_threshold: number;
+  approval_deny_threshold: number;
+  approval_on_deny: "deny" | "fallback";
+  approval_on_unsure: "deny" | "fallback";
   shell_command: string[];
   max_steps: number;
   max_turn_seconds: number;

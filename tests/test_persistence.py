@@ -170,6 +170,45 @@ async def test_routine_delete_tool_removes_and_stops_reminders(app):
     assert "不存在" in again["error"]
 
 
+async def test_finished_routines_are_hidden_then_pruned(app):
+    from shiritaibot.routine import KEEP_FINISHED
+
+    for task in app.tasks:
+        task.cancel()
+    await asyncio.gather(*app.tasks, return_exceptions=True)
+    long_ago = now() - timedelta(days=60)
+    todo = await app.routine.create(RoutineItem(kind="todo", title="还没做", due=long_ago))
+    done = await app.routine.create(RoutineItem(kind="todo", title="做完了"))
+    await app.routine.create(
+        RoutineItem(kind="reminder", title="已提醒", due=now() - timedelta(seconds=1))
+    )
+    await app.routine.create(RoutineItem(kind="event", title="旧组会", due=long_ago))
+    soon = await app.routine.create(
+        RoutineItem(kind="event", title="明天组会", due=now() + timedelta(days=1))
+    )
+    await app.routine.tick()
+    marked = await routine_tool(app, "routine_update", {"id": done["id"], "status": "completed"})
+    assert marked["status"] == "completed"
+
+    def titles(rows):
+        return {row["title"] for row in rows}
+
+    assert titles(await routine_tool(app, "routine_list", {})) == {"还没做", "旧组会", "明天组会"}
+    assert len(await routine_tool(app, "routine_list", {"include_finished": True})) == 5
+
+    # Recently finished items survive; only those finished past the window go.
+    assert await app.routine.prune(now().timestamp()) == 1  # the event ended 60 days ago
+    stamp = now().timestamp() + KEEP_FINISHED + 60
+    assert await app.routine.prune(stamp) == 2  # the completed todo and the fired reminder
+    # The overdue open todo and the upcoming event stay.
+    assert {row["id"] for row in await app.store.list("routine")} == {todo["id"], soon["id"]}
+
+
+async def test_routine_update_status_reports_missing_items(app):
+    result = await routine_tool(app, "routine_update", {"id": "missing", "status": "cancelled"})
+    assert "不存在" in result["error"]
+
+
 async def test_routine_edit_tools_need_approval_and_stay_out_of_chat(app):
     owner = Context("web:owner", "owner", "agent", True)
     group = Context("group:a:1", "owner", "agent", True, True)

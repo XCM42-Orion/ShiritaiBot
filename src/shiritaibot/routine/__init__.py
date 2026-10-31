@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import json
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,10 @@ from shiritaibot.core.logs import brief, get_logger
 log = get_logger("日程")
 
 KINDS = {"todo": "待办", "event": "日程", "reminder": "提醒", "job": "定时任务"}
+FINISHED = ("completed", "cancelled", "fired")
+DAY = 86400
+# Finished items and past events stay visible this long, then are deleted automatically.
+KEEP_FINISHED = 30 * DAY
 
 
 class RoutineItem(Model):
@@ -57,6 +62,7 @@ class RoutineManager:
     def __init__(self, store, emit):
         self.store, self.emit = store, emit
         self.wake = asyncio.Event()
+        self.pruned = 0.0
 
     async def create(self, item: RoutineItem) -> dict:
         key = uid()
@@ -130,6 +136,32 @@ class RoutineManager:
         self.wake.set()
         return {"deleted": key, "kind": row["kind"], "title": row["title"]}
 
+    async def prune(self, stamp: float) -> int:
+        """Delete items finished (or, for events, ended) more than KEEP_FINISHED ago.
+
+        Open todos are never pruned, however overdue: they still need doing.
+        """
+        stale = []
+        for record in await self.store.query(
+            "SELECT id, data, updated FROM records WHERE kind='routine'"
+        ):
+            row = json.loads(record["data"])
+            if row["status"] in FINISHED:
+                finished = record["updated"]
+            elif row["kind"] == "event" and row.get("due"):
+                finished = datetime.fromisoformat(row.get("end") or row["due"]).timestamp()
+            else:
+                continue
+            if finished < stamp - KEEP_FINISHED:
+                stale.append(record["id"])
+        if stale:
+            marks = ",".join("?" * len(stale))
+            await self.store.execute(
+                f"DELETE FROM records WHERE kind='routine' AND id IN ({marks})", tuple(stale)
+            )
+            log.log(f"自动清理 {len(stale)} 条结束超过 {KEEP_FINISHED // DAY} 天的日程")
+        return len(stale)
+
     async def tick(self) -> float:
         heap = [
             (r["next_fire"], r["id"], r)
@@ -172,6 +204,10 @@ class RoutineManager:
         while True:
             self.wake.clear()
             try:
+                stamp = now().timestamp()
+                if stamp - self.pruned >= DAY:
+                    self.pruned = stamp
+                    await self.prune(stamp)
                 delay = await self.tick()
             except Exception as exc:
                 log.error(f"日程调度出错（{type(exc).__name__}），5 秒后重试", exc=exc)

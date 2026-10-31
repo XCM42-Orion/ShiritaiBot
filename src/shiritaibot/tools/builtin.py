@@ -12,7 +12,7 @@ from shiritaibot.adapters.onebot11 import qq_download_url
 from shiritaibot.core import PublicError, Tool, now
 from shiritaibot.core.process import run_process
 from shiritaibot.memory.tools import memory_tools
-from shiritaibot.routine import RoutineItem
+from shiritaibot.routine import FINISHED, KEEP_FINISHED, RoutineItem
 from shiritaibot.tools import TEXT, schema
 from shiritaibot.tools.qq import qq_tools, session_dir
 
@@ -136,13 +136,22 @@ async def register_builtin(app) -> None:
         return await app.short_term.recent(args.get("query", ""), args.get("limit", 10))
 
     async def routine_list(ctx, args):
-        return await app.store.list("routine", scope="owner")
+        statuses = ("open", "scheduled") + (FINISHED if args.get("include_finished") else ())
+        return await app.store.with_status("routine", statuses, limit=1000)
 
     async def routine_create(ctx, args):
         return await app.routine.create(RoutineItem.model_validate(args))
 
     async def routine_update(ctx, args):
-        return await app.routine.update(args["id"], {k: v for k, v in args.items() if k != "id"})
+        changes = {k: v for k, v in args.items() if k not in {"id", "status"}}
+        if "status" not in args:
+            return await app.routine.update(args["id"], changes)
+        if changes:
+            await app.routine.update(args["id"], changes)
+        try:
+            return await app.routine.update_status(args["id"], args["status"])
+        except ValueError:
+            raise PublicError("日程不存在或已删除") from None
 
     async def routine_delete(ctx, args):
         return await app.routine.delete(args["id"])
@@ -288,7 +297,12 @@ async def register_builtin(app) -> None:
             risk="safe",
         ),
         Tool(
-            "routine_list", "查看日程、待办、提醒和定时任务", schema({}), routine_list, risk="safe"
+            "routine_list",
+            "查看日程、待办、提醒和定时任务。默认只列出未结束的；include_finished 为 true 时"
+            f"也列出已完成、已取消和已触发的（结束 {KEEP_FINISHED // 86400} 天后自动清理）。",
+            schema({"include_finished": {"type": "boolean"}}),
+            routine_list,
+            risk="safe",
         ),
         Tool(
             "routine_create",
@@ -300,7 +314,8 @@ async def register_builtin(app) -> None:
         Tool(
             "routine_update",
             "修改已有的待办、日程、提醒或定时任务（id 来自 routine_list），只传要改的字段；"
-            "类型不能修改。时间必须带时区；修改提醒或定时任务的时间会重新排程。",
+            "类型不能修改。时间必须带时区；修改提醒或定时任务的时间会重新排程。"
+            "status 设为 completed / cancelled 可标记完成或取消，之后不再提醒。",
             schema(
                 {
                     "id": TEXT,
@@ -309,6 +324,7 @@ async def register_builtin(app) -> None:
                     "end": {"type": ["string", "null"], "format": "date-time"},
                     "cron": {"type": "string", "maxLength": 200},
                     "timezone": {"type": "string", "maxLength": 64},
+                    "status": {"type": "string", "enum": ["completed", "cancelled"]},
                 },
                 ["id"],
             ),

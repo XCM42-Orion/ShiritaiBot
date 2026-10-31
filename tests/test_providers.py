@@ -243,17 +243,32 @@ def test_legacy_approval_model_becomes_the_approval_route():
         Settings(providers=providers, models=models, policy={"approval_model": "missing"})
 
 
+YES = '{"allow":true,"reason":"文本模型复核通过"}'
+NO = '{"allow":false,"reason":"文本模型复核拒绝"}'
+
+
 @pytest.mark.parametrize(
-    ("allow", "text_reply", "approved", "reviewer"),
+    ("allow", "policy", "text_reply", "approved", "reviewer"),
     [
-        (0.95, None, True, "Jev"),  # confident Jev verdict is final
-        (0.03, None, False, "Jev"),
-        (0.6, '{"allow":true,"reason":"文本模型复核通过"}', True, "文本模型"),
-        (0.6, None, False, "none"),  # unsure Jev and no text model: never approve alone
+        (0.95, {}, YES, True, "Jev"),  # a confident approval is final
+        (0.03, {}, YES, True, "文本模型"),  # by default a denial gets a second opinion
+        (0.03, {"approval_on_deny": "deny"}, YES, False, "Jev"),
+        # Below the deny threshold a denial is only unsure, which still falls back.
+        (
+            0.05,
+            {"approval_on_deny": "deny", "approval_deny_threshold": 0.97},
+            YES,
+            True,
+            "文本模型",
+        ),
+        (0.6, {}, YES, True, "文本模型"),
+        (0.6, {"approval_on_unsure": "deny"}, YES, False, "Jev"),
+        (0.85, {"approval_allow_threshold": 0.9}, NO, False, "文本模型"),
+        (0.6, {}, None, False, "none"),  # unsure Jev and no text model: never approve alone
     ],
 )
 async def test_auto_approval_uses_jev_then_falls_back_to_text(
-    app, allow, text_reply, approved, reviewer
+    app, allow, policy, text_reply, approved, reviewer
 ):
     from shiritaibot.core import Context, Tool
     from shiritaibot.tools import schema
@@ -284,6 +299,8 @@ async def test_auto_approval_uses_jev_then_falls_back_to_text(
         effects.append(args)
         return {"ok": True}
 
+    for key, value in policy.items():
+        setattr(app.config.value.policy, key, value)
     app.config.value.policy.owner_default.tools["reviewed"] = "auto"
     app.registry.add(
         Tool("reviewed", "", schema({"v": {"type": "integer"}}), run, risk="dangerous")
@@ -291,13 +308,15 @@ async def test_auto_approval_uses_jev_then_falls_back_to_text(
     owner = Context("web:owner", "owner", "agent", True)
     result = json.loads(await app.registry.execute(owner, "reviewed", {"v": 1}))
     assert bool(result.get("ok")) is approved and len(effects) == int(approved)
-    assert seen == (["jev", "text"] if text_reply else ["jev"])
+    assert seen == (["jev", "text"] if reviewer == "文本模型" else ["jev"])
     row = (await app.store.list("approval"))[0]
     assert row["status"] == ("approved" if approved else "denied")
     if reviewer == "Jev":
         assert "Jev" in row["reason"]
     elif reviewer == "文本模型":
-        assert row["reason"] == "文本模型复核通过"
+        assert row["reason"] == ("文本模型复核通过" if approved else "文本模型复核拒绝")
+    else:
+        assert "文本模型" in row["reason"]  # tells the owner what the route is missing
 
 
 @pytest.mark.parametrize(("chat", "expected"), [(0.8, "agent_chat"), (0.55, "agent")])

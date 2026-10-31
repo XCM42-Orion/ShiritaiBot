@@ -199,6 +199,12 @@ class Policy(Model):
     # All matching scope restrictions intersect; there is no scope grant override.
     scope_tools: dict[str, list[str]] = Field(default_factory=dict)
     approval_timeout: int = Field(default=600, ge=1, le=3600)
+    # Jev in the approval route: a verdict counts only at these probabilities. A denial or
+    # an unsure verdict either stops the call or hands over to the route's text models.
+    approval_allow_threshold: float = Field(default=0.8, ge=0.5, le=1)
+    approval_deny_threshold: float = Field(default=0.9, ge=0.5, le=1)
+    approval_on_deny: Literal["deny", "fallback"] = "fallback"
+    approval_on_unsure: Literal["deny", "fallback"] = "fallback"
     # Accepted for old configuration files; Shell now follows per-tool permissions.
     shell_enabled: bool = Field(default=False, exclude=True)
     shell_command: list[str] = Field(

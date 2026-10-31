@@ -349,7 +349,8 @@ export function ApprovalsPage({
         <h2>审批与执行设置</h2>
         <p className="muted">
           自动审批模型在“模型与服务 → 工具自动审批模型”路由中设置，可配置备用模型和
-          Jev 判断模型；拒绝、超时或返回无效时均不执行。
+          Jev 判断模型；Jev 拒绝或把握不足时可交给路由里的文本模型复核。最终拒绝、
+          超时或返回无效时均不执行。
         </p>
         <div className="field-grid">
           {POLICY_FIELDS.filter((spec) => spec.key !== "denied_tools").map(
