@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -459,5 +459,10 @@ def create_app(
 
     dist = Path(__file__).resolve().parents[3] / "web" / "dist"
     if dist.is_dir():
+
+        @api.get("/token", include_in_schema=False)
+        async def login():
+            return FileResponse(dist / "index.html")
+
         api.mount("/", StaticFiles(directory=dist, html=True), name="webui")
     return api

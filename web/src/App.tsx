@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "./api/client";
 import type { ApiClient } from "./api/client";
@@ -35,14 +41,55 @@ export function App() {
 }
 
 function ConsoleApp() {
+  const [linkToken, setLinkToken] = useState(() =>
+    location.pathname === "/token"
+      ? new URLSearchParams(location.hash.slice(1)).get("token")
+      : null,
+  );
   const [token, setToken] = useState<string | null>(() =>
-    sessionStorage.getItem(TOKEN_KEY),
+    linkToken ? null : sessionStorage.getItem(TOKEN_KEY),
   );
   const [page, navigate] = useHashRoute();
   const { succeed, fail, dismiss } = useNotice();
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
+
+  const authenticate = useCallback(
+    (next: string) => {
+      dismiss();
+      sessionStorage.setItem(TOKEN_KEY, next);
+      setToken(next);
+    },
+    [dismiss],
+  );
+
+  useLayoutEffect(() => {
+    if (location.pathname === "/token") {
+      history.replaceState(history.state, "", "/");
+      if (linkToken) sessionStorage.removeItem(TOKEN_KEY);
+    }
+  }, [linkToken]);
+
+  useEffect(() => {
+    if (!linkToken) return;
+    let active = true;
+    void createClient(() => linkToken)
+      .health()
+      .then(() => {
+        if (active) authenticate(linkToken);
+      })
+      .catch((error: unknown) => {
+        if (active)
+          fail(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (active) setLinkToken(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [linkToken, authenticate, fail]);
 
   const client: ApiClient | null = useMemo(
     () => (token ? createClient(() => token) : null),
@@ -135,11 +182,8 @@ function ConsoleApp() {
   if (!client) {
     return (
       <LoginView
-        onAuthenticated={(next) => {
-          dismiss();
-          sessionStorage.setItem(TOKEN_KEY, next);
-          setToken(next);
-        }}
+        authenticating={Boolean(linkToken)}
+        onAuthenticated={authenticate}
         onError={fail}
       />
     );

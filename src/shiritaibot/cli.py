@@ -1,11 +1,36 @@
+import logging
+from copy import copy, deepcopy
 from pathlib import Path
+from urllib.parse import urlencode
 
 import typer
 import uvicorn
+from uvicorn.config import LOGGING_CONFIG
+from uvicorn.logging import DefaultFormatter
 
 from shiritaibot.web import create_app, ensure_token
 
 cli = typer.Typer(help="ShiritaiBot · Personal agent runtime")
+
+
+class LoginLinkFormatter(DefaultFormatter):
+    """Add the sign-in link only to terminal output, not shared log records."""
+
+    def __init__(self, *, token: str, **kwargs):
+        super().__init__(**kwargs)
+        self.token = token
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        prefix, suffix = "Uvicorn running on ", " (Press CTRL+C to quit)"
+        if record.name == "uvicorn.error" and message.startswith(prefix + "http"):
+            address = message.removeprefix(prefix).removesuffix(suffix)
+            record = copy(record)
+            record.msg = f"{prefix}{address}/token#{urlencode({'token': self.token})}{suffix}"
+            record.args = ()
+            record.message = record.getMessage()
+            record.__dict__["color_message"] = record.message
+        return super().formatMessage(record)
 
 
 @cli.command()
@@ -21,20 +46,32 @@ def run(
     ),
 ):
     """Run the local control plane and configured adapters."""
-    ensure_token(home)
-    typer.echo(f"WebUI: http://127.0.0.1:{port} · 管理令牌文件: {home.resolve() / 'web.token'}")
+    home = home.resolve()
+    admin_token = ensure_token(home)
+    log_config = deepcopy(LOGGING_CONFIG)
+    log_config["formatters"]["default"].update({"()": LoginLinkFormatter, "token": admin_token})
     uvicorn.run(
-        create_app(home.resolve(), allowed_hosts=allowed_host, log_level=log_level),
+        create_app(home, token=admin_token, allowed_hosts=allowed_host, log_level=log_level),
         host="127.0.0.1",
         port=port,
         access_log=False,
+        log_config=log_config,
     )
 
 
 @cli.command()
 def token(home: Path = Path("data")):
     """Display the local admin token for signing into WebUI."""
-    typer.echo(ensure_token(home.resolve()))
+    path = home.resolve() / "web.token"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise typer.BadParameter(
+            f"无法读取管理令牌：{path}（{error.strerror}）。请使用启动时的 --home 目录。"
+        ) from error
+    if not value:
+        raise typer.BadParameter(f"管理令牌文件为空：{path}")
+    typer.echo(value)
 
 
 @cli.command()

@@ -6,6 +6,14 @@
 
 ## 启动
 
+官网的「一键部署」入口会按系统提供可复制命令。已有源码时也可运行
+`bash scripts/install.sh`；Windows 使用
+`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1`。
+脚本会准备运行环境、构建后台并启动服务，数据单独保存在安装目录的 `data/`。
+目录、端口和只安装选项见 [脚本说明](scripts/README.md)。
+
+### 手动启动
+
 需要 Python 3.12+、uv、Node.js 20.19+（本机验证使用 Python 3.13、Node 24）。在项目根目录：
 
 ```powershell
@@ -15,11 +23,16 @@ npm --prefix web run build
 uv run shiritaibot run
 ```
 
-访问 `http://127.0.0.1:8765`。另开终端执行下面的命令取得管理令牌，在登录页面粘贴；不要把令牌发到聊天或提交到 Git。
+启动完成后，点击 `Uvicorn running on` 后的完整登录链接，自动进入控制台。链接形如 `http://127.0.0.1:8765/token#token=…`；登录后地址栏会清除令牌。该链接只在终端显示，不写入运行日志文件。
+
+也可以直接访问 `http://127.0.0.1:8765`，在项目根目录运行下面的命令取得令牌，再手动粘贴到登录页面。使用自定义数据目录时，追加对应的 `--home <目录>`。
 
 ```powershell
 uv run shiritaibot token
 ```
+
+一键安装版使用安装输出中的 `start.sh token` / `start.ps1 -Token` 命令。
+macOS / Linux 的快捷入口在 PATH 中时，也可以直接运行 `shiritaibot token`。
 
 默认不连接外部账号、不调用付费模型，Shell 和主动性引擎关闭。可以用 `uv run shiritaibot run --home <目录> --port 8765` 选择数据目录，`--log-level debug` 查看更详细的运行日志（默认 info）。运行日志同时以彩色输出到终端、写入 `<目录>/logs/shiritaibot.log`，并在 WebUI「日志 → 运行日志」实时展示。仅监听本机；远程使用可通过 SSH 端口转发。
 
