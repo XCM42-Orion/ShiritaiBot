@@ -72,9 +72,8 @@ shutil.copyfile(fixtures / source, output)
 import json, os, sys
 with open(os.environ['SHIRITAI_TEST_LOG'], 'a') as f:
     f.write(json.dumps(['uv'] + sys.argv[1:]) + '\\n')
-if os.environ.get('UV_DEFAULT_INDEX'):
-    f.write(json.dumps(['uv-index', os.environ['UV_DEFAULT_INDEX']]) + '\\n')
-    f.flush()
+    if os.environ.get('UV_DEFAULT_INDEX'):
+        f.write(json.dumps(['uv-index', os.environ['UV_DEFAULT_INDEX']]) + '\\n')
 if sys.argv[1:] == ['--version']:
     print('uv fixture')
 elif sys.argv[1] == 'sync' and os.environ.get('SHIRITAI_TEST_UV_FAILURE'):
