@@ -28,6 +28,7 @@ export interface FieldSpec {
   optionLabels?: Record<string, string>;
   min?: number;
   max?: number;
+  step?: number;
   full?: boolean;
 }
 
@@ -225,6 +226,38 @@ export const POLICY_FIELDS: FieldSpec[] = [
     kind: "number",
     min: 1,
     max: 3600,
+  },
+  {
+    key: "approval_allow_threshold",
+    label: "Jev 批准阈值",
+    kind: "number",
+    min: 0.5,
+    max: 1,
+    step: 0.01,
+    help: "Jev 判定批准的概率达到此值才直接放行，否则按“把握不足时”处理。",
+  },
+  {
+    key: "approval_deny_threshold",
+    label: "Jev 拒绝阈值",
+    kind: "number",
+    min: 0.5,
+    max: 1,
+    step: 0.01,
+    help: "Jev 判定拒绝的概率达到此值才算明确拒绝，否则视为把握不足。",
+  },
+  {
+    key: "approval_on_deny",
+    label: "Jev 明确拒绝时",
+    kind: "select",
+    options: ["fallback", "deny"],
+    optionLabels: { fallback: "交给文本模型复核", deny: "直接拒绝" },
+  },
+  {
+    key: "approval_on_unsure",
+    label: "Jev 把握不足时",
+    kind: "select",
+    options: ["fallback", "deny"],
+    optionLabels: { fallback: "交给文本模型复核", deny: "直接拒绝" },
   },
   { key: "max_steps", label: "每轮步数上限", kind: "number", min: 1, max: 100 },
   {

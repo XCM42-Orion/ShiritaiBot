@@ -43,6 +43,7 @@ function NumberInput({
       type="number"
       min={spec.min}
       max={spec.max}
+      step={spec.step}
       value={text}
       onChange={(event) => {
         const raw = event.target.value;
@@ -125,7 +126,7 @@ function Control({
       >
         {(spec.options ?? []).map((option) => (
           <option key={option} value={option}>
-            {option}
+            {spec.optionLabels?.[option] ?? option}
           </option>
         ))}
       </select>

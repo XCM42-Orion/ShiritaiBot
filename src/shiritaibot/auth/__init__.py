@@ -20,8 +20,6 @@ if TYPE_CHECKING:
     from shiritaibot.llm import ProviderManager
 
 log = get_logger("审批")
-# A decision model's verdict is final only at this probability; otherwise text models review.
-APPROVAL_DECISION_THRESHOLD = 0.8
 
 
 class Review(Model):
@@ -224,6 +222,8 @@ class Permissions:
             body.update(status="cancelled", reason="审批已取消")
             await self.store.put("approval", key, body, ctx.session)
             raise
+        except PublicError as exc:
+            body.update(status="denied", reason=f"自动审批失败：{exc}，未执行")
         except Exception:
             body.update(status="denied", reason="自动审批失败、超时或返回格式无效，未执行")
         await self.store.put("approval", key, body, ctx.session)
@@ -238,7 +238,8 @@ class Permissions:
     async def decision_review(self, request: dict, cfg) -> Review | None:
         """Jev-style decision models in the approval route; None hands over to text models.
 
-        Only a confident verdict is final, so an unsure decision model never approves alone.
+        Only an approval at the allow threshold is final, so an unsure decision model never
+        approves alone; denials and unsure verdicts follow approval_on_deny / _on_unsure.
         """
         assert self.llm is not None
         answers = await self.llm.decide(
@@ -269,14 +270,17 @@ class Permissions:
         except (KeyError, TypeError, ValueError, AttributeError):
             log.warning("决策模型返回的审批结果不完整，改用文本模型")
             return None
-        if max(allow, deny) < APPROVAL_DECISION_THRESHOLD:
-            log.debug(f"决策模型审批不确定（批准概率 {allow:.2f}），改用文本模型")
+        policy = cfg.policy
+        if allow >= policy.approval_allow_threshold and allow >= deny:
+            return Review(allow=True, reason=f"决策模型（Jev）判定批准（批准概率 {allow:.2f}）")
+        if deny >= policy.approval_deny_threshold:
+            verdict, action = "拒绝", policy.approval_on_deny
+        else:
+            verdict, action = "不确定", policy.approval_on_unsure
+        if action == "fallback":
+            log.log(f"决策模型审批{verdict}（批准概率 {allow:.2f}），交给文本模型复核")
             return None
-        return Review(
-            allow=allow > deny,
-            reason=f"决策模型（Jev）判定{'批准' if allow > deny else '拒绝'}"
-            f"（批准概率 {allow:.2f}）",
-        )
+        return Review(allow=False, reason=f"决策模型（Jev）判定{verdict}（批准概率 {allow:.2f}）")
 
     async def text_review(self, request: dict, cfg) -> Review:
         assert self.llm is not None
