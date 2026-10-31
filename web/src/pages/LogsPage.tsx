@@ -257,7 +257,7 @@ export function LogsPage({ client, act }: PageProps) {
   const [tab, setTab] = useState<Tab>("runtime");
   return (
     <section className="panel">
-      <div className="panel-head">
+      <div className="panel-head logs-head">
         <h2>
           {tab === "runtime"
             ? "运行日志"
