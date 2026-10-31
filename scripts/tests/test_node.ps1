@@ -59,3 +59,4 @@ try {
     $env:PATH = $originalPath
     Remove-Item -LiteralPath $scratch -Recurse -Force
 }
+exit 0

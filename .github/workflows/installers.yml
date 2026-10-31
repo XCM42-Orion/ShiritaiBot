@@ -16,20 +16,30 @@ jobs:
       - run: bash -n scripts/install.sh
       - run: python3 -m unittest discover -s scripts/tests -v
 
-  windows:
+  windows-powershell:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Test Node discovery and native arguments
-        shell: ${{ matrix.shell }}
+        shell: powershell
         run: ./scripts/tests/test_node.ps1
       - name: Test installer with real Node and npm
-        shell: ${{ matrix.shell }}
+        shell: powershell
+        run: ./scripts/tests/test_windows_install.ps1
+
+  windows-pwsh:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Test Node discovery and native arguments
+        shell: pwsh
+        run: ./scripts/tests/test_node.ps1
+      - name: Test installer with real Node and npm
+        shell: pwsh
         run: ./scripts/tests/test_windows_install.ps1

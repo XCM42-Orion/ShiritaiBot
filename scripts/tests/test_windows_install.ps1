@@ -23,6 +23,7 @@ public class UvFixture {
         return 0;
     }
 }
+exit 0
 '@)
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     & $compiler /nologo /target:exe ("/out:" + (Join-Path $tools 'uv.exe')) $uvSource
