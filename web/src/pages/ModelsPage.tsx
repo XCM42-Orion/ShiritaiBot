@@ -40,12 +40,17 @@ const ROUTES: { key: string; label: string; help: string }[] = [
   {
     key: "light",
     label: "主动事件分诊与摘要模型",
-    help: "做什么：为外部事件评估重要性；每轮短期记忆摘要、上下文压缩和自动审批也使用此路由。适合：便宜快速的模型；可把 Jev 放在最前面做分诊，但摘要等需要生成文本，请再添加一个文本模型。",
+    help: "做什么：为外部事件评估重要性；每轮短期记忆摘要和上下文压缩也使用此路由，自动审批路由留空时同样使用。适合：便宜快速的模型；可把 Jev 放在最前面做分诊，但摘要等需要生成文本，请再添加一个文本模型。",
   },
   {
     key: "memory",
     label: "记忆模型",
     help: "做什么：后台从私聊和外部事件中抽取人物、事实、事件，判断证据是否支持、是否同一人、新旧事实关系。不直接回复主人，不阻塞对话。适合：中文理解好、能稳定输出 JSON、价格适中的文本模型（抽错会长期留在记忆里，准确比快重要）；Jev 等判断模型可放在文本模型之前，失败时自动改用文本模型。留空时使用分诊与摘要模型。",
+  },
+  {
+    key: "approval",
+    label: "工具自动审批模型",
+    help: "做什么：权限为“模型自动审批”的工具调用前，独立审查工具、完整参数与用户请求，决定批准或拒绝。不调用工具。适合：判断严谨、能稳定输出 JSON 的文本模型；Jev 等判断模型可放在文本模型之前，只有把握足够时直接采用，否则改用后面的文本模型。全部失败、超时或返回无效时拒绝执行。留空时使用分诊与摘要模型。",
   },
   {
     key: "embedding",
@@ -55,7 +60,7 @@ const ROUTES: { key: string; label: string; help: string }[] = [
 ];
 
 // Decision models (systemone) classify only, so they fit just these routes.
-const DECISION_ROUTES = ["router", "light", "memory"];
+const DECISION_ROUTES = ["router", "light", "memory", "approval"];
 const EMBEDDING_PROTOCOLS: Protocol[] = [
   "chat_completions",
   "responses",
@@ -76,7 +81,15 @@ const CATEGORIES: {
   {
     key: "text",
     label: "语言模型",
-    routes: ["chat", "agent", "agent_chat", "router", "light", "memory"],
+    routes: [
+      "chat",
+      "agent",
+      "agent_chat",
+      "router",
+      "light",
+      "memory",
+      "approval",
+    ],
     protocols: TEXT_PROTOCOLS,
   },
   {
@@ -95,7 +108,7 @@ const CATEGORIES: {
 const INTRO: Record<Category, string> = {
   text: "生成文本、调用工具的模型。",
   decision:
-    "Jev 等判断模型（systemone 协议）只做分类和打分，不生成文本，只能用于分流、分诊和记忆路由；判断失败时改用同一路由里的文本模型。",
+    "Jev 等判断模型（systemone 协议）只做分类和打分，不生成文本，只能用于分流、分诊、记忆和自动审批路由；判断失败时改用同一路由里的文本模型。",
   embedding:
     "为长期记忆计算向量的模型，支持 OpenAI 兼容 /embeddings 与 Gemini 接口；可以复用语言模型的提供商。",
 };
@@ -160,15 +173,6 @@ export function ModelsPage({
           ? { ...model, provider: patch.id }
           : model,
       ),
-      policy:
-        patch.enabled === false &&
-        config.models.some(
-          (model) =>
-            model.provider === provider.id &&
-            model.id === config.policy.approval_model,
-        )
-          ? { ...config.policy, approval_model: "" }
-          : config.policy,
     });
   }
 
@@ -225,14 +229,6 @@ export function ModelsPage({
       models: config.models.map((model, itemIndex) =>
         itemIndex === position ? { ...model, ...patch } : model,
       ),
-      policy:
-        config.policy.approval_model === old.id
-          ? {
-              ...config.policy,
-              approval_model:
-                patch.enabled === false ? "" : String(patch.id ?? old.id),
-            }
-          : config.policy,
     });
   }
 
@@ -474,9 +470,6 @@ export function ModelsPage({
                         (model) => !ids.includes(model.id),
                       ),
                       routes: routesWithout(ids),
-                      policy: ids.includes(config.policy.approval_model)
-                        ? { ...config.policy, approval_model: "" }
-                        : config.policy,
                     });
                   }}
                 >
@@ -606,10 +599,6 @@ export function ModelsPage({
                                 (_, itemIndex) => itemIndex !== position,
                               ),
                               routes: routesWithout([model.id]),
-                              policy:
-                                config.policy.approval_model === model.id
-                                  ? { ...config.policy, approval_model: "" }
-                                  : config.policy,
                             })
                           }
                         >

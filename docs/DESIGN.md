@@ -469,7 +469,7 @@ Proactive Loop 不按其临时会话 ID 配置。`policy.proactive_default = {pr
 ### 5.4 人工与模型审批
 
 - `manual` 对本次具体工具和参数创建一次性审批记录，绑定会话、Turn 和参数哈希，通过主人私聊及 WebUI 展示。Owner 的 Chat 私聊也可执行审批命令。批准前不运行 handler；拒绝、超时、取消、重放均不能执行。
-- `auto` 使用独立、无工具的模型调用审查具体工具、完整参数及用户请求，不由执行任务的模型自行声称已获批准。`policy.approval_model` 可指定专用模型，缺省使用 `light` 路由。只接受严格 JSON 布尔结果和原因；模型不可用、超时、输出无效一律拒绝。
+- `auto` 使用独立、无工具的模型调用审查具体工具、完整参数及用户请求，不由执行任务的模型自行声称已获批准。审批模型是独立的 `approval` 路由，和其他路由一样按顺序回退，留空时使用 `light` 路由；路由里的 Jev 等决策模型先判断，批准或拒绝的概率达到 0.8 才直接采用，否则交给同一路由的文本模型。文本模型只接受严格 JSON 布尔结果和原因；模型不可用、超时、输出无效一律拒绝。旧配置的 `policy.approval_model` 加载时迁移为该路由的首选模型。
 - 两类审批均持久化结果；模型审批还记录原因和 `reviewer=model`。人工审批不能接管正在进行的自动审批。等待审批期间工具被禁用或会话改为 Chat，即使审批通过也不再执行。
 - WebUI 的 **工具与权限** 页提供 Main 会话选择、Chat / Agent 模式、四个预设、逐工具权限、默认策略、待人工审批和模型审批记录。`/tools` 列出全部工具和当前权限；Owner 可用 `/tools <tool> deny|manual|auto|allow|inherit`、`/tools preset <preset>`、`/mode agent|chat`、`/tools reset` 修改当前 Main 会话。
 

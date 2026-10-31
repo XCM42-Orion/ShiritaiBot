@@ -186,7 +186,8 @@ class Policy(Model):
     group_default: SessionPolicy = Field(default_factory=lambda: SessionPolicy(mode="chat"))
     sessions: dict[str, SessionPolicy] = Field(default_factory=dict)
     proactive_default: ToolPolicy = Field(default_factory=ToolPolicy)
-    approval_model: str = ""
+    # Accepted for old configuration files; migrated into routes["approval"] on load.
+    approval_model: str = Field(default="", exclude=True)
     denied_tools: list[str] = Field(default_factory=list)
     # All matching scope restrictions intersect; there is no scope grant override.
     scope_tools: dict[str, list[str]] = Field(default_factory=dict)
@@ -251,9 +252,18 @@ class ProactiveConfig(Model):
         return value
 
 
-ROUTE_KEYS = ("chat", "agent", "agent_chat", "router", "light", "memory", "embedding")
+ROUTE_KEYS = (
+    "chat",
+    "agent",
+    "agent_chat",
+    "router",
+    "light",
+    "memory",
+    "approval",
+    "embedding",
+)
 # Routes whose callers can use a decision model; other candidates still serve text calls.
-DECISION_ROUTES = ("router", "light", "memory")
+DECISION_ROUTES = ("router", "light", "memory", "approval")
 # Protocols with an embeddings endpoint (OpenAI-compatible /embeddings or Gemini).
 EMBEDDING_PROTOCOLS = ("chat_completions", "responses", "gemini")
 
@@ -263,7 +273,8 @@ class Settings(Model):
     models: list[ModelConfig] = Field(default_factory=list)
     # chat: Chat 默认；agent: Agent Work（长程任务，含 Main/Proactive Loop）；
     # agent_chat: Agent 模式日常对话；router: Work/Chat 分流；light: 主动事件分诊；
-    # memory: 记忆抽取与判断（空则用 light）；embedding: 记忆向量。
+    # memory: 记忆抽取与判断（空则用 light）；approval: 工具自动审批（空则用 light）；
+    # embedding: 记忆向量。
     routes: dict[str, list[str]] = Field(default_factory=lambda: {k: [] for k in ROUTE_KEYS})
     # When off, every Agent-mode turn uses the Agent Work route.
     agent_split: bool = False
@@ -284,6 +295,19 @@ class Settings(Model):
     context: ContextConfig = Field(default_factory=ContextConfig)
     group_context: GroupContextConfig = Field(default_factory=GroupContextConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_approval_model(cls, data):
+        # Old configs named one approval model; it becomes the approval route's primary.
+        if isinstance(data, dict):
+            policy = data.get("policy")
+            model = policy.get("approval_model") if isinstance(policy, dict) else None
+            routes = data.get("routes")
+            routes = routes if isinstance(routes, dict) else {}
+            if model and not routes.get("approval"):
+                data = {**data, "routes": {**routes, "approval": [model]}}
+        return data
 
     @field_validator("routes")
     @classmethod
@@ -366,8 +390,8 @@ class Settings(Model):
             for p in self.providers
         ):
             raise ValueError("embedding models need an OpenAI-compatible or Gemini provider")
-        if {self.context.compression_model, self.policy.approval_model} & (decision | embedding):
-            raise ValueError("compression and approval models must generate text")
+        if self.context.compression_model in decision | embedding:
+            raise ValueError("compression models must generate text")
         if self.default_persona and not any(
             p.id == self.default_persona and p.enabled for p in self.personas
         ):
@@ -379,13 +403,6 @@ class Settings(Model):
             for m in self.models
         ):
             raise ValueError("compression_model references unknown or disabled model/provider")
-        if self.policy.approval_model and not any(
-            m.id == self.policy.approval_model
-            and m.enabled
-            and any(p.id == m.provider and p.enabled for p in self.providers)
-            for m in self.models
-        ):
-            raise ValueError("approval_model references unknown or disabled model/provider")
         if self.private_require_keyword and not self.wake_keywords:
             raise ValueError("private keyword activation requires at least one wake keyword")
         for a in self.adapters:

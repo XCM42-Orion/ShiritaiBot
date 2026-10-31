@@ -233,6 +233,9 @@ async def test_auto_review_is_independent_strict_and_audited(app, response, appr
     calls, effects = [], []
 
     class Reviewer:
+        async def decide(self, *args, **kwargs):
+            return None  # no decision model in the route
+
         async def complete(self, route, system, messages, tools, settings):
             calls.append((route, system, messages, tools, settings))
             if response is None:
@@ -245,7 +248,7 @@ async def test_auto_review_is_independent_strict_and_audited(app, response, appr
 
     app.permissions.llm = Reviewer()
     app.config.value.policy.owner_default.tools["reviewed_action"] = "auto"
-    app.config.value.policy.approval_model = "review-model"
+    app.config.value.routes["approval"] = ["review-model", "backup-model"]
     app.registry.add(
         Tool(
             "reviewed_action",
@@ -264,7 +267,7 @@ async def test_auto_review_is_independent_strict_and_audited(app, response, appr
     assert row["status"] == ("approved" if approved else "denied")
     assert row["args"] == {"value": "exact"} and row["reason"]
     assert calls[0][0] == "approval" and calls[0][3] == []
-    assert calls[0][4].routes["approval"] == ["review-model"]
+    assert calls[0][4].routes["approval"] == ["review-model", "backup-model"]
     assert "请执行指定操作" in calls[0][2][0]["content"]
     assert not app.permissions.pending
     with pytest.raises(PublicError):
@@ -278,6 +281,9 @@ async def test_auto_approval_cancellation_and_revocation_do_not_execute(app):
     effects = []
 
     class Reviewer:
+        async def decide(self, *args, **kwargs):
+            return None
+
         async def complete(self, *args, **kwargs):
             entered.set()
             await release.wait()

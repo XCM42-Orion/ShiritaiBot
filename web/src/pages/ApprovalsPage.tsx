@@ -347,34 +347,10 @@ export function ApprovalsPage({
       </section>
       <section className="panel">
         <h2>审批与执行设置</h2>
-        <label className="field">
-          自动审批模型
-          <select
-            value={policy.approval_model}
-            onChange={(event) =>
-              setConfig({
-                ...config,
-                policy: { ...policy, approval_model: event.target.value },
-              })
-            }
-          >
-            <option value="">使用 light 路由</option>
-            {config.models
-              .filter(
-                (model) =>
-                  model.enabled &&
-                  config.providers.some(
-                    (p) => p.id === model.provider && p.enabled,
-                  ),
-              )
-              .map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.id}
-                </option>
-              ))}
-          </select>
-          <small>独立审查具体工具参数；拒绝、超时或返回无效时均不执行。</small>
-        </label>
+        <p className="muted">
+          自动审批模型在“模型与服务 → 工具自动审批模型”路由中设置，可配置备用模型和
+          Jev 判断模型；拒绝、超时或返回无效时均不执行。
+        </p>
         <div className="field-grid">
           {POLICY_FIELDS.filter((spec) => spec.key !== "denied_tools").map(
             (spec) => (
