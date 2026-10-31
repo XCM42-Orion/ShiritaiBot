@@ -193,3 +193,62 @@ async def test_group_invite_sends_share_card(app, bot):
             "message": [{"type": "json", "data": {"data": '{"app":"com.tencent.contact.lua"}'}}],
         },
     )
+
+
+@pytest.mark.parametrize("group", [False, True])
+async def test_image_only_message_starts_a_turn_with_downloadable_ref(app, bot, group):
+    submitted = []
+
+    class Runtime:
+        async def submit(self, ctx, text):
+            submitted.append((ctx, text))
+            return "queued"
+
+    app.adapters.runtime = Runtime()
+    bot.config.groups = ["9"]
+    image = {
+        "type": "image",
+        "data": {"file": "a.jpg", "url": "https://multimedia.nt.qq.com.cn/download?id=1"},
+    }
+    message = [image]
+    if group:
+        message = [{"type": "at", "data": {"qq": "100"}}, image]
+    event = {
+        "post_type": "message",
+        "message_type": "group" if group else "private",
+        "user_id": 1,
+        "message_id": 7,
+        "message": message,
+        **({"group_id": 9} if group else {}),
+    }
+    await app.adapters.receive(bot, event)
+    assert len(submitted) == 1
+    ctx, text = submitted[0]
+    assert ctx.session == ("group:qq:9" if group else "private:qq:1")
+    assert ctx.mode == ("chat" if group else "agent")
+    ref = text.split("引用 ")[1].split(":")[0]
+    row = await app.store.get("qq_file", ref)
+    assert row["scope"] == ctx.session and row["data"]["url"].startswith("https://")
+    assert text.startswith("[QQ 图片引用 ") and "a.jpg" in text
+
+
+async def test_image_without_url_still_starts_a_turn(app, bot):
+    submitted = []
+
+    class Runtime:
+        async def submit(self, ctx, text):
+            submitted.append(text)
+            return "queued"
+
+    app.adapters.runtime = Runtime()
+    await app.adapters.receive(
+        bot,
+        {
+            "post_type": "message",
+            "message_type": "private",
+            "user_id": 1,
+            "message_id": 8,
+            "message": [{"type": "image", "data": {"file": "b.jpg"}}],
+        },
+    )
+    assert submitted == ["[QQ 图片，协议端未提供下载地址]"]

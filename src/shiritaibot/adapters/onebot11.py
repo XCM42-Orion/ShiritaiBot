@@ -293,10 +293,20 @@ class AdapterHub:
             if part.get("type") == "file":
                 ref = await file_ref(self.store, cfg.id, target if group else "", data, session)
                 text += f"\n[QQ 文件引用 {ref}: {data.get('name', 'file')}]"
+            elif part.get("type") in {"image", "video"}:
+                # Media-only messages must still start a turn; the CDN link becomes a
+                # session-bound ref that qq_file_download can fetch.
+                label = "图片" if part["type"] == "image" else "视频"
+                if data.get("url"):
+                    ref = await file_ref(self.store, cfg.id, target if group else "", data, session)
+                    text += f"\n[QQ {label}引用 {ref}: {data.get('file') or label}]"
+                else:
+                    text += f"\n[QQ {label}，协议端未提供下载地址]"
             elif part.get("type") == "forward" and data.get("id"):
                 text += f"\n[QQ 合并转发 {data['id']}]"
             elif part.get("type") == "reply" and data.get("id"):
                 text = f"[引用 QQ 消息 {data['id']}] " + text
+        text = text.strip()
         if text:
             owner = user == cfg.owner_id
             await self.runtime.submit(
