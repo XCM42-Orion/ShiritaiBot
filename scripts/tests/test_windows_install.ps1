@@ -23,7 +23,6 @@ public class UvFixture {
         return 0;
     }
 }
-exit 0
 '@)
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     & $compiler /nologo /target:exe ("/out:" + (Join-Path $tools 'uv.exe')) $uvSource
@@ -102,3 +101,4 @@ exit 0
     Remove-Variable ShiritaiInstallerFixture -Scope Global -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $scratch -Recurse -Force
 }
+exit 0
