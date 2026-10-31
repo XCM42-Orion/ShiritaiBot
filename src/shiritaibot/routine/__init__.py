@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from pydantic import AwareDatetime, Field, model_validator
 
-from shiritaibot.core import ExternalEvent, Model, now, uid
+from shiritaibot.core import ExternalEvent, Model, PublicError, now, uid
 from shiritaibot.core.logs import brief, get_logger
 
 log = get_logger("日程")
@@ -36,6 +36,23 @@ class RoutineItem(Model):
         return self
 
 
+# Fields a routine_update call may change; kind is fixed once created.
+EDITABLE = ("title", "due", "end", "cron", "timezone")
+
+
+def schedule(item: RoutineItem) -> float | None:
+    """Next fire time: reminders at their due time, jobs at the next cron match."""
+    if item.kind == "reminder" and item.due:
+        return item.due.timestamp()
+    if item.kind == "job":
+        return (
+            croniter(item.cron, now().astimezone(ZoneInfo(item.timezone)))
+            .get_next(datetime)
+            .timestamp()
+        )
+    return None
+
+
 class RoutineManager:
     def __init__(self, store, emit):
         self.store, self.emit = store, emit
@@ -43,13 +60,7 @@ class RoutineManager:
 
     async def create(self, item: RoutineItem) -> dict:
         key = uid()
-        next_fire = item.due.timestamp() if item.kind == "reminder" and item.due else None
-        if item.kind == "job":
-            next_fire = (
-                croniter(item.cron, now().astimezone(ZoneInfo(item.timezone)))
-                .get_next(datetime)
-                .timestamp()
-            )
+        next_fire = schedule(item)
         body = {
             **item.model_dump(mode="json"),
             "status": "scheduled" if next_fire else "open",
@@ -80,6 +91,44 @@ class RoutineManager:
         )
         self.wake.set()
         return await self.store.put("routine", key, row, "owner")
+
+    async def update(self, key: str, changes: dict) -> dict:
+        """Edit an item in place. Changing the time of a reminder or job reschedules it,
+        unless it was completed or cancelled."""
+        row = await self.store.get("routine", key)
+        if not row:
+            raise PublicError("日程不存在或已删除")
+        if not changes or set(changes) - set(EDITABLE):
+            raise PublicError("只能修改 " + "、".join(EDITABLE))
+        current = {field: row.get(field) for field in ("kind", *EDITABLE)}
+        try:
+            item = RoutineItem.model_validate({**current, **changes})
+        except ValueError:
+            raise PublicError(
+                "修改后的日程无效：时间须带时区，结束须晚于开始，定时任务须为五段 cron"
+            ) from None
+        row.update({k: v for k, v in item.model_dump(mode="json").items() if k in EDITABLE})
+        if {"due", "cron", "timezone"} & set(changes) and row["status"] not in {
+            "completed",
+            "cancelled",
+        }:
+            next_fire = schedule(item)
+            row.update(status="scheduled" if next_fire else "open", next_fire=next_fire)
+        log.log(
+            f"修改{KINDS.get(row['kind'], row['kind'])}「{brief(row['title'], 60)}」："
+            + "、".join(sorted(changes))
+        )
+        self.wake.set()
+        return await self.store.put("routine", key, row, "owner")
+
+    async def delete(self, key: str) -> dict:
+        row = await self.store.get("routine", key)
+        if not row:
+            raise PublicError("日程不存在或已删除")
+        await self.store.delete("routine", key)
+        log.log(f"删除{KINDS.get(row['kind'], row['kind'])}「{brief(row['title'], 60)}」")
+        self.wake.set()
+        return {"deleted": key, "kind": row["kind"], "title": row["title"]}
 
     async def tick(self) -> float:
         heap = [

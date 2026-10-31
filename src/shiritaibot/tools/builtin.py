@@ -141,6 +141,12 @@ async def register_builtin(app) -> None:
     async def routine_create(ctx, args):
         return await app.routine.create(RoutineItem.model_validate(args))
 
+    async def routine_update(ctx, args):
+        return await app.routine.update(args["id"], {k: v for k, v in args.items() if k != "id"})
+
+    async def routine_delete(ctx, args):
+        return await app.routine.delete(args["id"])
+
     async def subagent_instances(ctx, args):
         return app.subagents.instances()
 
@@ -300,6 +306,32 @@ async def register_builtin(app) -> None:
             RoutineItem.model_json_schema(),
             routine_create,
             risk="normal",
+        ),
+        Tool(
+            "routine_update",
+            "修改已有的待办、日程、提醒或定时任务（id 来自 routine_list），只传要改的字段；"
+            "类型不能修改。时间必须带时区；修改提醒或定时任务的时间会重新排程。",
+            schema(
+                {
+                    "id": TEXT,
+                    "title": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    "due": {"type": ["string", "null"], "format": "date-time"},
+                    "end": {"type": ["string", "null"], "format": "date-time"},
+                    "cron": {"type": "string", "maxLength": 200},
+                    "timezone": {"type": "string", "maxLength": 64},
+                },
+                ["id"],
+            ),
+            routine_update,
+            risk="normal",
+        ),
+        Tool(
+            "routine_delete",
+            "删除一条待办、日程、提醒或定时任务（id 来自 routine_list），删除后不可恢复，"
+            "也不会再提醒；只想标记完成时不要删除。",
+            schema({"id": TEXT}, ["id"]),
+            routine_delete,
+            risk="dangerous",
         ),
         Tool(
             "subagent_instances",
