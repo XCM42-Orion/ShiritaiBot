@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import deque
 from pathlib import Path
 from typing import Callable
 
@@ -22,6 +23,16 @@ UNATTENDED = (
     "或因权限不足无法继续时，才先完成能做的部分，然后在最终回复的最后一行单独写："
     f"{NEEDS_INPUT} <你需要的回答或权限>，再结束。收到回复后会在同一会话中继续。"
 )
+
+
+# Stdout retained by run_process. NDJSON kinds lose nothing important past this, since their
+# events are parsed as they stream. claude_code prints one JSON object at the very end, so no
+# prefix or suffix of it is parseable: it gets a limit far above any realistic reply instead.
+OUTPUT_LIMIT = 256000
+OUTPUT_LIMITS = {"claude_code": 16 * 1024 * 1024}
+STREAMED = {"codex", "deepseek_harness"}
+RESULT_LIMIT = 16000
+TEXT_LIMIT = 256000
 
 
 def command_for(config, workspace: Path, resume: str | None = None) -> list[str]:
@@ -137,15 +148,111 @@ def denial(tool: str, detail) -> str:
     return f"{tool}({brief(str(target), 120)})" if target else tool
 
 
-def parse_output(kind: str, stdout: str) -> dict:
-    """Extract result text, native session ID, error flag and permission denials."""
-    out = {"result": stdout, "native": None, "error": False, "denied": []}
-    if kind == "claude_code":
+class OutputParser:
+    """Extract result text, native session ID, error flag and permission denials.
+
+    NDJSON kinds (STREAMED) take every line through feed() while the process runs, because
+    their final events sit at the tail of the stream, past what run_process retains. The rest
+    are parsed from the retained stdout in finish().
+    """
+
+    def __init__(self, kind: str):
+        self.kind = kind
+        self.out = {"result": "", "native": None, "error": False, "denied": []}
+        # Whether finish() found real result text rather than falling back to raw stdout.
+        self.complete = kind not in {*STREAMED, "claude_code"}
+        self.texts: deque[str] = deque()
+        self.text_size = 0
+        self.calls: dict = {}
+        self.final: dict | None = None
+        self.failure = ""
+
+    def add_text(self, text) -> None:
+        if not isinstance(text, str):
+            return
+        self.texts.append(text)
+        self.text_size += len(text)
+        # Long runs narrate a lot; only the latest text can reach the stored result.
+        while self.text_size > TEXT_LIMIT and len(self.texts) > 1:
+            self.text_size -= len(self.texts.popleft())
+
+    def feed(self, line: bytes | str) -> None:
+        if isinstance(line, bytes):
+            line = line.decode("utf-8", errors="replace")
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            return
+        if not isinstance(obj, dict):
+            return
+        if self.kind == "codex":
+            self.feed_codex(obj)
+        elif self.kind == "deepseek_harness":
+            self.feed_deepseek(obj)
+
+    def feed_codex(self, obj: dict) -> None:
+        out = self.out
+        out["native"] = obj.get("thread_id", out["native"])
+        item = obj.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            self.add_text(item.get("text", ""))
+        if obj.get("type") in {"turn.failed", "error"}:
+            out["error"] = True
+            error = obj.get("error")
+            message = error.get("message") if isinstance(error, dict) else obj.get("message")
+            self.failure = str(message or self.failure)
+
+    def feed_deepseek(self, obj: dict) -> None:
+        # NDJSON from `dsh headless --json`: session ... final (or error without final).
+        out = self.out
+        event = obj.get("type")
+        if event == "session":
+            out["native"] = obj.get("sessionId") or out["native"]
+        elif event == "text":
+            self.add_text(obj.get("text", ""))
+        elif event == "tool_call":
+            self.calls[obj.get("callId")] = denial(obj.get("tool", "?"), obj.get("input"))
+        elif event == "tool_result":
+            call = self.calls.pop(obj.get("callId"), "?")
+            if isinstance(obj.get("error"), dict):
+                code = str(obj["error"].get("code", "")).upper()
+                if any(word in code for word in DSH_DENIAL):
+                    out["denied"].append(call)
+        elif event == "error":
+            out["error"] = True
+            self.add_text(obj.get("message", ""))
+        elif event == "final":
+            self.final = obj
+            out["native"] = obj.get("sessionId") or out["native"]
+
+    def finish(self, stdout: str) -> dict:
+        out = self.out
+        out["result"] = stdout
+        if self.kind == "claude_code":
+            self.finish_claude(stdout)
+        elif self.kind == "codex":
+            self.finish_text("\n".join(self.texts) or self.failure, stdout)
+        elif self.kind == "deepseek_harness":
+            final = self.final or {}
+            reason = final.get("reason")
+            kind = reason.get("kind") if isinstance(reason, dict) else None
+            out["error"] = out["error"] or kind != "completed"
+            texts = "\n".join(t for t in self.texts if t)
+            self.finish_text(final.get("text") or texts, stdout)
+        return out
+
+    def finish_text(self, text: str, stdout: str) -> None:
+        self.out["result"] = text or stdout
+        self.complete = bool(text)
+
+    def finish_claude(self, stdout: str) -> None:
+        out = self.out
         try:
             obj = json.loads(stdout)
         except ValueError:
-            return out
+            return
         if isinstance(obj, dict):
+            self.complete = True
             out.update(
                 result=obj.get("result") or stdout,
                 native=obj.get("session_id"),
@@ -155,56 +262,25 @@ def parse_output(kind: str, stdout: str) -> dict:
                 if isinstance(denied, dict):
                     tool = denied.get("tool_name", "?")
                     out["denied"].append(denial(tool, denied.get("tool_input") or {}))
-    elif kind == "codex":
-        texts = []
-        for line in stdout.splitlines():
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(obj, dict):
-                continue
-            out["native"] = obj.get("thread_id", out["native"])
-            item = obj.get("item") or {}
-            if item.get("type") == "agent_message":
-                texts.append(item.get("text", ""))
-            if obj.get("type") in {"turn.failed", "error"}:
-                out["error"] = True
-        out["result"] = "\n".join(texts) or stdout
-    elif kind == "deepseek_harness":
-        # NDJSON from `dsh headless --json`: session ... final (or error without final).
-        texts, calls, final = [], {}, None
-        for line in stdout.splitlines():
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(obj, dict):
-                continue
-            event = obj.get("type")
-            if event == "session":
-                out["native"] = obj.get("sessionId") or out["native"]
-            elif event == "text":
-                texts.append(obj.get("text", ""))
-            elif event == "tool_call":
-                calls[obj.get("callId")] = (obj.get("tool", "?"), obj.get("input"))
-            elif event == "tool_result" and isinstance(obj.get("error"), dict):
-                code = str(obj["error"].get("code", "")).upper()
-                if any(word in code for word in DSH_DENIAL):
-                    out["denied"].append(denial(*calls.get(obj.get("callId"), ("?", None))))
-            elif event == "error":
-                out["error"] = True
-                texts.append(obj.get("message", ""))
-            elif event == "final":
-                final = obj
-                out["native"] = obj.get("sessionId") or out["native"]
-        if final is not None:
-            reason = final.get("reason") or {}
-            out["error"] = out["error"] or reason.get("kind") != "completed"
-        else:
-            out["error"] = True
-        out["result"] = (final or {}).get("text") or "\n".join(t for t in texts if t) or stdout
-    return out
+
+
+def parse_output(kind: str, stdout: str) -> dict:
+    """Parse a complete stdout in one go."""
+    parser = OutputParser(kind)
+    if kind in STREAMED:
+        # Not splitlines(): JSON strings may hold raw line separators such as U+2028.
+        for line in stdout.split("\n"):
+            parser.feed(line)
+    return parser.finish(stdout)
+
+
+def clip(text: str, limit: int = RESULT_LIMIT) -> str:
+    """Shorten text to limit, keeping both ends: the final message is at the tail."""
+    if len(text) <= limit:
+        return text
+    head = limit // 4
+    marker = "\n\n[中间内容已省略]\n\n"
+    return text[:head] + marker + text[-(limit - head - len(marker)) :]
 
 
 def question_in(text: str) -> str | None:
@@ -311,15 +387,24 @@ class SubagentManager:
                 else:
                     # Resumed runs already saw the plugin notes in their native session.
                     stdin = prompt + ("" if resume else self.notes()) + UNATTENDED
+                parser = OutputParser(config.kind)
+                limit = OUTPUT_LIMITS.get(config.kind, OUTPUT_LIMIT)
                 result = await run_process(
                     command_for(config, workspace, resume),
                     workspace,
                     stdin,
                     config.timeout,
                     env=self.env(),
-                    limit=256000,
+                    limit=limit,
+                    on_line=parser.feed if config.kind in STREAMED else None,
                 )
-                parsed = parse_output(config.kind, result["stdout"])
+                parsed = parser.finish(result["stdout"])
+                notice = ""
+                if result["truncated"]:
+                    notice = f"\n\n[输出截断] 子进程输出超过 {limit} 字节，超出部分已丢弃，以上结果可能不完整。"
+                    if not parser.complete:
+                        # A raw prefix of events is not a result, and exit code 0 proves nothing.
+                        parsed.update(error=True, result="子进程输出过长，未能取得最终结果。")
                 failed = result["exit_code"] != 0 or parsed["error"]
                 summary = parsed["result"]
                 question = None if config.kind == "generic" else question_in(summary)
@@ -334,7 +419,8 @@ class SubagentManager:
                     else "failed"
                     if failed
                     else "completed",
-                    result=summary[:16000],
+                    # After question_in, and clipped so that the notice cannot be cut off.
+                    result=clip(summary, RESULT_LIMIT - len(notice)) + notice,
                     native_session_id=parsed["native"] or row.get("native_session_id"),
                     exit_code=1
                     if parsed["error"] and not result["exit_code"]

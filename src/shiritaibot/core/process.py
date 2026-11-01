@@ -5,10 +5,14 @@ import os
 import shutil
 import signal
 from pathlib import Path
+from typing import Callable
 
 import psutil
 
 from shiritaibot.core import PublicError
+
+# Longest stdout line handed to on_line; anything longer is dropped, which also bounds memory.
+LINE_LIMIT = 4 * 1024 * 1024
 
 
 def resolve_command(command: list[str]) -> list[str]:
@@ -52,6 +56,30 @@ async def kill_tree(proc: asyncio.subprocess.Process) -> None:
     await proc.wait()
 
 
+def line_splitter(on_line: Callable[[bytes], None]) -> Callable[[bytes], None]:
+    """Reassemble chunks into newline-separated lines; an empty chunk flushes the last line."""
+    pending = bytearray()
+    oversized = False
+
+    def feed(chunk: bytes) -> None:
+        nonlocal oversized
+        *lines, rest = chunk.split(b"\n")
+        for line in lines:
+            pending.extend(line)
+            if not oversized and len(pending) <= LINE_LIMIT:
+                on_line(bytes(pending))
+            pending.clear()
+            oversized = False
+        pending.extend(rest)
+        if not chunk and pending and not oversized and len(pending) <= LINE_LIMIT:
+            on_line(bytes(pending))
+        if len(pending) > LINE_LIMIT:
+            pending.clear()
+            oversized = True
+
+    return feed
+
+
 async def run_process(
     command: list[str],
     cwd: Path,
@@ -59,7 +87,13 @@ async def run_process(
     timeout: float = 60,  # noqa: ASYNC109 -- owns process cleanup on timeout
     env: dict[str, str] | None = None,
     limit: int = 64000,
+    on_line: Callable[[bytes], None] | None = None,
 ) -> dict:
+    """Run a command, keeping the first `limit` bytes of stdout and stderr.
+
+    `on_line` sees every stdout line as it arrives, including those past `limit`, so callers
+    can pick out events from the tail of a long stream. Lines over LINE_LIMIT are skipped.
+    """
     argv = await asyncio.to_thread(resolve_command, command)
     proc = await asyncio.create_subprocess_exec(
         *argv,
@@ -72,12 +106,16 @@ async def run_process(
         start_new_session=os.name != "nt",
     )
 
-    async def read(stream) -> tuple[str, bool]:
+    async def read(stream, sink: Callable[[bytes], None] | None = None) -> tuple[str, bool]:
         output = bytearray()
         size = 0
         while chunk := await stream.read(8192):
             size += len(chunk)
             output.extend(chunk[: max(0, limit - len(output))])
+            if sink:
+                sink(chunk)
+        if sink:
+            sink(b"")
         return output.decode("utf-8", errors="replace"), size > limit
 
     async def feed() -> None:
@@ -92,7 +130,9 @@ async def run_process(
     try:
         async with asyncio.timeout(timeout):
             async with asyncio.TaskGroup() as group:
-                stdout = group.create_task(read(proc.stdout))
+                stdout = group.create_task(
+                    read(proc.stdout, line_splitter(on_line) if on_line else None)
+                )
                 stderr = group.create_task(read(proc.stderr))
                 group.create_task(feed())
                 await proc.wait()

@@ -142,6 +142,22 @@ async def test_process_bounds_output_and_cancels(tmp_path):
     assert not marker.exists()
 
 
+async def test_process_streams_lines_past_the_limit(tmp_path):
+    script = """
+import sys
+sys.stdout.write("a" * 20000 + "\\n")
+sys.stdout.write("b" * (5 * 1024 * 1024) + "\\n")
+sys.stdout.write("after\\nlast")
+"""
+    lines = []
+    result = await run_process(
+        [sys.executable, "-c", script], tmp_path, limit=100, on_line=lines.append
+    )
+    assert result["truncated"] and len(result["stdout"]) == 100
+    # Spans read chunks, skips the oversized line, and flushes a last line without newline.
+    assert lines == [b"a" * 20000, b"after", b"last"]
+
+
 def test_subagent_arguments_never_disable_sandbox():
     for kind in ["codex", "claude_code"]:
         config = SubagentConfig(id="a", kind=kind)
