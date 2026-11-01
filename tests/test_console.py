@@ -233,6 +233,7 @@ async def test_statistics_per_model_cache_rate_and_cost(app):
     assert by_model["unpriced"]["cost"] is None and by_model["gone"]["cost"] is None
     assert result["costs"] == {"USD": pytest.approx(priced["cost"]), "CNY": pytest.approx(1.0)}
     assert result["models"][0]["model"] == "cny"
+    assert result["buckets"][-1]["models"]["priced"] == 1900
 
 
 async def test_discovery_reads_listed_pricing(app):

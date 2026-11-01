@@ -75,6 +75,7 @@ async def statistics(store, hours: int, end: datetime | None = None, models=()):
         {
             "hour": datetime.fromtimestamp(hour * 3600, timezone.utc).isoformat(),
             **dict.fromkeys(fields, 0),
+            "models": {},
         }
         for hour in range(first, last + 1)
     ]
@@ -94,9 +95,11 @@ async def statistics(store, hours: int, end: datetime | None = None, models=()):
                 {"model": name, "llm_calls": 0, **dict.fromkeys(TOKEN_FIELDS, 0)},
             )
             entry["llm_calls"] += 1
-            for key, value in tokens(data.get("usage") or {}, data.get("protocol", "")).items():
+            counted = tokens(data.get("usage") or {}, data.get("protocol", ""))
+            for key, value in counted.items():
                 bucket[key] += value
                 entry[key] += value
+            bucket["models"][name] = bucket["models"].get(name, 0) + counted["total_tokens"]
         elif data.get("status") == "failed":
             bucket["failed_turns"] += 1
     rows = await store.query(

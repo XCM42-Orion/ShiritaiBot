@@ -98,9 +98,62 @@ const HOUR_RANGES = [
 ] as const;
 
 interface Series {
-  key: keyof TokenBucket;
+  key: string;
   label: string;
   color: string;
+  value: (row: TokenBucket) => number;
+}
+
+// Validated categorical order (dataviz palette); a 9th model folds into "其他".
+const MODEL_COLORS = [
+  "#2a78d6",
+  "#eb6834",
+  "#1baf7a",
+  "#eda100",
+  "#e87ba4",
+  "#008300",
+  "#6250d6",
+  "#e34948",
+];
+const OTHER_COLOR = "#9aa3b2";
+
+/**
+ * One stacked series per model. Slots follow the configured model order, not
+ * token rank, so a model keeps its color as usage shifts.
+ */
+function modelSeries(rows: TokenBucket[], configured: string[]): Series[] {
+  const present = new Set(rows.flatMap((row) => Object.keys(row.models ?? {})));
+  const position = (name: string) => {
+    const index = configured.indexOf(name);
+    return index < 0 ? configured.length : index;
+  };
+  const names = [...present].sort(
+    (a, b) => position(a) - position(b) || a.localeCompare(b),
+  );
+  const own =
+    names.length > MODEL_COLORS.length
+      ? names.slice(0, MODEL_COLORS.length - 1)
+      : names;
+  const rest = names.slice(own.length);
+  const series: Series[] = own.map((name, index) => ({
+    key: "model:" + name,
+    label: name || "（未知模型）",
+    color: MODEL_COLORS[index],
+    value: (row) => row.models?.[name] ?? 0,
+  }));
+  if (rest.length)
+    series.push({
+      key: "other",
+      label: `其他（${rest.length} 个）`,
+      color: OTHER_COLOR,
+      value: (row) =>
+        rest.reduce((sum, name) => sum + (row.models?.[name] ?? 0), 0),
+    });
+  return series;
+}
+
+function field(key: keyof Omit<TokenBucket, "hour" | "models">) {
+  return (row: TokenBucket) => row[key];
 }
 
 function HourlyChart({
@@ -116,7 +169,7 @@ function HourlyChart({
   const maximum = Math.max(
     1,
     ...rows.map((row) =>
-      series.reduce((sum, item) => sum + Number(row[item.key]), 0),
+      series.reduce((sum, item) => sum + item.value(row), 0),
     ),
   );
   const width = 900;
@@ -167,7 +220,7 @@ function HourlyChart({
               tabIndex={0}
               role="img"
               aria-label={`${formatHour(row.hour)} ${series
-                .map((item) => `${item.label} ${row[item.key]}`)
+                .map((item) => `${item.label} ${item.value(row)}`)
                 .join("，")}`}
               onMouseEnter={() => setHover(index)}
               onFocus={() => setHover(index)}
@@ -181,7 +234,7 @@ function HourlyChart({
                 fill={index === hover ? "var(--accent-soft)" : "transparent"}
               />
               {series.map((item) => {
-                const value = (Number(row[item.key]) / maximum) * height;
+                const value = (item.value(row) / maximum) * height;
                 offset += value;
                 return (
                   <rect
@@ -192,6 +245,8 @@ function HourlyChart({
                     height={value}
                     rx={1}
                     fill={item.color}
+                    stroke="var(--panel)"
+                    strokeWidth={1}
                   />
                 );
               })}
@@ -222,11 +277,14 @@ function HourlyChart({
         {selected ? (
           <>
             <strong>{formatHour(selected.hour)} 时</strong>
-            {series.map((item) => (
-              <span key={item.key}>
-                {item.label} {formatNumber(Number(selected[item.key]))}
-              </span>
-            ))}
+            {series
+              .filter((item) => item.value(selected) > 0)
+              .map((item) => (
+                <span key={item.key}>
+                  <i style={{ background: item.color }} aria-hidden="true" />
+                  {item.label} {formatNumber(item.value(selected))}
+                </span>
+              ))}
           </>
         ) : (
           <span className="muted">悬停或用 Tab 选中柱形，查看该小时数据。</span>
@@ -244,6 +302,11 @@ export function Dashboard({ client }: { client: ApiClient }) {
     refetchInterval: 30000,
   });
   const data: Statistics | undefined = query.data;
+  const config = useQuery({
+    queryKey: ["config"],
+    queryFn: () => client.config(),
+  });
+  const configured = (config.data?.models ?? []).map((model) => model.id);
 
   return (
     <section className="dashboard">
@@ -299,20 +362,9 @@ export function Dashboard({ client }: { client: ApiClient }) {
             ))}
           </div>
           <HourlyChart
-            title="Token 用量"
+            title="Token 用量（按模型）"
             rows={data.buckets}
-            series={[
-              {
-                key: "input_tokens",
-                label: "输入",
-                color: "var(--chart-input)",
-              },
-              {
-                key: "output_tokens",
-                label: "输出",
-                color: "var(--chart-output)",
-              },
-            ]}
+            series={modelSeries(data.buckets, configured)}
           />
           <ModelTable rows={data.models ?? []} />
           <HourlyChart
@@ -323,11 +375,13 @@ export function Dashboard({ client }: { client: ApiClient }) {
                 key: "incoming_messages",
                 label: "用户消息",
                 color: "var(--chart-incoming)",
+                value: field("incoming_messages"),
               },
               {
                 key: "outgoing_messages",
                 label: "助手回复",
                 color: "var(--chart-outgoing)",
+                value: field("outgoing_messages"),
               },
             ]}
           />

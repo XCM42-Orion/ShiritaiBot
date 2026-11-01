@@ -869,3 +869,11 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.chart-detail i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 2px;
+}

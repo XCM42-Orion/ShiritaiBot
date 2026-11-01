@@ -798,7 +798,7 @@ it("switches the dashboard between 24, 72 and 168 hours", async () => {
     }),
   } as Partial<ApiClient>);
   render(withQuery(<Dashboard client={client} />));
-  expect(await screen.findByText("Token 用量")).toBeTruthy();
+  expect(await screen.findByText("Token 用量（按模型）")).toBeTruthy();
   const user = userEvent.setup();
   await user.click(screen.getByText("3 天"));
   await waitFor(() => expect(client.stats).toHaveBeenCalledWith(72));
@@ -820,13 +820,23 @@ it("shows per-model tokens, cache hit rate and estimated cost", async () => {
     failed_turns: 0,
   };
   const client = fakeClient({
+    config: vi.fn().mockResolvedValue({
+      ...baseConfig(),
+      models: [{ id: "priced" }, { id: "free" }],
+    }),
     stats: vi.fn().mockResolvedValue({
       hours: 24,
       timezone: "Asia/Shanghai",
       start: "2026-10-26T04:00:00Z",
       end: "2026-10-27T04:00:00Z",
       totals: { ...empty, input_tokens: 2000, cached_tokens: 500 },
-      buckets: [{ hour: "2026-10-27T04:00:00Z", ...empty }],
+      buckets: [
+        {
+          hour: "2026-10-27T04:00:00Z",
+          ...empty,
+          models: { priced: 1300, free: 1000 },
+        },
+      ],
       models: [
         {
           model: "priced",
@@ -856,14 +866,21 @@ it("shows per-model tokens, cache hit rate and estimated cost", async () => {
   } as Partial<ApiClient>);
   render(withQuery(<Dashboard client={client} />));
   expect(await screen.findByText("模型用量")).toBeTruthy();
+  // Chart series follow the configured model order, one color per model.
+  const legend = document.querySelector(".chart-legend")!;
+  await waitFor(() =>
+    expect(
+      [...legend.querySelectorAll("span")].map((el) => el.textContent),
+    ).toEqual(["priced", "free"]),
+  );
   expect(screen.getByText("25.0%")).toBeTruthy();
   expect(screen.getByText("$1.23 + ¥0.50")).toBeTruthy();
-  const row = screen.getByText("priced").closest("tr")!;
+  const row = screen.getByRole("rowheader", { name: "priced" }).closest("tr")!;
   expect(row.textContent).toContain("50.0%");
   expect(row.textContent).toContain("$1.23");
-  expect(screen.getByText("free").closest("tr")!.textContent).toContain(
-    "未设单价",
-  );
+  expect(
+    screen.getByRole("rowheader", { name: "free" }).closest("tr")!.textContent,
+  ).toContain("未设单价");
 });
 
 it("sends a chat message from the composer", async () => {

@@ -284,6 +284,8 @@ export interface TokenBucket {
   outgoing_messages: number;
   messages: number;
   failed_turns: number;
+  // Total tokens per model in this hour.
+  models: Record<string, number>;
 }
 
 export interface Statistics {
@@ -292,7 +294,7 @@ export interface Statistics {
   buckets: TokenBucket[];
   start: string;
   end: string;
-  totals: Omit<TokenBucket, "hour">;
+  totals: Omit<TokenBucket, "hour" | "models">;
   models: ModelUsage[];
   // Estimated spend of priced models, summed per currency.
   costs: Partial<Record<Currency, number>>;
