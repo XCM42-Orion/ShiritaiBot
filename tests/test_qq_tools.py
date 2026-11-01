@@ -6,7 +6,7 @@ import pytest
 from shiritaibot.adapters.onebot11 import OneBot
 from shiritaibot.config import AdapterConfig
 from shiritaibot.core import Context
-from shiritaibot.tools.qq import session_dir
+from shiritaibot.tools.qq import is_sensitive, session_dir
 
 OWNER = Context("private:qq:1", "1", "agent", True)
 
@@ -268,3 +268,46 @@ async def test_image_without_url_still_starts_a_turn(app, bot):
         },
     )
     assert submitted == ["[QQ 图片，协议端未提供下载地址]"]
+
+
+async def test_plugin_data_files_may_be_sent(app, bot):
+    downloads = app.home / "plugin_data" / "thu_learn" / "downloads" / "course"
+    downloads.mkdir(parents=True)
+    (downloads / "hw.pdf").write_bytes(b"pdf")
+    result = await run(
+        app, "qq_file_send", {"target": "private", "id": 2, "path": str(downloads / "hw.pdf")}
+    )
+    assert result["sent"] and result["bytes"] == 3
+    assert bot.calls[-1][1]["name"] == "hw.pdf"
+
+
+async def test_files_outside_roots_get_a_hint(app, bot):
+    (app.home / "elsewhere").mkdir()
+    (app.home / "elsewhere" / "x.txt").write_text("x")
+    path = str(app.home / "elsewhere" / "x.txt")
+    error = (await run(app, "qq_file_send", {"target": "private", "id": 2, "path": path}))["error"]
+    assert "plugin_data" in error and "工作目录" in error
+    assert bot.calls == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["config.toml", "master.key", "web.token", "state.sqlite3", "state.sqlite3-wal", "logs/a.log"],
+)
+def test_framework_internal_files_are_sensitive(tmp_path, name):
+    assert is_sensitive(tmp_path, tmp_path / name)
+    assert not is_sensitive(tmp_path, tmp_path / "plugin_data" / "p" / name)
+    assert not is_sensitive(tmp_path, tmp_path / "workspaces" / "s" / name)
+
+
+async def test_sensitive_files_are_rejected_inside_allowed_roots(app, bot, monkeypatch):
+    # Defense in depth: even if a root ever overlaps the data home, internal files stay put.
+    import shiritaibot.tools.qq as qq
+
+    monkeypatch.setattr(qq, "is_sensitive", lambda home, path: path.name == "secret.txt")
+    workspace = session_dir(app.home, "workspaces", OWNER.session)
+    workspace.mkdir(parents=True)
+    (workspace / "secret.txt").write_text("k")
+    result = await run(app, "qq_file_send", {"target": "private", "id": 2, "path": "secret.txt"})
+    assert result["error"] == "框架内部敏感文件禁止发送"
+    assert bot.calls == []
