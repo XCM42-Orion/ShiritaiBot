@@ -269,6 +269,13 @@ async def test_keyword_activation_and_private_controls(app):
     await receive("小知你好", group=True, target=999)
     await receive("小知你好", user=999)
     assert submit.await_count == 6
+    await receive("今天小知在吗", group=True)
+    assert submit.await_count == 7
+    app.config.value.wake_keyword_mode = "prefix"
+    await receive("今天小知在吗", group=True)
+    assert submit.await_count == 7
+    await receive("小知在吗", group=True)
+    assert submit.await_count == 8 and submit.call_args.args[1] == "在吗"
 
 
 async def test_context_has_no_implicit_200_message_limit_and_steering_is_one_turn(app):

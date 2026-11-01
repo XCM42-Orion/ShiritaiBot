@@ -273,6 +273,7 @@ export interface Settings {
   assistant_name: string;
   owner_name: string;
   wake_keywords: string[];
+  wake_keyword_mode: "contains" | "prefix";
   private_require_keyword: boolean;
   context: ContextConfig;
   group_context: GroupContextConfig;

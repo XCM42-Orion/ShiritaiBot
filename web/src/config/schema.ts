@@ -556,7 +556,18 @@ export const IDENTITY_FIELDS: FieldSpec[] = [
     key: "wake_keywords",
     label: "唤起关键词",
     kind: "list",
-    help: "每行一个，消息中包含任意关键词即可唤起。群聊也可通过 @ 唤起，白名单仍有效。",
+    help: "每行一个，按下方匹配方式唤起。群聊也可通过 @ 唤起，白名单仍有效。",
+  },
+  {
+    key: "wake_keyword_mode",
+    label: "关键词匹配方式",
+    kind: "select",
+    options: ["contains", "prefix"],
+    optionLabels: {
+      contains: "包含即唤起（contains）",
+      prefix: "仅句首唤起（prefix）",
+    },
+    help: "句首匹配时，关键词须出现在消息文本开头；命中后句首关键词会被去掉再交给模型。",
   },
   {
     key: "private_require_keyword",

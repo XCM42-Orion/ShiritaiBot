@@ -98,6 +98,7 @@ function baseConfig(): Settings {
     assistant_name: "ShiritaiBot",
     owner_name: "主人",
     wake_keywords: [],
+    wake_keyword_mode: "contains",
     private_require_keyword: false,
     context: {
       strategy: "discard",

@@ -255,7 +255,10 @@ class AdapterHub:
             s.get("type") == "at" and str(s.get("data", {}).get("qq")) == bot.self_id for s in parts
         )
         settings = self.config.value
-        keyword = any(word in text for word in settings.wake_keywords)
+        if settings.wake_keyword_mode == "prefix":
+            keyword = any(text.startswith(word) for word in settings.wake_keywords)
+        else:
+            keyword = any(word in text for word in settings.wake_keywords)
         message_id = f"{cfg.id}:{event.get('message_id')}"
         where = f"群 {target}" if group else "私聊"
         # Untriggered group chatter is only context, so it stays at debug level.

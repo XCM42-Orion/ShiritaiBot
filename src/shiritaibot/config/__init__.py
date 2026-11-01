@@ -458,6 +458,8 @@ class Settings(Model):
     assistant_name: str = Field(default="ShiritaiBot", min_length=1, max_length=100)
     owner_name: str = Field(default="主人", min_length=1, max_length=100)
     wake_keywords: list[str] = Field(default_factory=list)
+    # contains: 消息中任意位置出现关键词即唤起；prefix: 仅句首出现时唤起。
+    wake_keyword_mode: Literal["contains", "prefix"] = "contains"
     private_require_keyword: bool = False
     context: ContextConfig = Field(default_factory=ContextConfig)
     group_context: GroupContextConfig = Field(default_factory=GroupContextConfig)
