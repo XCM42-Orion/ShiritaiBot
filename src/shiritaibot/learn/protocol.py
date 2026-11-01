@@ -21,6 +21,7 @@ class LearnRequest(Model):
         "homework",
         "files",
         "homework_attachments",
+        "homework_detail",
         "download",
         "download_homework_attachment",
     ]
