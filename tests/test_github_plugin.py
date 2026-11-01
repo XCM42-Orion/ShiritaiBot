@@ -273,3 +273,100 @@ async def test_github_rejects_invalid_proxy(app, monkeypatch):
     with pytest.raises(PublicError, match="代理"):
         await enable_github(app, monkeypatch, proxy="ftp://127.0.0.1:21")
     assert "github" not in app.plugins.loaded
+
+
+CO = "Co-authored-by: ShiritaiBot <shiritaibot@shiritaibot.dev>"
+ADDED = "git -c trailer.co-authored-by.ifexists=addIfDifferent"
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ('git commit -m "x"', f"{ADDED} commit --trailer '{CO}' -m \"x\""),
+        ("cd r && git -C a commit -am x", f"cd r && {ADDED} -C a commit --trailer '{CO}' -am x"),
+        ("FOO=1 git commit", f"FOO=1 {ADDED} commit --trailer '{CO}'"),
+        ("x=$(git commit -m a)", f"x=$({ADDED} commit --trailer '{CO}' -m a)"),
+        (
+            'git commit -m "see git commit"',
+            f"{ADDED} commit --trailer '{CO}' -m \"see git commit\"",
+        ),
+        ('echo "git commit"; git log --grep commit', None),
+        ("git commit-tree HEAD", None),
+        ("# git commit\ngit status", None),
+        (
+            "git commit -F - <<'EOF'\ngit commit\nEOF\ngit status",
+            f"{ADDED} commit --trailer '{CO}' -F - <<'EOF'\ngit commit\nEOF\ngit status",
+        ),
+    ],
+)
+def test_add_commit_trailer_only_touches_git_commit_commands(command, expected):
+    from shiritaibot.plugin.github.main import add_commit_trailer
+
+    assert add_commit_trailer(command) == (expected or command)
+
+
+async def test_github_co_author_is_off_by_default(app, monkeypatch):
+    await enable_github(app, monkeypatch)
+    assert app.plugins.filter_shell("git commit -m x") == "git commit -m x"
+    assert app.subagents.notes() == ""
+
+
+async def test_github_co_author_shell_commits_and_subagent_note(app, monkeypatch):
+    await enable_github(app, monkeypatch, co_author=True)
+    assert CO in app.subagents.notes()
+    script = (
+        "git init -q repo && cd repo && "
+        "git commit -q --allow-empty -m first && "
+        f"git commit -q --allow-empty -m 'second\n\n{CO}\nSigned-off-by: x <x@x>' && "
+        "git log --format=%B"
+    )
+    result = await call(app, "shell", {"command": script})
+    assert result["exit_code"] == 0, result
+    log = result["stdout"]
+    assert log.count(CO) == 2 and "first\n\n" + CO in log
+
+    await app.plugins.reload("github")  # Unchanged settings keep the filter registered once.
+    assert app.plugins.filter_shell("git commit").count("--trailer") == 1
+    app.config.value.plugins[0].enabled = False
+    await app.plugins.reload("github")
+    assert app.plugins.filter_shell("git commit") == "git commit"
+    assert app.subagents.notes() == ""
+
+
+async def test_github_pr_merge_appends_co_author(app, monkeypatch):
+    plugin, fake = await enable_github(app, monkeypatch, co_author=True)
+    merges = []
+
+    def handler(request):
+        path = request.url.path
+        if path == "/repos/shiritai-bot/demo" and request.method == "GET":
+            return httpx.Response(200, json={"full_name": "shiritai-bot/demo",
+                                             "default_branch": "main",
+                                             "owner": {"login": "shiritai-bot"}})  # fmt: skip
+        if path == "/repos/shiritai-bot/demo/pulls/3":
+            return httpx.Response(200, json={"title": "Add x", "body": "body"})
+        if path == "/repos/shiritai-bot/demo/pulls/3/commits":
+            messages = ["feat: a\n\ndetail", "fix: b"]
+            return httpx.Response(200, json=[{"commit": {"message": m}} for m in messages])
+        if path == "/repos/shiritai-bot/demo/pulls/3/merge":
+            merges.append(json.loads(request.content))
+            return httpx.Response(200, json={"merged": True, "sha": "abc"})
+        return fake(request)
+
+    plugin.client = httpx.AsyncClient(
+        base_url="https://api.github.com",
+        headers=dict(plugin.client.headers),
+        transport=httpx.MockTransport(handler),
+    )
+    args = {"action": "pr_merge", "repo": "shiritai-bot/demo", "number": 3}
+    await call(app, "github_publish", args)
+    await call(app, "github_publish", {**args, "merge_method": "merge"})
+    await call(app, "github_publish", {**args, "commit_message": "custom"})
+    rebase = await call(app, "github_publish", {**args, "merge_method": "rebase"})
+    assert [m.get("commit_message") for m in merges] == [
+        f"* feat: a\n\ndetail\n\n* fix: b\n\n{CO}",
+        f"Add x\n\n{CO}",
+        f"custom\n\n{CO}",
+        None,
+    ]
+    assert rebase["co_author"] is False

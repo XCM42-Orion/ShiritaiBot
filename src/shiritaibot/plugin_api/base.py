@@ -27,6 +27,10 @@ class PluginContext:
     workspaces: Path | None = None
     # Non-secret variables for shell and subagent child processes (see set_process_env).
     process_env: dict[str, str] = field(default_factory=dict)
+    # Text appended to new subagent prompts (see add_subagent_note).
+    subagent_notes: list[str] = field(default_factory=list)
+    # Rewriters for shell tool commands (see add_shell_filter).
+    shell_filters: list[Callable[[str], str]] = field(default_factory=list)
     # Colored terminal + rolling file + WebUI feed, tagged with this plugin's id.
     logger: Logger = field(init=False)
 
@@ -74,6 +78,26 @@ class PluginContext:
             if not isinstance(value, str) or "\0" in value:
                 raise ValueError(f"invalid value for environment variable {name}")
         self.process_env.update(env)
+
+    def add_subagent_note(self, text: str) -> None:
+        """Append an instruction to the prompt of every new (non-generic) subagent run.
+
+        Resumed runs already carry it in their native session. Revoked on reload or stop.
+        """
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("subagent note must be non-empty text")
+        self.subagent_notes.append(text.strip())
+
+    def add_shell_filter(self, rewrite: Callable[[str], str]) -> None:
+        """Rewrite each shell tool command after approval, just before it runs.
+
+        ``rewrite(command) -> command`` must be fast, synchronous and side-effect free; it sees
+        the command as approved, so it should only make narrow, predictable additions.
+        Subagents do not use the shell tool and are not affected. Revoked on reload or stop.
+        """
+        if not callable(rewrite):
+            raise ValueError("shell filter must be callable")
+        self.shell_filters.append(rewrite)
 
     def session_workspace(self, session: str) -> Path:
         """The shell tool's working directory for a session."""

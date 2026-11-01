@@ -2,7 +2,9 @@
 
 The token never leaves this process: API calls use it directly, and pushes run git from a
 plugin-owned mirror instead of the model-controlled workspace repository. Shell and subagent
-processes only receive the commit identity (GIT_AUTHOR_* / GIT_COMMITTER_*).
+processes only receive the commit identity (GIT_AUTHOR_* / GIT_COMMITTER_*). With co_author
+enabled, shell `git commit` calls get a Co-authored-by trailer, subagents are asked to add it,
+and pr_merge appends it to the merge commit message.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import asyncio
 import base64
 import os
 import re
+import shlex
 from pathlib import Path
 from urllib.parse import quote
 
@@ -32,6 +35,146 @@ STRS = {"type": "array", "items": STR, "maxItems": 50}
 LIMIT = {"type": "integer", "minimum": 1, "maximum": 100, "description": "返回条数，默认 20"}
 REPO_ARG = {"type": "string", "description": "owner/name"}
 NUMBER = {"type": "integer", "minimum": 1, "description": "Issue 或 PR 编号"}
+
+CO_AUTHOR = "Co-authored-by: ShiritaiBot <shiritaibot@shiritaibot.dev>"
+SUBAGENT_NOTE = (
+    f"[提交署名] 如果本任务需要你创建 git 提交，请在每个提交信息末尾加上 trailer：{CO_AUTHOR}"
+    f'（例如 git commit --trailer "{CO_AUTHOR}" ...）。如果任务明确要求不要提交，忽略本说明。'
+)
+# Global git options that take a separate value (`git -C dir commit`).
+GIT_VALUE_OPTIONS = {
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix",
+}  # fmt: skip
+# Words that may precede a command without being it.
+COMMAND_PREFIXES = {"!", "{", "then", "do", "else", "elif", "if", "while", "until", "time"}
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def add_commit_trailer(command: str, trailer: str = CO_AUTHOR) -> str:
+    """Insert `--trailer <trailer>` after every `git [global options] commit` in a bash command.
+
+    `-c trailer.<key>.ifexists=addIfDifferent` also goes after `git`, so a message that already
+    carries the trailer anywhere is not given a second copy. Only real command words count: text in quotes, comments and heredoc bodies is never
+    touched, and anything the scanner does not understand is left as it is.
+    """
+    key = trailer.partition(":")[0].strip().lower()
+    inserts: list[tuple[int, str]] = []
+    words: list[tuple[str, int]] = []  # Completed words of the current simple command.
+    word: str | None = None
+    skip_target = False  # The next word is a redirection target, not part of the command.
+    heredocs: list[tuple[str, bool]] = []
+    n, i = len(command), 0
+
+    def end_word(pos: int) -> None:
+        nonlocal word, skip_target
+        if word is None:
+            return
+        if skip_target:
+            skip_target = False
+        else:
+            words.append((word, pos))
+            start = 0
+            while start < len(words) and (
+                words[start][0] in COMMAND_PREFIXES or ASSIGNMENT.match(words[start][0])
+            ):
+                start += 1
+            if start < len(words) and words[start][0] == "git":
+                j = start + 1
+                while j < len(words) and words[j][0].startswith("-"):
+                    j += 2 if words[j][0] in GIT_VALUE_OPTIONS else 1
+                if j == len(words) - 1 and words[j][0] == "commit":
+                    inserts.append((words[start][1], f" -c trailer.{key}.ifexists=addIfDifferent"))
+                    inserts.append((pos, " --trailer " + shlex.quote(trailer)))
+        word = None
+
+    def boundary(pos: int) -> None:
+        nonlocal skip_target
+        end_word(pos)
+        words.clear()
+        skip_target = False
+
+    def quoted(start: int, quote: str, escapes: bool) -> tuple[str, int]:
+        """Read a quoted string starting after its opening quote; return (text, next index)."""
+        out, k = [], start
+        while k < n and command[k] != quote:
+            if escapes and command[k] == "\\" and k + 1 < n:
+                k += 1
+            out.append(command[k])
+            k += 1
+        return "".join(out), k + 1
+
+    while i < n:
+        c = command[i]
+        if c in " \t":
+            end_word(i)
+        elif c == "\n":
+            boundary(i)
+            k = i + 1
+            for delimiter, strip in heredocs:
+                while k < n:
+                    end = command.find("\n", k)
+                    end = n if end < 0 else end
+                    line = command[k:end]
+                    k = end + 1
+                    if (line.lstrip("\t") if strip else line) == delimiter:
+                        break
+            heredocs.clear()
+            i = k
+            continue
+        elif c in ";&|()`":
+            boundary(i)
+        elif c in "<>":
+            if word is not None and word.isdigit():
+                word = None  # File descriptor number, as in 2>&1.
+            end_word(i)
+            if command.startswith("<<", i) and not command.startswith("<<<", i):
+                k = i + 2
+                strip = k < n and command[k] == "-"
+                k += strip
+                while k < n and command[k] in " \t":
+                    k += 1
+                delimiter = []
+                while k < n and command[k] not in " \t\n;&|<>()":
+                    if command[k] in "'\"":
+                        text, k = quoted(k + 1, command[k], command[k] == '"')
+                        delimiter.append(text)
+                    else:
+                        delimiter.append(command[k].lstrip("\\"))
+                        k += 1
+                heredocs.append(("".join(delimiter), strip))
+                i = k
+                continue
+            while i + 1 < n and command[i + 1] in "<>&":
+                i += 1
+            skip_target = True
+        elif c == "#" and word is None:
+            while i < n and command[i] != "\n":
+                i += 1
+            continue
+        elif c == "\\":
+            if i + 1 < n and command[i + 1] != "\n":
+                word = (word or "") + command[i + 1]
+            i += 2
+            continue
+        elif c in "'\"":
+            text, i = quoted(i + 1, c, c == '"')
+            word = (word or "") + text
+            continue
+        elif c == "$" and command.startswith("$'", i):
+            text, i = quoted(i + 2, "'", True)
+            word = (word or "") + text
+            continue
+        elif c == "$" and command.startswith("$(", i):
+            boundary(i)
+            i += 2
+            continue
+        else:
+            word = (word or "") + c
+        i += 1
+    end_word(n)
+    for pos, addition in sorted(inserts, reverse=True):
+        command = command[:pos] + addition + command[pos:]
+    return command
 
 
 def tool_schema(actions: list[str], fields: dict) -> dict:
@@ -190,6 +333,10 @@ class Entry(Plugin):
                 "GIT_COMMITTER_EMAIL": email,
             }
         )
+        self.co_author = bool(settings.get("co_author", False))
+        if self.co_author:
+            self.context.add_subagent_note(SUBAGENT_NOTE)
+            self.context.add_shell_filter(add_commit_trailer)
         register = self.context.register_tool
         register(
             "github_read",
@@ -246,7 +393,7 @@ class Entry(Plugin):
         )
         register(
             "github_publish",
-            "发布类操作：pr_merge(number,merge_method,commit_title)、"
+            "发布类操作：pr_merge(number,merge_method,commit_title,commit_message)、"
             "release_create(tag,name,body,target,draft,prerelease)、run_rerun(run_id,failed_only)、"
             "workflow_dispatch(workflow,ref,inputs)、branch_delete(branch，不能删默认分支)。",
             tool_schema(
@@ -256,6 +403,10 @@ class Entry(Plugin):
                     "number": NUMBER,
                     "merge_method": {"type": "string", "enum": ["merge", "squash", "rebase"]},
                     "commit_title": STR,
+                    "commit_message": {
+                        "type": "string",
+                        "description": "合并提交的正文，默认同 GitHub",
+                    },
                     "tag": STR,
                     "name": STR,
                     "body": STR,
@@ -594,19 +745,48 @@ class Entry(Plugin):
     async def default_branch(self, repo: str) -> str:
         return (await self.api("GET", f"/repos/{repo}"))["default_branch"]
 
+    async def default_merge_message(self, repo: str, number: int, method: str) -> str:
+        """Rebuild the body GitHub would use, since passing commit_message replaces it."""
+        settings = await self.api("GET", f"/repos/{repo}")
+        pull = await self.api("GET", f"/repos/{repo}/pulls/{number}")
+        if method == "squash":
+            style = settings.get("squash_merge_commit_message") or "COMMIT_MESSAGES"
+        else:
+            style = settings.get("merge_commit_message") or "PR_TITLE"
+        if style == "PR_TITLE":
+            return pull.get("title") or ""
+        if style == "PR_BODY":
+            return pull.get("body") or ""
+        if style == "COMMIT_MESSAGES":
+            commits = await self.api(
+                "GET", f"/repos/{repo}/pulls/{number}/commits", params={"per_page": 100}
+            )
+            messages = [c["commit"]["message"].strip() for c in commits]
+            if len(messages) == 1:
+                # A single commit: GitHub uses its title as the title and the rest as the body.
+                return messages[0].partition("\n")[2].strip()
+            return "\n\n".join(f"* {m}" for m in messages)
+        return ""
+
     async def publish(self, ctx, args):
         self.require_owner(ctx)
         action = args["action"]
         repo = await self.repo(args)
         if action == "pr_merge":
             (number,) = need(args, "number")
-            body = {"merge_method": args.get("merge_method", "squash")}
-            body.update(pick(args, "commit_title"))
+            method = args.get("merge_method", "squash")
+            body = {"merge_method": method, **pick(args, "commit_title", "commit_message")}
+            if self.co_author and method != "rebase":
+                message = body.get("commit_message")
+                if message is None:
+                    message = await self.default_merge_message(repo, number, method)
+                body["commit_message"] = f"{message.rstrip()}\n\n{CO_AUTHOR}".lstrip()
             row = await self.api("PUT", f"/repos/{repo}/pulls/{number}/merge", body=body)
             return {
                 "merged": row.get("merged"),
                 "sha": row.get("sha"),
                 "message": row.get("message"),
+                **({"co_author": False} if self.co_author and method == "rebase" else {}),
             }
         if action == "release_create":
             (tag,) = need(args, "tag")

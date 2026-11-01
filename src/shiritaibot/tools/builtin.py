@@ -38,7 +38,7 @@ async def register_builtin(app) -> None:
         workspace = session_dir(app.home, "workspaces", ctx.session)
         await asyncio.to_thread(workspace.mkdir, parents=True, exist_ok=True)
         return await run_process(
-            [*app.config.value.policy.shell_command, args["command"]],
+            [*app.config.value.policy.shell_command, app.plugins.filter_shell(args["command"])],
             workspace,
             timeout=args.get("timeout", 60),
             env=app.plugins.child_env(),

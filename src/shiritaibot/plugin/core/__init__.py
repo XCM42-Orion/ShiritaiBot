@@ -43,11 +43,16 @@ class PluginManager:
         self.get_event: Callable[[str], Awaitable[dict | None]] | None = None
         # Non-secret environment variables each plugin adds to shell / subagent processes.
         self.process_env: dict[str, dict[str, str]] = {}
+        # Per-plugin subagent prompt notes and shell command rewriters.
+        self.subagent_note_map: dict[str, list[str]] = {}
+        self.shell_filters: dict[str, list[Callable[[str], str]]] = {}
 
     def unregister(self, key: str) -> None:
         self.registry.remove_plugin(key)
         self.notifiers.pop(key, None)
         self.process_env.pop(key, None)
+        self.subagent_note_map.pop(key, None)
+        self.shell_filters.pop(key, None)
 
     def child_env(self) -> dict[str, str] | None:
         """Environment for model-driven child processes; None inherits the host unchanged."""
@@ -57,6 +62,23 @@ class PluginManager:
         for values in self.process_env.values():
             env.update(values)
         return env
+
+    def subagent_notes(self) -> str:
+        """Plugin instructions appended to new subagent prompts; empty when there are none."""
+        notes = [note for values in self.subagent_note_map.values() for note in values]
+        return "".join(f"\n\n---\n{note}" for note in notes)
+
+    def filter_shell(self, command: str) -> str:
+        for key, filters in list(self.shell_filters.items()):
+            for rewrite in filters:
+                try:
+                    result = rewrite(command)
+                except Exception as error:  # A broken filter must not block the shell.
+                    log.log(f"插件 {key} 的 shell 过滤器出错，已忽略：{error!r}")
+                    continue
+                if isinstance(result, str) and result:
+                    command = result
+        return command
 
     async def discover(self) -> list[dict]:
         def scan():
@@ -360,6 +382,10 @@ class PluginManager:
                 self.notifiers[key] = [guard(handler) for handler in context.notifiers]
             if context.process_env:
                 self.process_env[key] = dict(context.process_env)
+            if context.subagent_notes:
+                self.subagent_note_map[key] = list(context.subagent_notes)
+            if context.shell_filters:
+                self.shell_filters[key] = list(context.shell_filters)
             self.loaded[key] = plugin
             self._forget_modules(key, keep=module_name)
             log.log(

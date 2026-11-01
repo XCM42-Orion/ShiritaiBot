@@ -174,6 +174,7 @@ enabled = true
 token = "secret:自动生成的凭据标识"   # 在 WebUI 填写，自动加密
 commit_name = ""                      # 留空 = token 账号的登录名
 commit_email = ""                     # 留空 = <id>+<login>@users.noreply.github.com
+co_author = false                     # 开启后提交自动追加 Co-authored-by: ShiritaiBot
 allowed_owners = ["shiritai-bot"]     # 留空 = 只允许 token 账号本身
 proxy = ""                            # 如 socks5h://127.0.0.1:1080；留空 = API 沿用环境变量代理，git 直连
 timeout = 30
@@ -190,6 +191,12 @@ timeout = 30
 所有工具仅限主人在私聊 / WebUI 的 Agent 模式调用，群聊不可用；仓库 owner 必须在 `allowed_owners` 内。Issue、PR 和文件内容视为不可信资料。
 
 **token 不进入 shell 和子代理。** 插件只通过 `PluginContext.set_process_env` 向 shell 工具和子代理注入 `GIT_AUTHOR_*` / `GIT_COMMITTER_*`，模型在 shell 里 `git commit` 即使用 bot 身份；推送必须调用 `github_push`。该工具不在模型控制的仓库里运行 git（其配置和 hooks 可能读取凭据），而是把分支 fetch 到插件私有的裸镜像 `<home>/plugin_data/github/mirrors/`，再从镜像带 token 推送；token 经环境变量传给 git，不出现在命令行参数和工具输出中。推送子代理的改动时传 `subagent_run`。
+
+开启 `co_author` 后，提交信息带上 `Co-authored-by: ShiritaiBot <shiritaibot@shiritaibot.dev>`，不改动 git 配置、hooks 和环境变量：
+
+- **主 Agent shell**：插件通过 `PluginContext.add_shell_filter` 在命令获批后、执行前改写命令，给每个 `git [全局选项] commit` 加上 `-c trailer.co-authored-by.ifexists=addIfDifferent` 和 `--trailer '...'`（提交信息里已有同一行时不重复）。改写按 bash 语法识别命令位置，引号、注释和 heredoc 里的文字不会被改；需要 git ≥ 2.32。
+- **工具产生的提交**：`pr_merge` 的 merge / squash 会在提交正文末尾追加该行。未指定 `commit_message` 时，按仓库的 merge / squash 提交信息设置重建 GitHub 默认正文后再追加；rebase 不产生新提交信息，返回 `co_author: false`。
+- **子代理**：通过 `PluginContext.add_subagent_note` 在新启动的子代理（generic 类型除外）提示词末尾说明：如需提交就带上这一行，任务明确不提交时忽略。续接的运行不再重复注入。
 
 局限：shell 工具与宿主以同一系统账号运行，能读到 `<home>/master.key` 和数据库的模型理论上仍可解密 Vault。以上设计防止的是 token 意外进入上下文、日志和聊天记录；如需更强的隔离，应让 shell 在沙箱或独立账号中运行，并保持 token 的最小权限。用 `env:` 引用的 token 会被所有子进程继承，请改在 WebUI 中填写。
 
@@ -231,7 +238,7 @@ class Entry(Plugin):
         return {"answer": "hello"}
 ```
 
-`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册、主动通知通道注册和日志。`set_process_env(env)` 可向 shell 工具和子代理进程添加**非敏感**环境变量（重载、停用时撤销，不同插件不能设置同名变量）；`session_workspace(session)` 返回会话的 shell 工作目录。
+`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册、主动通知通道注册和日志。`set_process_env(env)` 可向 shell 工具和子代理进程添加**非敏感**环境变量（重载、停用时撤销，不同插件不能设置同名变量）；`add_subagent_note(text)` 在新启动的非 generic 子代理提示词末尾追加说明；`add_shell_filter(rewrite)` 注册一个同步、无副作用的 `rewrite(command) -> command`，在 shell 工具命令获批后、执行前改写命令（出错时忽略该过滤器，原命令照常执行），两者都在重载、停用时撤销；`session_workspace(session)` 返回会话的 shell 工作目录。
 
 ## 日志
 

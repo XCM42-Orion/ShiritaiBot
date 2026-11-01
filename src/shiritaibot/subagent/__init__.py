@@ -223,6 +223,8 @@ class SubagentManager:
         self.semaphore = asyncio.Semaphore(3)
         # Environment for child CLIs (plugin-provided git identity); None inherits the host.
         self.env: Callable[[], dict[str, str] | None] = lambda: None
+        # Plugin instructions for fresh runs (e.g. commit trailers); empty string for none.
+        self.notes: Callable[[], str] = lambda: ""
 
     def instances(self) -> list[dict]:
         """Describe enabled instances from live config without exposing CLI arguments."""
@@ -304,7 +306,11 @@ class SubagentManager:
                 row["status"] = "running"
                 await self.store.put("subagent_run", key, row, ctx.session)
                 log.log(f"{config.id} 开始运行", key[:8])
-                stdin = prompt if config.kind == "generic" else prompt + UNATTENDED
+                if config.kind == "generic":
+                    stdin = prompt
+                else:
+                    # Resumed runs already saw the plugin notes in their native session.
+                    stdin = prompt + ("" if resume else self.notes()) + UNATTENDED
                 result = await run_process(
                     command_for(config, workspace, resume),
                     workspace,
