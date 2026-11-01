@@ -6,10 +6,11 @@ from pathlib import Path
 import pytest
 from test_permissions import eventually
 
+import shiritaibot.subagent
 from shiritaibot.config import SessionPolicy, SubagentConfig
 from shiritaibot.core import Context, PublicError, Reply
 from shiritaibot.proactive import delegated
-from shiritaibot.subagent import command_for, parse_output, question_in
+from shiritaibot.subagent import OUTPUT_LIMIT, clip, command_for, parse_output, question_in
 
 OWNER = Context("web:owner", "owner", "agent", True)
 
@@ -367,3 +368,199 @@ async def test_deepseek_harness_run_asks_and_resumes_in_same_session(app, tmp_pa
     await app.subagents.send(OWNER, row["id"], "main")
     done = await eventually(lambda: status("completed"))
     assert done["result"] == "用了 main" and done["exit_code"] == 0
+
+
+# Issue #23: runs whose stdout passes the limit must not lose the events at its tail.
+NOISE = "x" * 1000
+CODEX_NOISE = {
+    "type": "item.completed",
+    "item": {"type": "command_execution", "aggregated_output": NOISE},
+}
+CODEX_START = {"type": "thread.started", "thread_id": "thread-1"}
+DSH_START = {"type": "session", "sessionId": "session-1"}
+DSH_NOISE = {"type": "tool_result", "callId": "n", "status": "ok", "result": NOISE}
+
+
+def codex_message(text):
+    return {"type": "item.completed", "item": {"type": "agent_message", "text": text}}
+
+
+def dsh_final(text):
+    return {
+        "type": "final",
+        "sessionId": "session-1",
+        "reason": {"kind": "completed"},
+        "text": text,
+    }
+
+
+async def fake_run(app, tmp_path, kind, lines="", stderr=""):
+    """Run a fake CLI that prints lines, returning its final row and emitted event."""
+    data = tmp_path / "stdout.txt"
+    data.write_text(lines, encoding="utf-8")
+    script = tmp_path / "fake_cli.py"
+    script.write_text(
+        "import sys\n"
+        "sys.stdin.read()\n"
+        f"sys.stderr.write({stderr!r})\n"
+        f"sys.stdout.buffer.write(open({str(data)!r}, 'rb').read())\n"
+    )
+    app.config.value.subagents = [
+        SubagentConfig(id="cli", kind=kind, command=[sys.executable, str(script)])
+    ]
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        return event.dedup_key
+
+    app.subagents.emit = emit
+    row = await app.subagents.start(OWNER, "cli", "任务")
+    await eventually(lambda: asyncio.sleep(0, bool(events)))
+    return await app.store.get("subagent_run", row["id"]), events[0]
+
+
+def stream(start, noise, *tail):
+    size = OUTPUT_LIMIT // len(json.dumps(noise)) + 10
+    return "\n".join(json.dumps(line) for line in [start, *[noise] * size, *tail]) + "\n"
+
+
+@pytest.mark.parametrize(
+    ("kind", "start", "noise", "last", "native"),
+    [
+        ("codex", CODEX_START, CODEX_NOISE, codex_message, "thread-1"),
+        ("deepseek_harness", DSH_START, DSH_NOISE, dsh_final, "session-1"),
+    ],
+)
+async def test_long_stream_keeps_tail_events(app, tmp_path, kind, start, noise, last, native):
+    lines = stream(start, noise, last("修好了"))
+    assert len(lines) > OUTPUT_LIMIT
+    row, event = await fake_run(app, tmp_path, kind, lines)
+    assert row["status"] == "completed" and row["exit_code"] == 0
+    assert row["truncated"] and row["native_session_id"] == native
+    assert row["result"].startswith("修好了") and "[输出截断]" in row["result"]
+    assert "[输出截断]" in event.payload["result"]
+
+    row, event = await fake_run(
+        app, tmp_path, kind, stream(start, noise, last("做了一半\nNEEDS_INPUT: 哪个分支？"))
+    )
+    assert row["status"] == "needs_input" and row["question"] == "哪个分支？"
+    assert row["native_session_id"] == native and "[输出截断]" in row["result"]
+    assert event.kind == "subagent.needs_input"
+
+
+async def test_codex_oversized_event_does_not_hide_final_message(app, tmp_path):
+    huge = {"item": {"type": "command_execution", "aggregated_output": "x" * (5 * 1024 * 1024)}}
+    lines = "\n".join(json.dumps(x) for x in [CODEX_START, huge, codex_message("修好了")])
+    row, _ = await fake_run(app, tmp_path, "codex", lines)
+    assert row["status"] == "completed" and row["result"].startswith("修好了")
+    assert row["truncated"] and row["native_session_id"] == "thread-1"
+
+
+@pytest.mark.parametrize(
+    ("kind", "start", "noise", "tail", "text"),
+    [
+        (
+            "codex",
+            CODEX_START,
+            CODEX_NOISE,
+            {"type": "turn.failed", "error": {"message": "额度用尽"}},
+            "额度用尽",
+        ),
+        (
+            "deepseek_harness",
+            DSH_START,
+            DSH_NOISE,
+            {"type": "error", "message": "no key"},
+            "no key",
+        ),
+    ],
+)
+async def test_long_stream_detects_failure_at_tail(app, tmp_path, kind, start, noise, tail, text):
+    row, _ = await fake_run(app, tmp_path, kind, stream(start, noise, tail))
+    assert row["status"] == "failed" and row["exit_code"] == 1
+    assert row["result"].startswith(text) and "[输出截断]" in row["result"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "start", "noise"),
+    [
+        ("codex", CODEX_START, CODEX_NOISE),
+        ("deepseek_harness", DSH_START, DSH_NOISE),
+    ],
+)
+async def test_long_stream_without_final_result_fails(app, tmp_path, kind, start, noise):
+    row, _ = await fake_run(app, tmp_path, kind, stream(start, noise))
+    assert row["status"] == "failed" and row["exit_code"] == 1
+    assert row["truncated"] and "未能取得最终结果" in row["result"]
+    assert NOISE[:100] not in row["result"]
+
+
+async def test_deepseek_denial_past_the_limit_is_reported(app, tmp_path):
+    lines = stream(
+        DSH_START,
+        DSH_NOISE,
+        {"type": "tool_call", "callId": "c1", "tool": "bash", "input": {"command": "rm x"}},
+        {"type": "tool_result", "callId": "c1", "error": {"code": "APPROVAL_REJECTED"}},
+        dsh_final("没做完"),
+    )
+    row, _ = await fake_run(app, tmp_path, "deepseek_harness", lines)
+    assert row["status"] == "needs_input" and "bash(rm x)" in row["question"]
+    assert "[输出截断]" in row["result"]
+
+
+def claude_output(text):
+    return json.dumps(
+        {
+            "is_error": False,
+            "result": text,
+            "session_id": "native-1",
+            "permission_denials": [
+                {"tool_name": "Write", "tool_input": {"file_path": "a", "content": NOISE * 300}}
+            ],
+        }
+    )
+
+
+async def test_claude_large_output_stays_parseable(app, tmp_path):
+    lines = claude_output("x" * 1000 + "\nNEEDS_INPUT: 哪个环境？")
+    assert len(lines) > OUTPUT_LIMIT
+    row, _ = await fake_run(app, tmp_path, "claude_code", lines)
+    assert row["status"] == "needs_input" and row["question"] == "哪个环境？"
+    assert row["native_session_id"] == "native-1" and not row["truncated"]
+    assert "Write(a)" in row["result"]
+
+
+async def test_claude_truncated_json_fails_instead_of_completing(app, tmp_path, monkeypatch):
+    monkeypatch.setitem(shiritaibot.subagent.OUTPUT_LIMITS, "claude_code", 1000)
+    row, event = await fake_run(app, tmp_path, "claude_code", claude_output("完成"))
+    assert row["status"] == "failed" and row["exit_code"] == 1 and row["truncated"]
+    assert "未能取得最终结果" in row["result"] and "[输出截断]" in row["result"]
+    assert "is_error" not in row["result"]
+    assert event.payload["status"] == "failed"
+
+
+async def test_truncation_is_visible_even_when_parsing_succeeds(app, tmp_path, monkeypatch):
+    monkeypatch.setitem(shiritaibot.subagent.OUTPUT_LIMITS, "claude_code", 1000)
+    lines = json.dumps({"result": "完成", "session_id": "native-1"})
+    row, _ = await fake_run(app, tmp_path, "claude_code", lines, stderr="e" * 2000)
+    assert row["status"] == "completed" and row["truncated"]
+    assert row["native_session_id"] == "native-1"
+    assert row["result"].startswith("完成") and "[输出截断]" in row["result"]
+
+
+async def test_generic_truncation_notice_survives_result_limit(app, tmp_path):
+    row, _ = await fake_run(app, tmp_path, "generic", "x" * (OUTPUT_LIMIT + 1))
+    assert row["status"] == "completed" and row["truncated"]
+    assert len(row["result"]) <= 16000 and row["result"].endswith("可能不完整。")
+
+
+def test_clip_keeps_both_ends_within_limit():
+    assert clip("short", 100) == "short"
+    clipped = clip("头" + "x" * 1000 + "尾", 100)
+    assert len(clipped) == 100 and clipped.startswith("头") and clipped.endswith("尾")
+
+
+def test_parsing_ignores_malformed_events_and_splits_only_on_newlines():
+    lines = ['{"item": "text"}', "[1]", json.dumps(codex_message("甲\u2028乙"), ensure_ascii=False)]
+    assert parse_output("codex", "\n".join(lines))["result"] == "甲\u2028乙"
