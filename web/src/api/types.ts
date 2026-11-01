@@ -38,6 +38,20 @@ export interface ModelConfig extends Instance {
   // embedding models only serve the embedding route; dims 0 keeps the default.
   kind: "text" | "embedding";
   dims: number;
+  // Per-million-token prices for dashboard cost; all 0 means unpriced.
+  currency: Currency;
+  price_input: number;
+  price_cached: number;
+  price_output: number;
+}
+
+export type Currency = "USD" | "CNY";
+
+export interface ModelPricing {
+  currency: Currency;
+  price_input: number;
+  price_cached: number;
+  price_output: number;
 }
 
 export interface AdapterConfig extends Instance {
@@ -250,6 +264,8 @@ export interface DiscoveredModel {
   id: string;
   name: string;
   max_output: number;
+  // Only OpenRouter-style providers list prices; null means unknown.
+  pricing: ModelPricing | null;
 }
 
 export interface ModelTestResult {
@@ -277,6 +293,21 @@ export interface Statistics {
   start: string;
   end: string;
   totals: Omit<TokenBucket, "hour">;
+  models: ModelUsage[];
+  // Estimated spend of priced models, summed per currency.
+  costs: Partial<Record<Currency, number>>;
+}
+
+export interface ModelUsage {
+  model: string;
+  llm_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  cache_hit_rate: number | null;
+  cost: number | null;
+  currency: Currency | null;
 }
 
 export interface ExternalEvent {

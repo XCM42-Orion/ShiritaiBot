@@ -1,7 +1,19 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Download, Plus, Search, Trash2 } from "lucide-react";
-import type { ModelConfig, Protocol, ProviderConfig } from "../api/types";
+import {
+  BadgeDollarSign,
+  Check,
+  Download,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
+import type {
+  DiscoveredModel,
+  ModelConfig,
+  Protocol,
+  ProviderConfig,
+} from "../api/types";
 import { Field, FieldForm, jsonObjectError } from "../components/FieldForm";
 import { ModelTestButton } from "../components/ModelTestButton";
 import { EmptyState } from "../components/EmptyState";
@@ -135,9 +147,13 @@ export function ModelsPage({
   const [tab, setTab] = useState<"provider" | "routes">("provider");
   const [remote, setRemote] = useState<{
     source: string;
-    rows: { id: string; name: string; max_output: number }[];
+    rows: DiscoveredModel[];
   } | null>(null);
   const [fetching, setFetching] = useState(false);
+  const [pricing, setPricing] = useState<number | null>(null);
+  // Async price lookups patch the latest draft, not the one captured at click time.
+  const latest = useRef(config);
+  latest.current = config;
   const [query, setQuery] = useState("");
 
   const current = CATEGORIES.find((item) => item.key === category)!;
@@ -193,7 +209,7 @@ export function ModelsPage({
     );
   }
 
-  function addModel(row?: { id: string; max_output: number }) {
+  function addModel(row?: DiscoveredModel) {
     if (!provider) return;
     const id = uniqueId(row?.id || "model-new", config.models);
     const model: ModelConfig = {
@@ -207,6 +223,11 @@ export function ModelsPage({
       extra_body: {},
       kind: category === "embedding" ? "embedding" : "text",
       dims: 0,
+      currency: "USD",
+      price_input: 0,
+      price_cached: 0,
+      price_output: 0,
+      ...(row?.pricing ?? {}),
     };
     const routes = { ...config.routes };
     const defaults = {
@@ -238,6 +259,27 @@ export function ModelsPage({
         itemIndex === position ? { ...model, ...patch } : model,
       ),
     });
+  }
+
+  async function fetchPricing(model: ModelConfig, target: ProviderConfig) {
+    let rows = results;
+    if (!rows) {
+      rows = await client.discoverModels(target);
+      setRemote({ source: JSON.stringify(target), rows });
+    }
+    const found = rows.find((row) => row.id === model.model);
+    if (!found) throw new Error(`提供商的模型列表中没有 ${model.model}`);
+    const price = found.pricing;
+    if (!price)
+      throw new Error("提供商没有公开此模型的单价，请按官网价格手动填写");
+    const current = latest.current;
+    setConfig({
+      ...current,
+      models: current.models.map((item) =>
+        item.id === model.id ? { ...item, ...price } : item,
+      ),
+    });
+    return `输入 ${price.price_input} / 缓存 ${price.price_cached} / 输出 ${price.price_output} ${price.currency} 每百万 tokens`;
   }
 
   return (
@@ -575,6 +617,8 @@ export function ModelsPage({
                                 <strong>{row.id}</strong>
                                 <small>
                                   {row.name !== row.id ? row.name : ""}
+                                  {row.pricing &&
+                                    `${row.name !== row.id ? " · " : ""}$${row.pricing.price_input} / $${row.pricing.price_output} 每百万 tokens`}
                                 </small>
                               </div>
                               <button
@@ -637,11 +681,33 @@ export function ModelsPage({
                           />
                         ))}
                       </div>
-                      <ModelTestButton
-                        test={() => client.testModel(provider, model)}
-                        act={act}
-                        disabled={Boolean(jsonObjectError(model.extra_body))}
-                      />
+                      <div className="inline">
+                        <ModelTestButton
+                          test={() => client.testModel(provider, model)}
+                          act={act}
+                          disabled={Boolean(jsonObjectError(model.extra_body))}
+                        />
+                        <button
+                          type="button"
+                          disabled={pricing !== null || !model.model}
+                          aria-busy={pricing === position}
+                          onClick={() => {
+                            setPricing(position);
+                            void act(async () => {
+                              try {
+                                return await fetchPricing(model, provider);
+                              } finally {
+                                setPricing(null);
+                              }
+                            }, "已从提供商获取单价");
+                          }}
+                        >
+                          <BadgeDollarSign size={15} aria-hidden="true" />
+                          {pricing === position
+                            ? "获取中…"
+                            : "从提供商获取单价"}
+                        </button>
+                      </div>
                     </div>
                   ) : null,
                 )}

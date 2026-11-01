@@ -128,7 +128,7 @@ def create_app(
     async def stats(hours: int = 24):
         if hours not in {24, 72, 168}:
             raise HTTPException(422, "统计范围必须是 24、72 或 168 小时")
-        return await statistics(runtime.store, hours)
+        return await statistics(runtime.store, hours, models=runtime.config.value.models)
 
     @api.get("/api/commands", dependencies=protected)
     async def commands():

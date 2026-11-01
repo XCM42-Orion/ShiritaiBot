@@ -2,8 +2,94 @@ import { QueryErrorNotice } from "../components/QueryErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ApiClient } from "../api/client";
-import type { Statistics, TokenBucket } from "../api/types";
+import type {
+  Currency,
+  ModelUsage,
+  Statistics,
+  TokenBucket,
+} from "../api/types";
 import { formatHour, formatNumber } from "../lib/utils";
+
+const CURRENCY_SYMBOL: Record<Currency, string> = { USD: "$", CNY: "¥" };
+
+function formatCost(value: number, currency: Currency): string {
+  const digits = value > 0 && value < 0.01 ? 4 : 2;
+  return CURRENCY_SYMBOL[currency] + value.toFixed(digits);
+}
+
+function formatRate(value: number | null): string {
+  return value === null ? "—" : (value * 100).toFixed(1) + "%";
+}
+
+function totalCost(costs: Statistics["costs"]): string {
+  const parts = (Object.keys(CURRENCY_SYMBOL) as Currency[])
+    .filter((currency) => costs[currency] !== undefined)
+    .map((currency) => formatCost(costs[currency]!, currency));
+  return parts.length ? parts.join(" + ") : "—";
+}
+
+function ModelTable({ rows }: { rows: ModelUsage[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h3>模型用量</h3>
+      </div>
+      {rows.length ? (
+        <div className="table-scroll">
+          <table className="usage-table">
+            <thead>
+              <tr>
+                <th scope="col">模型</th>
+                <th scope="col">调用</th>
+                <th scope="col">输入 tokens</th>
+                <th scope="col">缓存命中</th>
+                <th scope="col">命中率</th>
+                <th scope="col">输出 tokens</th>
+                <th scope="col">预估花费</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.model}>
+                  <th scope="row">{row.model || "（未知模型）"}</th>
+                  <td>{formatNumber(row.llm_calls)}</td>
+                  <td>{formatNumber(row.input_tokens)}</td>
+                  <td>{formatNumber(row.cached_tokens)}</td>
+                  <td>
+                    <span className="rate">
+                      <i
+                        aria-hidden="true"
+                        style={{
+                          width: `${(row.cache_hit_rate ?? 0) * 100}%`,
+                        }}
+                      />
+                    </span>
+                    {formatRate(row.cache_hit_rate)}
+                  </td>
+                  <td>{formatNumber(row.output_tokens)}</td>
+                  <td>
+                    {row.cost !== null && row.currency ? (
+                      formatCost(row.cost, row.currency)
+                    ) : (
+                      <span
+                        className="muted"
+                        title="在「模型」页填写或获取单价"
+                      >
+                        未设单价
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">此区间内没有模型调用。</p>
+      )}
+    </section>
+  );
+}
 
 const HOUR_RANGES = [
   [24, "24 小时"],
@@ -185,18 +271,27 @@ export function Dashboard({ client }: { client: ApiClient }) {
       )}
       {data && data.totals && data.buckets ? (
         <>
-          <div className="metrics">
+          <div className="metrics metrics-wide">
             {(
               [
-                ["总 tokens", data.totals.total_tokens],
-                ["对话消息", data.totals.messages],
-                ["模型调用", data.totals.llm_calls],
-                ["失败轮次", data.totals.failed_turns],
+                ["总 tokens", formatNumber(data.totals.total_tokens)],
+                [
+                  "缓存命中率",
+                  formatRate(
+                    data.totals.input_tokens
+                      ? data.totals.cached_tokens / data.totals.input_tokens
+                      : null,
+                  ),
+                ],
+                ["预估花费", totalCost(data.costs ?? {})],
+                ["对话消息", formatNumber(data.totals.messages)],
+                ["模型调用", formatNumber(data.totals.llm_calls)],
+                ["失败轮次", formatNumber(data.totals.failed_turns)],
               ] as const
             ).map(([label, value]) => (
               <div className="metric" key={label}>
                 <span>{label}</span>
-                <strong>{formatNumber(value)}</strong>
+                <strong>{value}</strong>
                 <small>
                   过去 {hours === 24 ? "24 小时" : `${hours / 24} 天`}
                 </small>
@@ -219,6 +314,7 @@ export function Dashboard({ client }: { client: ApiClient }) {
               },
             ]}
           />
+          <ModelTable rows={data.models ?? []} />
           <HourlyChart
             title="对话消息"
             rows={data.buckets}
@@ -240,6 +336,8 @@ export function Dashboard({ client }: { client: ApiClient }) {
             ，首尾小时按实际区间截取。Token
             取提供商返回的用量，包含工具轮次与连接测试； 缓存命中{" "}
             {formatNumber(data.totals.cached_tokens)} tokens（已计入输入）。
+            花费按模型当前单价估算，仅供参考：缓存写入按输入单价计，不含分级定价与免费额度；
+            已删除或未设单价的模型不计入。
             消息统计已入库的用户消息和最终回复，包含斜杠命令，不含工具结果与内部交接；
             未返回用量的请求不估算 tokens。
           </p>

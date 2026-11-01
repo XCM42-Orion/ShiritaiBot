@@ -528,6 +528,52 @@ describe("models workspace", () => {
     expect(snapshot!.models).toEqual([]);
     expect(snapshot!.routes.agent).toEqual([]);
   });
+
+  it("fills model prices from the provider listing", async () => {
+    const pricing = {
+      currency: "USD",
+      price_input: 2,
+      price_cached: 0.5,
+      price_output: 8,
+    };
+    const client = fakeClient({
+      discoverModels: vi
+        .fn()
+        .mockResolvedValue([
+          { id: "GLM-5.3-Flash", name: "GLM", max_output: 4096, pricing },
+        ]),
+    } as Partial<ApiClient>);
+    let snapshot: Settings | null = null;
+    render(
+      <Host client={client}>
+        {(config, setConfig) => {
+          snapshot = config;
+          return (
+            <ModelsPage
+              client={client}
+              act={act}
+              config={config}
+              setConfig={(next) => {
+                snapshot = next;
+                setConfig(next);
+              }}
+            />
+          );
+        }}
+      </Host>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByText("手动添加"));
+    await user.type(screen.getByLabelText("提供商模型名称"), "GLM-5.3-Flash");
+    await user.click(screen.getByText("从提供商获取单价"));
+    await waitFor(() =>
+      expect(snapshot!.models[0]).toMatchObject({
+        model: "GLM-5.3-Flash",
+        ...pricing,
+      }),
+    );
+    expect(client.discoverModels).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("model categories", () => {
@@ -759,6 +805,65 @@ it("switches the dashboard between 24, 72 and 168 hours", async () => {
   await user.click(screen.getByText("7 天"));
   await waitFor(() => expect(client.stats).toHaveBeenCalledWith(168));
   expect(client.stats).toHaveBeenCalledWith(24);
+});
+
+it("shows per-model tokens, cache hit rate and estimated cost", async () => {
+  const empty = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cached_tokens: 0,
+    total_tokens: 0,
+    llm_calls: 0,
+    incoming_messages: 0,
+    outgoing_messages: 0,
+    messages: 0,
+    failed_turns: 0,
+  };
+  const client = fakeClient({
+    stats: vi.fn().mockResolvedValue({
+      hours: 24,
+      timezone: "Asia/Shanghai",
+      start: "2026-10-26T04:00:00Z",
+      end: "2026-10-27T04:00:00Z",
+      totals: { ...empty, input_tokens: 2000, cached_tokens: 500 },
+      buckets: [{ hour: "2026-10-27T04:00:00Z", ...empty }],
+      models: [
+        {
+          model: "priced",
+          llm_calls: 3,
+          input_tokens: 1000,
+          output_tokens: 300,
+          cached_tokens: 500,
+          total_tokens: 1300,
+          cache_hit_rate: 0.5,
+          cost: 1.234,
+          currency: "USD",
+        },
+        {
+          model: "free",
+          llm_calls: 1,
+          input_tokens: 1000,
+          output_tokens: 0,
+          cached_tokens: 0,
+          total_tokens: 1000,
+          cache_hit_rate: 0,
+          cost: null,
+          currency: null,
+        },
+      ],
+      costs: { USD: 1.234, CNY: 0.5 },
+    }),
+  } as Partial<ApiClient>);
+  render(withQuery(<Dashboard client={client} />));
+  expect(await screen.findByText("模型用量")).toBeTruthy();
+  expect(screen.getByText("25.0%")).toBeTruthy();
+  expect(screen.getByText("$1.23 + ¥0.50")).toBeTruthy();
+  const row = screen.getByText("priced").closest("tr")!;
+  expect(row.textContent).toContain("50.0%");
+  expect(row.textContent).toContain("$1.23");
+  expect(screen.getByText("free").closest("tr")!.textContent).toContain(
+    "未设单价",
+  );
 });
 
 it("sends a chat message from the composer", async () => {

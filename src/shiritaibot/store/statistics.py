@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 from shiritaibot.core import now
 
+TOKEN_FIELDS = ("input_tokens", "output_tokens", "cached_tokens", "total_tokens")
+
 
 def tokens(usage: dict, protocol: str = "") -> dict:
     def number(key, source=None):
@@ -41,7 +43,20 @@ def tokens(usage: dict, protocol: str = "") -> dict:
     }
 
 
-async def statistics(store, hours: int, end: datetime | None = None):
+def cost(counts: dict, model) -> float | None:
+    """Estimated spend from per-million prices; None when the model has no prices set."""
+    if model is None or not (model.price_input or model.price_cached or model.price_output):
+        return None
+    cached = min(counts["cached_tokens"], counts["input_tokens"])
+    return (
+        (counts["input_tokens"] - cached) * model.price_input
+        + cached * (model.price_cached or model.price_input)
+        + counts["output_tokens"] * model.price_output
+    ) / 1_000_000
+
+
+async def statistics(store, hours: int, end: datetime | None = None, models=()):
+    """`models` are the configured ModelConfig rows; they price the per-model breakdown."""
     end_stamp = (end or now()).timestamp()
     start = end_stamp - hours * 3600
     first, last = int(start // 3600), int(end_stamp // 3600)
@@ -67,13 +82,21 @@ async def statistics(store, hours: int, end: datetime | None = None):
         "SELECT kind,data,created FROM records WHERE kind IN ('usage','turn') AND created>=? AND created<=?",
         (start, end_stamp),
     )
+    per_model: dict[str, dict] = {}
     for row in rows:
         bucket = buckets[int(row["created"] // 3600) - first]
         data = json.loads(row["data"])
         if row["kind"] == "usage":
             bucket["llm_calls"] += 1
+            name = str(data.get("model") or "")
+            entry = per_model.setdefault(
+                name,
+                {"model": name, "llm_calls": 0, **dict.fromkeys(TOKEN_FIELDS, 0)},
+            )
+            entry["llm_calls"] += 1
             for key, value in tokens(data.get("usage") or {}, data.get("protocol", "")).items():
                 bucket[key] += value
+                entry[key] += value
         elif data.get("status") == "failed":
             bucket["failed_turns"] += 1
     rows = await store.query(
@@ -88,6 +111,17 @@ async def statistics(store, hours: int, end: datetime | None = None):
         bucket = buckets[int(row["created"] // 3600) - first]
         bucket["incoming_messages" if role == "user" else "outgoing_messages"] += 1
         bucket["messages"] += 1
+    configured = {model.id: model for model in models}
+    costs: dict[str, float] = {}
+    for entry in per_model.values():
+        model = configured.get(entry["model"])
+        entry["cost"] = cost(entry, model)
+        entry["currency"] = model.currency if entry["cost"] is not None else None
+        entry["cache_hit_rate"] = (
+            entry["cached_tokens"] / entry["input_tokens"] if entry["input_tokens"] else None
+        )
+        if entry["cost"] is not None:
+            costs[entry["currency"]] = costs.get(entry["currency"], 0) + entry["cost"]
     return {
         "hours": hours,
         "timezone": "Asia/Shanghai",
@@ -95,4 +129,6 @@ async def statistics(store, hours: int, end: datetime | None = None):
         "start": datetime.fromtimestamp(start, timezone.utc).isoformat(),
         "end": datetime.fromtimestamp(end_stamp, timezone.utc).isoformat(),
         "totals": {key: sum(bucket[key] for bucket in buckets) for key in fields},
+        "models": sorted(per_model.values(), key=lambda row: (-row["total_tokens"], row["model"])),
+        "costs": costs,
     }

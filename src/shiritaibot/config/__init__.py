@@ -72,6 +72,12 @@ class ModelConfig(Instance):
     # embedding models only serve the embedding route; dims 0 keeps the model default.
     kind: Literal["text", "embedding"] = "text"
     dims: int = Field(default=0, ge=0, le=16384)
+    # Unit prices per million tokens, for dashboard cost estimates. All 0 means unpriced;
+    # price_cached 0 bills cache hits at price_input.
+    currency: Literal["USD", "CNY"] = "USD"
+    price_input: float = Field(default=0, ge=0, le=100000)
+    price_cached: float = Field(default=0, ge=0, le=100000)
+    price_output: float = Field(default=0, ge=0, le=100000)
 
     @field_validator("extra_body", mode="before")
     @classmethod

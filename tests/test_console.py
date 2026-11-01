@@ -178,6 +178,98 @@ async def test_statistics_window_and_message_exclusions(app):
     assert result["buckets"][0]["input_tokens"] == 10
 
 
+async def test_statistics_per_model_cache_rate_and_cost(app):
+    end = datetime(2026, 10, 27, 12, 30, tzinfo=timezone.utc)
+    rows = [
+        (
+            "priced",
+            "chat_completions",
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 200,
+                "prompt_tokens_details": {"cached_tokens": 400},
+            },
+        ),
+        (
+            "priced",
+            "anthropic",
+            {"input_tokens": 100, "cache_read_input_tokens": 500, "output_tokens": 100},
+        ),
+        ("cny", "chat_completions", {"prompt_tokens": 1_000_000}),
+        ("unpriced", "chat_completions", {"prompt_tokens": 10}),
+        ("gone", "chat_completions", {"prompt_tokens": 10}),
+    ]
+    for index, (model, protocol, usage) in enumerate(rows):
+        stamp = end.timestamp() - 60
+        await app.store.execute(
+            "INSERT INTO records VALUES(?,?,?,?,?,?)",
+            (
+                "usage",
+                str(index),
+                "",
+                canonical({"model": model, "protocol": protocol, "usage": usage}),
+                stamp,
+                stamp,
+            ),
+        )
+    models = [
+        ModelConfig(
+            id="priced", provider="p", model="m", price_input=2, price_cached=0.5, price_output=8
+        ),
+        ModelConfig(id="cny", provider="p", model="m", currency="CNY", price_input=1),
+        ModelConfig(id="unpriced", provider="p", model="m"),
+    ]
+    result = await statistics(app.store, 24, end, models)
+    by_model = {row["model"]: row for row in result["models"]}
+    priced = by_model["priced"]
+    assert (priced["llm_calls"], priced["input_tokens"], priced["cached_tokens"]) == (2, 1600, 900)
+    assert priced["output_tokens"] == 300
+    assert priced["cache_hit_rate"] == 900 / 1600
+    # 700 uncached * 2 + 900 cached * 0.5 + 300 output * 8, per million.
+    assert priced["cost"] == pytest.approx((700 * 2 + 900 * 0.5 + 300 * 8) / 1e6)
+    assert priced["currency"] == "USD"
+    # price_cached 0 bills cache hits at the input price.
+    assert by_model["cny"]["cost"] == pytest.approx(1.0) and by_model["cny"]["currency"] == "CNY"
+    assert by_model["unpriced"]["cost"] is None and by_model["gone"]["cost"] is None
+    assert result["costs"] == {"USD": pytest.approx(priced["cost"]), "CNY": pytest.approx(1.0)}
+    assert result["models"][0]["model"] == "cny"
+
+
+async def test_discovery_reads_listed_pricing(app):
+    def handle(request):
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "a",
+                        "pricing": {
+                            "prompt": "0.000002",
+                            "completion": "0.000008",
+                            "input_cache_read": "0.0000005",
+                        },
+                    },
+                    {"id": "b", "pricing": {"prompt": "-1", "completion": "-1"}},
+                    {"id": "c"},
+                ]
+            },
+        )
+
+    await app.llm.client.aclose()
+    app.llm.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    rows = await app.llm.discover(
+        ProviderConfig(id="p", base_url="https://fake.test/v1", api_key="k")
+    )
+    pricing = {row["id"]: row["pricing"] for row in rows}
+    assert pricing["a"] == {
+        "currency": "USD",
+        "price_input": 2.0,
+        "price_cached": 0.5,
+        "price_output": 8.0,
+    }
+    assert pricing["b"] is None and pricing["c"] is None
+
+
 async def test_commands_reset_archive_model_and_no_llm(app):
     ctx = Context("web:owner", "owner", "agent", True)
     await app.store.append(ctx.session, "old", {"role": "user", "content": "old context"})

@@ -856,6 +856,7 @@ embedding = { primary = "emb-cloud" }             # 模型 kind = "embedding"；
 
 - **Model** 记录能力（caps）、上下文长度和价格。WebUI 添加模型时，从内置的模型目录里自动填充已知模型的能力；未知模型手动填写。
 - **Model** 分三类：文本模型、判断模型（`systemone` 协议，如 TypeSafe Jev，只做判断不生成文本，只能放在 `router / light / memory` 路由）、Embedding 模型（`kind = "embedding"`，带 `dims`）。WebUI 模型页按这三类分为三个顶部标签：**语言模型 / 判断模型（Jev）/ Embedding**。
+- **价格**：模型字段 `currency`（`USD`/`CNY`）与 `price_input / price_cached / price_output`（每百万 token；全为 0 表示未设置，`price_cached` 为 0 时缓存命中按输入价计）。WebUI 可"从提供商获取单价"：读取模型列表中 OpenRouter 风格的 `pricing`（美元/token，换算成每百万）；OpenAI、Anthropic、Gemini 官方列表不带价格，需手动填写。概览的"模型用量"表据此按模型列出调用次数、输入/输出 token、缓存命中率与预估花费（缓存写入按输入价，不含分级定价）。
 - **Route** 是逻辑角色。代码里只引用路由（`agent / chat / light / memory / vision / embedding`），不直接引用模型。路由可以按作用域覆盖，例如某个群的 `chat` 路由用另一个模型。
 - WebUI 提供"测试连接"（发一个最小请求，显示延迟、是否支持工具调用、缓存字段是否返回）和"拉取模型列表"。
 

@@ -35,6 +35,32 @@ def merge_body(base: dict, extra: dict) -> dict:
 IMAGE_TOKENS = 1600
 
 
+def listed_pricing(pricing) -> dict | None:
+    """Per-million USD prices from an OpenRouter-style `pricing` object (USD per token).
+
+    Official OpenAI, Anthropic and Gemini model lists carry no prices; None means unknown.
+    """
+    if not isinstance(pricing, dict):
+        return None
+
+    def per_million(key):
+        try:
+            value = float(pricing.get(key) or 0)
+        except (TypeError, ValueError):
+            return None
+        # OpenRouter marks variable-price routers with -1.
+        return round(value * 1_000_000, 6) if math.isfinite(value) and value >= 0 else None
+
+    prices = {
+        "price_input": per_million("prompt"),
+        "price_cached": per_million("input_cache_read"),
+        "price_output": per_million("completion"),
+    }
+    if None in prices.values() or not any(prices.values()):
+        return None
+    return {"currency": "USD", **prices}
+
+
 def estimated_tokens(body: dict) -> int:
     # A shared heuristic, not a provider tokenizer: ASCII ~4 chars/token,
     # other characters ~1 token. Include system text, tool schemas and opaque state.
@@ -406,6 +432,7 @@ class ProviderManager:
                         "id": key,
                         "name": row.get("displayName", row.get("display_name", key)),
                         "max_output": row.get("outputTokenLimit", 4096),
+                        "pricing": listed_pricing(row.get("pricing")),
                     }
                 cursor = (
                     body.get("nextPageToken")

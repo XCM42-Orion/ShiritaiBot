@@ -85,6 +85,43 @@ export const PROVIDER_FIELDS: FieldSpec[] = [
   },
 ];
 
+const PRICE_FIELDS: FieldSpec[] = [
+  {
+    key: "currency",
+    label: "计价货币",
+    kind: "select",
+    options: ["USD", "CNY"],
+    optionLabels: { USD: "美元（USD）", CNY: "人民币（CNY）" },
+    help: "用于概览中的花费估算。可在下方从提供商获取单价，或按官网价格手动填写。",
+  },
+  {
+    key: "price_input",
+    label: "输入单价（每百万 tokens）",
+    kind: "number",
+    min: 0,
+    max: 100000,
+    step: 0.0001,
+    help: "三项单价都为 0 时表示未设置，概览不估算花费。",
+  },
+  {
+    key: "price_cached",
+    label: "缓存命中单价（每百万 tokens）",
+    kind: "number",
+    min: 0,
+    max: 100000,
+    step: 0.0001,
+    help: "0 表示按输入单价计算缓存命中的 tokens。",
+  },
+  {
+    key: "price_output",
+    label: "输出单价（每百万 tokens）",
+    kind: "number",
+    min: 0,
+    max: 100000,
+    step: 0.0001,
+  },
+];
+
 export const MODEL_FIELDS: FieldSpec[] = [
   { key: "id", label: "模型标识", kind: "text" },
   { key: "model", label: "提供商模型名称", kind: "text" },
@@ -126,6 +163,7 @@ export const MODEL_FIELDS: FieldSpec[] = [
     placeholder: '{"temperature": 0.7}',
     help: '按接口原生格式填写 JSON 对象，嵌套对象递归合并；Gemini 示例：{"generationConfig":{"temperature":0.7}}。参数覆盖默认值，但不能替换模型、对话或工具定义，也不能开启流式响应。',
   },
+  ...PRICE_FIELDS,
 ];
 
 export const EMBEDDING_MODEL_FIELDS: FieldSpec[] = [
@@ -158,6 +196,7 @@ export const EMBEDDING_MODEL_FIELDS: FieldSpec[] = [
     placeholder: '{"encoding_format": "float"}',
     help: "OpenAI 兼容接口按原生格式合并到 /embeddings 请求体；Gemini 接口不使用此项。",
   },
+  ...PRICE_FIELDS,
 ];
 
 export const ADAPTER_FIELDS: FieldSpec[] = [
