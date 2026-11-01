@@ -1996,6 +1996,7 @@ timezone = "Asia/Shanghai"
 ```bash
 git clone https://github.com/<you>/shiritaibot && cd shiritaibot
 uv sync                                   # 按 .python-version 和 uv.lock 准备 Python（≥ 3.12）与依赖
+uv pip install pip                        # .venv 默认不带 pip，补上后框架 shell 里的 python -m pip 可直接使用
 (cd web && npm ci && npm run build)       # 构建 WebUI（需要 Node；只在首次和前端有更新时执行）
 uv run shiritaibot init                     # 交互式初始化
 uv run shiritaibot run

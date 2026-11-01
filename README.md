@@ -65,6 +65,7 @@ ShiritaiBot践行“一切皆工具(和Skill，未来方向)”的理念，希�
 git clone https://github.com/XCM42-Orion/ShiritaiBot.git
 cd ShiritaiBot
 uv sync
+uv pip install pip   # .venv 默认不带 pip，补上后框架 shell 里的 python -m pip 可直接使用
 npm --prefix web ci
 npm --prefix web run build
 uv run shiritaibot run
