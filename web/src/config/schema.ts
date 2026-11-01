@@ -567,7 +567,7 @@ export const IDENTITY_FIELDS: FieldSpec[] = [
       contains: "包含即唤起（contains）",
       prefix: "仅句首唤起（prefix）",
     },
-    help: "句首匹配时，关键词须出现在消息文本开头；命中后句首关键词会被去掉再交给模型。",
+    help: "句首匹配时，关键词须出现在消息文本开头。消息原文（含关键词）会交给模型。",
   },
   {
     key: "private_require_keyword",

@@ -293,9 +293,17 @@ class AdapterHub:
         ):
             bot.log.debug("私聊未包含唤醒词，不处理", speaker)
             return
+        # The model sees the keyword as typed; it is only peeled off so that
+        # "小知，/stop" and the like still reach the command handlers.
         for word in sorted(settings.wake_keywords, key=len, reverse=True):
             if text.startswith(word):
-                text = text[len(word) :].lstrip(" ，,：:！!、")
+                rest = text[len(word) :].lstrip(" ，,：:！!、")
+                if (
+                    rest.startswith("/")
+                    or rest in {"停", "取消"}
+                    or re.fullmatch(r"(同意|拒绝)\s+([a-f0-9]{10})", rest)
+                ):
+                    text = rest
                 break
         if not await self.store.execute(
             "INSERT OR IGNORE INTO seen_messages VALUES(?,?)", (message_id, now().timestamp())
