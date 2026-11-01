@@ -113,7 +113,7 @@ const CATEGORIES: {
   },
   {
     key: "decision",
-    label: "判断模型（Jev）",
+    label: "决策模型（Systemone）",
     routes: DECISION_ROUTES,
     protocols: ["systemone"],
   },

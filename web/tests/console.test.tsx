@@ -653,7 +653,7 @@ describe("model categories", () => {
     let snapshot: Settings | null = null;
     renderModels(client, (next) => (snapshot = next));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "判断模型（Jev）" }));
+    await user.click(screen.getByRole("button", { name: "决策模型（Systemone）" }));
     expect(screen.queryByText("main")).toBeNull();
     await user.click(screen.getByLabelText("新增提供商"));
     expect(snapshot!.providers[1]).toMatchObject({
