@@ -31,7 +31,7 @@ export function SubagentsPage({
         onChange={(subagents) => setConfig({ ...config, subagents })}
         fields={subagentFields}
         subtitle={subagentSummary}
-        emptyText="添加 Codex、Claude Code 或自定义 CLI 实例。"
+        emptyText="添加 Codex、Claude Code、DeepSeek Harness 或自定义 CLI 实例。"
         renderActions={(item) => (
           <button
             type="button"

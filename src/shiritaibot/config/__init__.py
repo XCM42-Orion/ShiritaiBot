@@ -117,10 +117,11 @@ class AdapterConfig(Instance):
 
 
 CLAUDE_TOOL = re.compile(r"^[A-Za-z][\w.-]*(\(.*\))?$")
+DSH_PRESET = re.compile(r"^[A-Za-z][\w.-]*$")
 
 
 class SubagentConfig(Instance):
-    kind: Literal["codex", "claude_code", "generic"] = "codex"
+    kind: Literal["codex", "claude_code", "deepseek_harness", "generic"] = "codex"
     command: list[str] = Field(default_factory=lambda: ["codex"])
     timeout: int = Field(default=900, ge=5, le=7200)
     model: str = ""
@@ -137,7 +138,12 @@ class SubagentConfig(Instance):
     tools: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=lambda: ["Bash", "WebFetch", "WebSearch"])
     disallowed_tools: list[str] = Field(default_factory=list)
-    # Both: extra directories the agent may use (writable for Codex workspace-write).
+    # DeepSeek Harness (dsh --profile headless): a configured permission preset bundling
+    # sandbox mode and approval policy. Headless has no approval answerer, so "ask" fails
+    # closed as unavailable; "never" rejects up front and tells the model not to escalate.
+    permission_preset: str = "workspace-write"
+    approval_policy: Literal["ask", "never"] = "never"
+    # All: extra directories the agent may use (writable for Codex / dsh workspace-write).
     add_dirs: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -159,6 +165,14 @@ class SubagentConfig(Instance):
         value = list(dict.fromkeys(item.strip() for item in value if item.strip()))
         if any(not CLAUDE_TOOL.fullmatch(item) for item in value):
             raise ValueError("tool rules look like Bash, Edit or Bash(git *)")
+        return value
+
+    @field_validator("permission_preset")
+    @classmethod
+    def preset_name(cls, value: str) -> str:
+        value = value.strip()
+        if not DSH_PRESET.fullmatch(value) or value == "custom":
+            raise ValueError("permission_preset must name a configured dsh preset")
         return value
 
     @field_validator("add_dirs")

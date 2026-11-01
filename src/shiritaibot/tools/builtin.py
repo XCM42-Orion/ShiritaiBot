@@ -280,7 +280,7 @@ async def register_builtin(app) -> None:
         Tool(
             "shell",
             "在会话工作目录执行 bash，调用受当前工具权限配置约束。"
-            "不要用它启动 codex / claude 等外部 Agent，请改用 subagent_instances + subagent_start。",
+            "不要用它启动 codex / claude / dsh 等外部 Agent，请改用 subagent_instances + subagent_start。",
             schema(
                 {"command": TEXT, "timeout": {"type": "integer", "minimum": 1, "maximum": 120}},
                 ["command"],
@@ -347,12 +347,14 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "subagent_instances",
-            "查询当前已启用、可供 subagent_start 委派的子代理实例（如 Codex、Claude Code），"
-            "返回 id、kind、model、permissions。需要用 Codex / Claude Code 等外部 Agent 写代码、"
-            "查资料或做多步任务时，优先先调用本工具，而不是用 shell 直接运行 codex / claude 命令。"
+            "查询当前已启用、可供 subagent_start 委派的子代理实例（如 Codex、Claude Code、DeepSeek Harness），"
+            "返回 id、kind、model、permissions。需要用 Codex / Claude Code / DeepSeek Harness 等外部 Agent 写代码、"
+            "查资料或做多步任务时，优先先调用本工具，而不是用 shell 直接运行 codex / claude / dsh 命令。"
             "model 为空表示使用 CLI 默认模型；permissions 是该实例的权限配置："
             "Codex 为 sandbox（read-only / workspace-write / danger-full-access）与 network_access，"
             "Claude Code 为 permission_mode、tools、allowed_tools、disallowed_tools；"
+            "DeepSeek Harness（kind=deepseek_harness，模型由 dsh 配置决定）为 permission_preset"
+            "（如 workspace-write、danger-full-access）与 approval_policy；"
             "按任务所需权限选择实例。"
             "空列表表示没有已启用实例；此查询不会启动子代理或探测 CLI 是否安装。",
             schema({}),
@@ -361,8 +363,8 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "subagent_start",
-            "在后台启动已配置的外部 Agent 实例（Codex、Claude Code 等），立即返回任务 ID。"
-            "委派给 Codex / Claude Code 时必须优先用本工具，不要用 shell 直接运行 codex / claude："
+            "在后台启动已配置的外部 Agent 实例（Codex、Claude Code、DeepSeek Harness 等），立即返回任务 ID。"
+            "委派给 Codex / Claude Code / DeepSeek Harness 时必须优先用本工具，不要用 shell 直接运行 codex / claude / dsh："
             "本工具会使用配置好的模型与权限、隔离工作目录、限制并发与超时，并自动回报结果，"
             "shell 直接启动则可能卡在交互界面或残留进程。"
             "先用 subagent_instances 查询可用实例，将返回的 id 作为 instance 参数；"

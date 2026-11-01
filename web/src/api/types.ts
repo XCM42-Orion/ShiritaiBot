@@ -7,7 +7,9 @@ export type CodexSandbox =
   "read-only" | "workspace-write" | "danger-full-access";
 export type ClaudePermissionMode =
   "default" | "acceptEdits" | "auto" | "dontAsk" | "plan" | "bypassPermissions";
-export type SubagentKind = "codex" | "claude_code" | "generic";
+export type SubagentKind =
+  "codex" | "claude_code" | "deepseek_harness" | "generic";
+export type ApprovalPolicy = "ask" | "never";
 export type RoutineKind = "todo" | "event" | "reminder" | "job";
 export type Urgency = "low" | "normal" | "high" | "critical";
 
@@ -59,6 +61,8 @@ export interface SubagentConfig extends Instance {
   tools: string[];
   allowed_tools: string[];
   disallowed_tools: string[];
+  permission_preset: string;
+  approval_policy: ApprovalPolicy;
   add_dirs: string[];
 }
 

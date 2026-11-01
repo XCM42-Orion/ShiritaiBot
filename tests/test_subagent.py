@@ -269,3 +269,101 @@ async def test_subagent_question_activates_proactive_loop_and_resumes(app, tmp_p
     stranger = Context("private:qq:9", "9", "agent")
     with pytest.raises(PublicError):
         await app.subagents.send(stranger, row["id"], "hi")
+
+
+def test_deepseek_harness_permissions_map_to_headless_flags():
+    config = SubagentConfig(
+        id="d",
+        kind="deepseek_harness",
+        command=["dsh"],
+        permission_preset="danger-full-access",
+        add_dirs=["/srv/repo/.git"],
+        model="ignored",
+    )
+    fresh = command_for(config, Path("/w"))
+    assert fresh[:4] == ["dsh", "--profile", "headless", "--json"] and fresh[-1] == "-"
+
+    def flag(command, name):
+        return command[command.index(name) + 1]
+
+    assert flag(fresh, "--permission-mode") == "danger-full-access"
+    assert flag(fresh, "--approval-policy") == "never"
+    assert flag(fresh, "--add-dir") == "/srv/repo/.git"
+    assert "--session-id" not in fresh and "ignored" not in fresh
+    resumed = command_for(config, Path("/w"), "session-1")
+    assert flag(resumed, "--session-id") == "session-1"
+    # Policy options are per invocation, so a resume repeats them.
+    assert flag(resumed, "--permission-mode") == "danger-full-access"
+    with pytest.raises(ValueError):
+        SubagentConfig(id="d", kind="deepseek_harness", permission_preset="custom")
+
+
+def test_deepseek_harness_output_parsing():
+    lines = [
+        {"type": "session", "sessionId": "session-1", "cwd": "/w"},
+        {"type": "tool_call", "callId": "c1", "tool": "bash", "input": {"command": "rm -rf x"}},
+        {
+            "type": "tool_result",
+            "callId": "c1",
+            "status": "error",
+            "result": "",
+            "error": {"name": "ApprovalError", "code": "APPROVAL_REJECTED"},
+        },
+        {"type": "text", "text": "partial"},
+        {
+            "type": "final",
+            "sessionId": "session-1",
+            "reason": {"kind": "completed"},
+            "text": "done",
+        },
+    ]
+    parsed = parse_output("deepseek_harness", "\n".join(json.dumps(x) for x in lines))
+    assert parsed == {
+        "result": "done",
+        "native": "session-1",
+        "error": False,
+        "denied": ["bash(rm -rf x)"],
+    }
+    aborted = parse_output(
+        "deepseek_harness",
+        json.dumps({"type": "final", "sessionId": "s", "reason": {"kind": "aborted"}, "text": ""}),
+    )
+    assert aborted["error"] and aborted["native"] == "s"
+    failed = parse_output("deepseek_harness", json.dumps({"type": "error", "message": "no key"}))
+    assert failed["error"] and failed["result"] == "no key"
+
+
+FAKE_DSH = """
+import json, sys
+prompt = sys.stdin.read()
+assert sys.argv[1:4] == ["--profile", "headless", "--json"] and sys.argv[-1] == "-"
+resume = sys.argv[sys.argv.index("--session-id") + 1] if "--session-id" in sys.argv else None
+sid = resume or "session-abc"
+print(json.dumps({"type": "session", "sessionId": sid, "cwd": "."}))
+text = "用了 " + prompt.split("\\n")[0] if resume else "已检查\\nNEEDS_INPUT: 哪个分支？"
+print(json.dumps({"type": "final", "sessionId": sid, "reason": {"kind": "completed"}, "text": text}))
+"""
+
+
+async def test_deepseek_harness_run_asks_and_resumes_in_same_session(app, tmp_path):
+    script = tmp_path / "fake_dsh.py"
+    script.write_text(FAKE_DSH)
+    app.config.value.subagents = [
+        SubagentConfig(id="ds", kind="deepseek_harness", command=[sys.executable, str(script)])
+    ]
+
+    async def emit(event):
+        return event.dedup_key
+
+    app.subagents.emit = emit
+    row = await app.subagents.start(OWNER, "ds", "修 bug")
+
+    async def status(expected):
+        current = await app.store.get("subagent_run", row["id"])
+        return current if current["status"] == expected else None
+
+    waiting = await eventually(lambda: status("needs_input"))
+    assert waiting["question"] == "哪个分支？" and waiting["native_session_id"] == "session-abc"
+    await app.subagents.send(OWNER, row["id"], "main")
+    done = await eventually(lambda: status("completed"))
+    assert done["result"] == "用了 main" and done["exit_code"] == 0

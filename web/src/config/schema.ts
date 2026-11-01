@@ -215,10 +215,11 @@ const SUBAGENT_COMMON_FIELDS: FieldSpec[] = [
     key: "kind",
     label: "类型",
     kind: "select",
-    options: ["codex", "claude_code", "generic"],
+    options: ["codex", "claude_code", "deepseek_harness", "generic"],
     optionLabels: {
       codex: "Codex",
       claude_code: "Claude Code",
+      deepseek_harness: "DeepSeek Harness",
       generic: "自定义 CLI",
     },
   },
@@ -226,7 +227,7 @@ const SUBAGENT_COMMON_FIELDS: FieldSpec[] = [
     key: "command",
     label: "启动命令",
     kind: "list",
-    help: "每行一个参数，只填可执行程序（如 codex、claude）；权限参数由下方配置生成。",
+    help: "每行一个参数，只填可执行程序（如 codex、claude、dsh）；权限参数由下方配置生成。",
   },
   { key: "timeout", label: "超时（秒）", kind: "number", min: 5, max: 7200 },
   {
@@ -314,11 +315,41 @@ const CLAUDE_FIELDS: FieldSpec[] = [
   ADD_DIRS_FIELD,
 ];
 
+const DSH_FIELDS: FieldSpec[] = [
+  {
+    key: "permission_preset",
+    label: "权限预设",
+    kind: "text",
+    help: "对应 --permission-mode，填 dsh 中已配置的权限预设名。内置 workspace-write（只可写工作目录）与 danger-full-access（无沙箱）；auto 需先在 dsh 启用 Auto review。",
+  },
+  {
+    key: "approval_policy",
+    label: "审批策略",
+    kind: "select",
+    options: ["never", "ask"],
+    optionLabels: {
+      never: "直接拒绝需审批的操作（never）",
+      ask: "请求审批（ask）",
+    },
+    help: "对应 --approval-policy。headless 模式无人应答，ask 也会因无人回答而拒绝；never 会让模型事先知道不要请求提权。",
+  },
+  {
+    ...ADD_DIRS_FIELD,
+    help: "每行一个绝对路径，对应 --add-dir，workspace-write 下额外可写的目录。",
+  },
+];
+
 export function subagentFields(item: SubagentConfig): FieldSpec[] {
   if (item.kind === "codex")
     return [...SUBAGENT_COMMON_FIELDS, ...CODEX_FIELDS];
   if (item.kind === "claude_code")
     return [...SUBAGENT_COMMON_FIELDS, ...CLAUDE_FIELDS];
+  if (item.kind === "deepseek_harness")
+    // dsh has no model flag: the route comes from its own profile.
+    return [
+      ...SUBAGENT_COMMON_FIELDS.filter((field) => field.key !== "model"),
+      ...DSH_FIELDS,
+    ];
   return SUBAGENT_COMMON_FIELDS;
 }
 
@@ -327,6 +358,8 @@ export function subagentSummary(item: SubagentConfig): string {
     return "codex · " + item.sandbox + (item.network_access ? " · 联网" : "");
   if (item.kind === "claude_code")
     return "claude_code · " + item.permission_mode;
+  if (item.kind === "deepseek_harness")
+    return "deepseek_harness · " + item.permission_preset;
   return item.kind;
 }
 
@@ -680,6 +713,8 @@ export function createSubagent(rows: SubagentConfig[]): SubagentConfig {
     tools: [],
     allowed_tools: ["Bash", "WebFetch", "WebSearch"],
     disallowed_tools: [],
+    permission_preset: "workspace-write",
+    approval_policy: "never",
     add_dirs: [],
   };
 }

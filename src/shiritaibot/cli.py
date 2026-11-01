@@ -89,7 +89,7 @@ def doctor():
     import sys
 
     typer.echo(f"Python {sys.version.split()[0]} · SQLite {sqlite3.sqlite_version}")
-    for name in ["bash", "codex", "claude", "lark-cli", "node"]:
+    for name in ["bash", "codex", "claude", "dsh", "lark-cli", "node"]:
         typer.echo(f"{name}: {shutil.which(name) or 'not found'}")
     typer.echo("Windows 的 .cmd/.ps1 入口须改用原生 executable 或 node + CLI.js。")
 

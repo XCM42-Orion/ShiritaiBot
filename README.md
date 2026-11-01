@@ -50,7 +50,7 @@ ShiritaiBot践行“一切皆工具(和Skill，未来方向)”的理念，希�
 - 📅 **日程管理**：待办、日程、提醒和定时任务，可以根据对话自动整理
 - 💬 **情感陪伴**：高度自定义的人格配置，Chat / Work 模式分流，群聊上下文感知
 - 🔍 **网页搜索**：支持 Tavily、SerpAPI、DeepSeek Search 等多种网页搜索提供商
-- 🤖 **子代理**：调用本机 Codex / Claude Code / 通用 CLI（施工中），任务完成后由主动循环接手汇报
+- 🤖 **子代理**：调用本机 Codex / Claude Code / DeepSeek Harness / 通用 CLI（施工中），任务完成后由主动循环接手汇报
 - 🧩 **插件系统**：用插件添加工具或事件源，支持 ZIP / GitHub 安装和热重载
 - 🌐 **多模型路由**：支持 OpenAI Chat Completions / Responses、Anthropic、Gemini 协议，可设置主备模型和按任务路由，也可接入 Jev 等决策模型
 - 🖥️ **WebUI 控制台**：模型、连接、权限、记忆、日志、数据看板，都在浏览器里可视化管理

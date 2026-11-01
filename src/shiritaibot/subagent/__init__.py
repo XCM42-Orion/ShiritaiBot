@@ -73,6 +73,25 @@ def command_for(config, workspace: Path, resume: str | None = None) -> list[str]
             args += ["--model", config.model]
         if resume:
             args += ["--resume", resume]
+    elif config.kind == "deepseek_harness":
+        # `--profile headless` is a launcher flag and must precede the app arguments. Policy
+        # options apply per invocation (they are not saved), so resumes repeat them; resuming
+        # also requires the same cwd, which the run's workspace guarantees. No model flag
+        # exists: the route comes from the dsh profile.
+        args += [
+            "--profile",
+            "headless",
+            "--json",
+            "--permission-mode",
+            config.permission_preset,
+            "--approval-policy",
+            config.approval_policy,
+        ]
+        for directory in config.add_dirs:
+            args += ["--add-dir", directory]
+        if resume:
+            args += ["--session-id", resume]
+        args += ["-"]
     return args
 
 
@@ -93,7 +112,29 @@ def permissions(config) -> dict:
             "disallowed_tools": config.disallowed_tools,
             "add_dirs": config.add_dirs,
         }
+    if config.kind == "deepseek_harness":
+        return {
+            "permission_preset": config.permission_preset,
+            "approval_policy": config.approval_policy,
+            "add_dirs": config.add_dirs,
+        }
     return {}
+
+
+# dsh reports a rejected approval or sandbox block as a tool_result error code.
+DSH_DENIAL = ("APPROVAL", "DENIED", "REJECT", "PERMISSION", "SANDBOX")
+
+
+def denial(tool: str, detail) -> str:
+    target = next(
+        (
+            detail[k]
+            for k in ("command", "file_path", "path", "url", "pattern")
+            if isinstance(detail, dict) and k in detail
+        ),
+        "",
+    )
+    return f"{tool}({brief(str(target), 120)})" if target else tool
 
 
 def parse_output(kind: str, stdout: str) -> dict:
@@ -110,19 +151,10 @@ def parse_output(kind: str, stdout: str) -> dict:
                 native=obj.get("session_id"),
                 error=bool(obj.get("is_error")),
             )
-            for denial in obj.get("permission_denials") or []:
-                if isinstance(denial, dict):
-                    tool = denial.get("tool_name", "?")
-                    detail = denial.get("tool_input") or {}
-                    target = next(
-                        (
-                            detail[k]
-                            for k in ("command", "file_path", "url", "pattern")
-                            if isinstance(detail, dict) and k in detail
-                        ),
-                        "",
-                    )
-                    out["denied"].append(f"{tool}({brief(str(target), 120)})" if target else tool)
+            for denied in obj.get("permission_denials") or []:
+                if isinstance(denied, dict):
+                    tool = denied.get("tool_name", "?")
+                    out["denied"].append(denial(tool, denied.get("tool_input") or {}))
     elif kind == "codex":
         texts = []
         for line in stdout.splitlines():
@@ -139,6 +171,39 @@ def parse_output(kind: str, stdout: str) -> dict:
             if obj.get("type") in {"turn.failed", "error"}:
                 out["error"] = True
         out["result"] = "\n".join(texts) or stdout
+    elif kind == "deepseek_harness":
+        # NDJSON from `dsh headless --json`: session ... final (or error without final).
+        texts, calls, final = [], {}, None
+        for line in stdout.splitlines():
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            event = obj.get("type")
+            if event == "session":
+                out["native"] = obj.get("sessionId") or out["native"]
+            elif event == "text":
+                texts.append(obj.get("text", ""))
+            elif event == "tool_call":
+                calls[obj.get("callId")] = (obj.get("tool", "?"), obj.get("input"))
+            elif event == "tool_result" and isinstance(obj.get("error"), dict):
+                code = str(obj["error"].get("code", "")).upper()
+                if any(word in code for word in DSH_DENIAL):
+                    out["denied"].append(denial(*calls.get(obj.get("callId"), ("?", None))))
+            elif event == "error":
+                out["error"] = True
+                texts.append(obj.get("message", ""))
+            elif event == "final":
+                final = obj
+                out["native"] = obj.get("sessionId") or out["native"]
+        if final is not None:
+            reason = final.get("reason") or {}
+            out["error"] = out["error"] or reason.get("kind") != "completed"
+        else:
+            out["error"] = True
+        out["result"] = (final or {}).get("text") or "\n".join(t for t in texts if t) or stdout
     return out
 
 
