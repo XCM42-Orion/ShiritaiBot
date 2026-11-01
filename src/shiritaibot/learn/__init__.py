@@ -41,7 +41,10 @@ class OneLearnPlugin(Plugin):
         )
         self.context.register_tool(
             "learn_download",
-            "下载课件或作业附件到该插件私有目录。",
+            "下载课件或作业附件到该插件私有目录。"
+            "download 需要 course_id + file_id（来自 files 查询）；"
+            "download_homework_attachment 需要 homework_id + attachment_id"
+            "（来自 homework_attachments 查询），不要把附件 ID 放进 file_id。",
             schema(
                 {
                     "operation": {
