@@ -146,8 +146,13 @@ def test_subagent_arguments_never_disable_sandbox():
     for kind in ["codex", "claude_code"]:
         config = SubagentConfig(id="a", kind=kind)
         command = command_for(config, Path("workspace"))
-        assert not any("bypass" in p for p in command)
-        assert "read-only" in command if kind == "codex" else "Read,Glob,Grep" in command
+        assert not any("bypass" in p or "dangerously" in p for p in command)
+        if kind == "codex":
+            assert 'sandbox_mode="workspace-write"' in command
+            assert "sandbox_workspace_write.network_access=false" in command
+        else:
+            assert command[command.index("--permission-mode") + 1] == "acceptEdits"
+            assert command[command.index("--allowedTools") + 1] == "Bash,WebFetch,WebSearch"
 
 
 async def test_subagent_generic_executes_and_reports_completion(app):

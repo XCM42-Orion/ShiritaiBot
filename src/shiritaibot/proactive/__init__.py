@@ -221,11 +221,12 @@ def grade(decision: Decision) -> Literal["drop", "run"]:
 
 
 def delegated(event: dict) -> bool:
-    """A finished subagent run the owner asked for: always reported back, never re-triaged."""
-    return (
-        event["source"] == "subagent"
-        and event["kind"] == "subagent.completed"
-        and event.get("payload", {}).get("status") in {"completed", "failed"}
+    """A subagent run the owner asked for that finished or stopped for input: never re-triaged."""
+    if event["source"] != "subagent":
+        return False
+    status = event.get("payload", {}).get("status")
+    return (event["kind"] == "subagent.completed" and status in {"completed", "failed"}) or (
+        event["kind"] == "subagent.needs_input" and status == "needs_input"
     )
 
 
@@ -393,7 +394,9 @@ class ProactiveEngine:
                 importance=4,
                 decision="notify",
                 message=event.title,
-                reason="主人委派的子代理任务已结束，结果需要转告主人",
+                reason="主人委派的子代理任务需要输入，需要代为回答或转告主人"
+                if event.kind == "subagent.needs_input"
+                else "主人委派的子代理任务已结束，结果需要转告主人",
             )
         else:
             decision = await self.judge(event)
@@ -450,7 +453,18 @@ class ProactiveEngine:
             + "\n\n【分诊模型的初步判断】\n"
             + describe_decision(decision)
         )
-        if delegated(event):
+        if delegated(event) and event["kind"] == "subagent.needs_input":
+            run = event["payload"].get("run_id", "")
+            prompt += (
+                "\n\n这是主人委派给子代理的任务，子代理停下来请求输入（见 question）。"
+                "如果凭任务原文、已有记忆和你能用的工具就能可靠回答，且不涉及只能由主人决定的事"
+                "（花钱、删除或覆盖数据、对外发布或发送、放宽权限、主人的个人偏好），"
+                f"就调用 subagent_send（id={run}）直接回复让它继续，"
+                "再在 proactive_report 里简短告诉主人你替它回答了什么、它已继续运行。"
+                "否则用人设口吻把子代理的问题和已完成的进展转告主人，并说明主人回复后会继续该任务；"
+                "如果是权限不足，告诉主人可以在子代理配置里放宽哪项权限后再让它继续。"
+            )
+        elif delegated(event):
             prompt += (
                 "\n\n这是主人刚才在对话中委派给子代理的任务，主人正在等结果。"
                 "无需再用 subagent_list 或 shell 核查，直接根据上面的任务和结果，"

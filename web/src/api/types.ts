@@ -3,7 +3,10 @@
 
 export type Protocol =
   "chat_completions" | "responses" | "anthropic" | "gemini" | "systemone";
-export type Permission = "read_only" | "edit";
+export type CodexSandbox =
+  "read-only" | "workspace-write" | "danger-full-access";
+export type ClaudePermissionMode =
+  "default" | "acceptEdits" | "auto" | "dontAsk" | "plan" | "bypassPermissions";
 export type SubagentKind = "codex" | "claude_code" | "generic";
 export type RoutineKind = "todo" | "event" | "reminder" | "job";
 export type Urgency = "low" | "normal" | "high" | "critical";
@@ -48,9 +51,15 @@ export interface AdapterConfig extends Instance {
 export interface SubagentConfig extends Instance {
   kind: SubagentKind;
   command: string[];
-  permission: Permission;
   timeout: number;
   model: string;
+  sandbox: CodexSandbox;
+  network_access: boolean;
+  permission_mode: ClaudePermissionMode;
+  tools: string[];
+  allowed_tools: string[];
+  disallowed_tools: string[];
+  add_dirs: string[];
 }
 
 export interface PluginConfig extends Instance {
@@ -356,6 +365,10 @@ export interface SubagentRunRecord {
   exit_code?: number | null;
   native_session_id?: string | null;
   truncated?: boolean;
+  task?: string;
+  question?: string;
+  reply?: string;
+  round?: number;
 }
 
 export interface ReplyRecord {

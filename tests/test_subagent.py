@@ -1,12 +1,15 @@
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 import pytest
 from test_permissions import eventually
 
 from shiritaibot.config import SessionPolicy, SubagentConfig
-from shiritaibot.core import Context, Reply
+from shiritaibot.core import Context, PublicError, Reply
+from shiritaibot.proactive import delegated
+from shiritaibot.subagent import command_for, parse_output, question_in
 
 OWNER = Context("web:owner", "owner", "agent", True)
 
@@ -17,7 +20,7 @@ async def test_instances_describe_only_enabled_config_without_cli_arguments(app)
             id="coder",
             kind="codex",
             model="coding-model",
-            permission="edit",
+            network_access=True,
             command=["codex", "--private-argument"],
         ),
         SubagentConfig(id="reviewer", kind="claude_code", command=["claude"]),
@@ -25,10 +28,27 @@ async def test_instances_describe_only_enabled_config_without_cli_arguments(app)
         SubagentConfig(id="disabled", enabled=False),
     ]
     assert app.subagents.instances() == [
-        {"id": "coder", "kind": "codex", "model": "coding-model", "permission": "edit"},
-        {"id": "reviewer", "kind": "claude_code", "model": "", "permission": "read_only"},
-        {"id": "local", "kind": "generic", "model": "", "permission": "read_only"},
+        {
+            "id": "coder",
+            "kind": "codex",
+            "model": "coding-model",
+            "permissions": {"sandbox": "workspace-write", "network_access": True, "add_dirs": []},
+        },
+        {
+            "id": "reviewer",
+            "kind": "claude_code",
+            "model": "",
+            "permissions": {
+                "permission_mode": "acceptEdits",
+                "tools": "default",
+                "allowed_tools": ["Bash", "WebFetch", "WebSearch"],
+                "disallowed_tools": [],
+                "add_dirs": [],
+            },
+        },
+        {"id": "local", "kind": "generic", "model": "", "permissions": {}},
     ]
+    assert "--private-argument" not in json.dumps(app.subagents.instances())
 
 
 async def test_instances_tool_tracks_reconfiguration_and_keeps_runs_separate(app):
@@ -122,3 +142,130 @@ async def test_agent_discovers_instance_then_starts_it_with_existing_approval(ap
 
     runs = await eventually(completed)
     assert runs[0]["result"].strip() == "HELLO"
+
+
+def test_legacy_permission_migrates_to_cli_specific_settings():
+    read = SubagentConfig.model_validate({"id": "a", "kind": "codex", "permission": "read_only"})
+    assert read.sandbox == "read-only"
+    assert (read.permission_mode, read.tools, read.allowed_tools) == (
+        "dontAsk",
+        ["Read", "Glob", "Grep"],
+        [],
+    )
+    edit = SubagentConfig.model_validate({"id": "a", "kind": "claude_code", "permission": "edit"})
+    assert edit == SubagentConfig(id="a", kind="claude_code")
+    with pytest.raises(ValueError):
+        SubagentConfig(id="a", add_dirs=["relative/path"])
+    with pytest.raises(ValueError):
+        SubagentConfig(id="a", allowed_tools=["rm -rf"])
+
+
+def test_codex_permissions_map_to_config_overrides_for_fresh_and_resumed_runs():
+    config = SubagentConfig(
+        id="c", kind="codex", network_access=True, add_dirs=["/srv/repo"], model="m"
+    )
+    fresh = command_for(config, Path("/w"))
+    assert fresh[:2] == ["codex", "exec"] and fresh[-3:] == ["-C", "/w", "-"]
+    resumed = command_for(config, Path("/w"), "thread-1")
+    assert resumed[:3] == ["codex", "exec", "resume"] and resumed[-2:] == ["thread-1", "-"]
+    for command in (fresh, resumed):
+        assert "sandbox_workspace_write.network_access=true" in command
+        assert 'sandbox_workspace_write.writable_roots=["/srv/repo"]' in command
+    full = command_for(SubagentConfig(id="c", sandbox="danger-full-access"), Path("/w"))
+    assert not any(arg.startswith("sandbox_workspace_write") for arg in full)
+
+
+def test_claude_permissions_map_to_cli_flags():
+    config = SubagentConfig(
+        id="c",
+        kind="claude_code",
+        command=["claude"],
+        permission_mode="dontAsk",
+        tools=["Read", "Bash"],
+        allowed_tools=["Read", "Bash(git *)"],
+        disallowed_tools=["Bash(rm *)"],
+        add_dirs=["/srv/repo"],
+    )
+    command = command_for(config, Path("/w"), "session-1")
+
+    def flag(name):
+        return command[command.index(name) + 1]
+
+    assert flag("--permission-mode") == "dontAsk"
+    assert flag("--tools") == "Read,Bash"
+    assert flag("--allowedTools") == "Read,Bash(git *)"
+    assert flag("--disallowedTools") == "Bash(rm *)"
+    assert flag("--add-dir") == "/srv/repo"
+    assert flag("--resume") == "session-1"
+
+
+def test_needs_input_marker_and_output_parsing():
+    assert question_in("做完了一半\n\n**NEEDS_INPUT: 用哪个分支？**") == "用哪个分支？"
+    assert question_in("全部完成") is None
+    parsed = parse_output(
+        "claude_code",
+        json.dumps(
+            {
+                "result": "无法写入",
+                "session_id": "s",
+                "permission_denials": [{"tool_name": "Bash", "tool_input": {"command": "ls"}}],
+            }
+        ),
+    )
+    assert parsed["native"] == "s" and parsed["denied"] == ["Bash(ls)"]
+
+
+FAKE_CLAUDE = """
+import json, sys
+prompt = sys.stdin.read()
+assert "NEEDS_INPUT" in prompt
+if "--resume" in sys.argv:
+    text = "用了 " + prompt.split("\\n")[0]
+else:
+    text = "已检查仓库\\nNEEDS_INPUT: 要部署到哪个环境？"
+print(json.dumps({"result": text, "session_id": "native-1", "is_error": False}))
+"""
+
+
+async def test_subagent_question_activates_proactive_loop_and_resumes(app, tmp_path):
+    script = tmp_path / "fake_claude.py"
+    script.write_text(FAKE_CLAUDE)
+    app.config.value.subagents = [
+        SubagentConfig(id="cc", kind="claude_code", command=[sys.executable, str(script)])
+    ]
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        return event.dedup_key
+
+    app.subagents.emit = emit
+    row = await app.subagents.start(OWNER, "cc", "部署服务")
+
+    async def status(expected):
+        current = await app.store.get("subagent_run", row["id"])
+        return current if current["status"] == expected else None
+
+    waiting = await eventually(lambda: status("needs_input"))
+    assert waiting["question"] == "要部署到哪个环境？"
+    assert waiting["native_session_id"] == "native-1"
+    assert events[0].kind == "subagent.needs_input" and events[0].urgency == "high"
+    assert events[0].payload["question"] == "要部署到哪个环境？"
+    assert delegated(events[0].model_dump(mode="json"))
+
+    # The Proactive loop (another owner session) answers in the same native session.
+    proactive = Context("background:proactive:x", "owner", "agent", True, background=True)
+    assert "subagent_send" in [s["function"]["name"] for s in app.registry.specs(proactive)]
+    sent = await app.subagents.send(proactive, row["id"], "staging")
+    assert sent["status"] == "queued"
+    with pytest.raises(PublicError):
+        await app.subagents.send(proactive, row["id"], "again while running")
+    done = await eventually(lambda: status("completed"))
+    assert done["result"] == "用了 staging" and done["round"] == 1
+    assert done["scope"] == OWNER.session and "question" not in done
+    assert [e.dedup_key for e in events] == [f"{row['id']}:0", f"{row['id']}:1"]
+    assert events[1].kind == "subagent.completed" and events[1].payload["reply"] == "staging"
+
+    stranger = Context("private:qq:9", "9", "agent")
+    with pytest.raises(PublicError):
+        await app.subagents.send(stranger, row["id"], "hi")

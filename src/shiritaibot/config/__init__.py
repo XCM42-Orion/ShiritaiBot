@@ -116,12 +116,58 @@ class AdapterConfig(Instance):
     ignore_users: list[str] = Field(default_factory=list)
 
 
+CLAUDE_TOOL = re.compile(r"^[A-Za-z][\w.-]*(\(.*\))?$")
+
+
 class SubagentConfig(Instance):
     kind: Literal["codex", "claude_code", "generic"] = "codex"
     command: list[str] = Field(default_factory=lambda: ["codex"])
-    permission: Literal["read_only", "edit"] = "read_only"
     timeout: int = Field(default=900, ge=5, le=7200)
     model: str = ""
+    # Codex (codex exec) mirrors config.toml: sandbox_mode and
+    # sandbox_workspace_write.network_access. Exec mode never asks for approval.
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = "workspace-write"
+    network_access: bool = False
+    # Claude Code (claude -p) mirrors settings.json permissions: defaultMode, allow, deny.
+    # Print mode has nobody to answer prompts, so anything not allowed here is denied.
+    permission_mode: Literal[
+        "default", "acceptEdits", "auto", "dontAsk", "plan", "bypassPermissions"
+    ] = "acceptEdits"
+    # Built-in tool set (--tools); empty keeps the CLI default set.
+    tools: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=lambda: ["Bash", "WebFetch", "WebSearch"])
+    disallowed_tools: list[str] = Field(default_factory=list)
+    # Both: extra directories the agent may use (writable for Codex workspace-write).
+    add_dirs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_permission(cls, data):
+        # Old files used permission = read_only | edit; edit maps onto the new defaults.
+        if isinstance(data, dict) and "permission" in data:
+            data = dict(data)
+            if data.pop("permission") == "read_only":
+                data.setdefault("sandbox", "read-only")
+                data.setdefault("permission_mode", "dontAsk")
+                data.setdefault("tools", ["Read", "Glob", "Grep"])
+                data.setdefault("allowed_tools", [])
+        return data
+
+    @field_validator("tools", "allowed_tools", "disallowed_tools")
+    @classmethod
+    def tool_names(cls, value: list[str]) -> list[str]:
+        value = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if any(not CLAUDE_TOOL.fullmatch(item) for item in value):
+            raise ValueError("tool rules look like Bash, Edit or Bash(git *)")
+        return value
+
+    @field_validator("add_dirs")
+    @classmethod
+    def absolute_dirs(cls, value: list[str]) -> list[str]:
+        value = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if any(not os.path.isabs(os.path.expanduser(item)) for item in value):
+            raise ValueError("add_dirs must be absolute paths")
+        return [os.path.expanduser(item) for item in value]
 
 
 class PluginConfig(Instance):

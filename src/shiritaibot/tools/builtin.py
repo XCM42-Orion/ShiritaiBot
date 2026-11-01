@@ -158,6 +158,15 @@ async def register_builtin(app) -> None:
             "请直接简短告诉对方任务已委派、稍后回报结果，然后结束本轮回复。",
         }
 
+    async def subagent_send(ctx, args):
+        row = await app.subagents.send(ctx, args["id"], args["message"])
+        return {
+            "id": row["id"],
+            "status": row["status"],
+            "round": row["round"],
+            "note": "已在原会话中续接子代理，它停下或完成后结果会再次自动转告，无需等待或轮询。",
+        }
+
     async def subagent_list(ctx, args):
         return await app.store.list("subagent_run", scope=ctx.session)
 
@@ -339,9 +348,12 @@ async def register_builtin(app) -> None:
         Tool(
             "subagent_instances",
             "查询当前已启用、可供 subagent_start 委派的子代理实例（如 Codex、Claude Code），"
-            "返回 id、kind、model、permission。需要用 Codex / Claude Code 等外部 Agent 写代码、"
+            "返回 id、kind、model、permissions。需要用 Codex / Claude Code 等外部 Agent 写代码、"
             "查资料或做多步任务时，优先先调用本工具，而不是用 shell 直接运行 codex / claude 命令。"
-            "model 为空表示使用 CLI 默认模型；permission 为 read_only（只读）或 edit（可编辑）。"
+            "model 为空表示使用 CLI 默认模型；permissions 是该实例的权限配置："
+            "Codex 为 sandbox（read-only / workspace-write / danger-full-access）与 network_access，"
+            "Claude Code 为 permission_mode、tools、allowed_tools、disallowed_tools；"
+            "按任务所需权限选择实例。"
             "空列表表示没有已启用实例；此查询不会启动子代理或探测 CLI 是否安装。",
             schema({}),
             subagent_instances,
@@ -355,14 +367,27 @@ async def register_builtin(app) -> None:
             "shell 直接启动则可能卡在交互界面或残留进程。"
             "先用 subagent_instances 查询可用实例，将返回的 id 作为 instance 参数；"
             "prompt 要写清楚完整任务，子代理看不到当前对话。子代理异步运行，完成后系统会自动把结果转告主人；"
-            "启动后请告知已委派并结束本轮，不要等待或轮询结果。",
+            "启动后请告知已委派并结束本轮，不要等待或轮询结果。"
+            "子代理若停下请求输入（status=needs_input），系统同样会自动转告。",
             schema({"instance": TEXT, "prompt": TEXT}, ["instance", "prompt"]),
             subagent_start,
             risk="dangerous",
         ),
         Tool(
+            "subagent_send",
+            "向已停下的子代理任务发送回复或追加指令，在其原生会话和工作目录中续接运行。"
+            "用于回答 status=needs_input 任务的 question（例如主人回复了子代理的问题），"
+            "或让已完成的任务继续改进。id 是子代理运行 ID（可用 subagent_list 查看）；"
+            "message 要完整写清回答或新指令。续接后异步运行，结果会自动转告，不要等待或轮询。",
+            schema({"id": TEXT, "message": TEXT}, ["id", "message"]),
+            subagent_send,
+            risk="dangerous",
+        ),
+        Tool(
             "subagent_list",
-            "查看当前会话的子代理任务状态与结果；仅在被问到任务进度时使用，不要用来等待刚启动的任务",
+            "查看当前会话的子代理任务状态与结果；status=needs_input 表示子代理在等待回复"
+            "（question 为其问题，用 subagent_send 回复）。仅在被问到任务进度或需要回复子代理时使用，"
+            "不要用来等待刚启动的任务",
             schema({}),
             subagent_list,
             risk="safe",

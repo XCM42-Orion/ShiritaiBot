@@ -11,7 +11,7 @@ interface InstanceCollectionProps<T extends Instance> {
   items: T[];
   create: () => T;
   onChange: (items: T[]) => void;
-  fields: FieldSpec[];
+  fields: FieldSpec[] | ((item: T) => FieldSpec[]);
   subtitle: (item: T) => string;
   emptyText: string;
   renderActions?: (item: T, update: (next: T) => void) => ReactNode;
@@ -91,7 +91,11 @@ export function InstanceCollection<T extends Instance>({
                   </div>
                   <span className={"dot " + (item.enabled ? "on" : "")} />
                 </div>
-                <FieldForm value={item} fields={fields} onChange={update} />
+                <FieldForm
+                  value={item}
+                  fields={typeof fields === "function" ? fields(item) : fields}
+                  onChange={update}
+                />
                 {renderExtra?.(item, update)}
                 <div className="actions">
                   {renderActions?.(item, update)}

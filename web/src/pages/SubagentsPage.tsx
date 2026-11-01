@@ -3,7 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Details } from "../components/Details";
 import { EmptyState } from "../components/EmptyState";
 import { InstanceCollection } from "../components/InstanceCollection";
-import { SUBAGENT_FIELDS, createSubagent } from "../config/schema";
+import {
+  createSubagent,
+  subagentFields,
+  subagentSummary,
+} from "../config/schema";
 import type { ConfigPageProps } from "./common";
 
 export function SubagentsPage({
@@ -25,8 +29,8 @@ export function SubagentsPage({
         items={config.subagents}
         create={() => createSubagent(config.subagents)}
         onChange={(subagents) => setConfig({ ...config, subagents })}
-        fields={SUBAGENT_FIELDS}
-        subtitle={(item) => item.kind + " · " + item.permission}
+        fields={subagentFields}
+        subtitle={subagentSummary}
         emptyText="添加 Codex、Claude Code 或自定义 CLI 实例。"
         renderActions={(item) => (
           <button
@@ -50,6 +54,12 @@ export function SubagentsPage({
               <strong>{row.instance}</strong>
               <span className="tag">{row.status}</span>
             </div>
+            {row.status === "needs_input" && row.question && (
+              <p>
+                <strong>等待回复：</strong>
+                {row.question}
+              </p>
+            )}
             <p>{row.result || row.error || row.workspace}</p>
             {(row.status === "running" || row.status === "queued") && (
               <button

@@ -203,7 +203,7 @@ export const ADAPTER_FIELDS: FieldSpec[] = [
   },
 ];
 
-export const SUBAGENT_FIELDS: FieldSpec[] = [
+const SUBAGENT_COMMON_FIELDS: FieldSpec[] = [
   { key: "id", label: "实例标识", kind: "text" },
   {
     key: "enabled",
@@ -216,18 +216,17 @@ export const SUBAGENT_FIELDS: FieldSpec[] = [
     label: "类型",
     kind: "select",
     options: ["codex", "claude_code", "generic"],
+    optionLabels: {
+      codex: "Codex",
+      claude_code: "Claude Code",
+      generic: "自定义 CLI",
+    },
   },
   {
     key: "command",
     label: "启动命令",
     kind: "list",
-    help: "每行一个参数，例如第一行 codex，第二行 exec。",
-  },
-  {
-    key: "permission",
-    label: "权限范围",
-    kind: "select",
-    options: ["read_only", "edit"],
+    help: "每行一个参数，只填可执行程序（如 codex、claude）；权限参数由下方配置生成。",
   },
   { key: "timeout", label: "超时（秒）", kind: "number", min: 5, max: 7200 },
   {
@@ -237,6 +236,99 @@ export const SUBAGENT_FIELDS: FieldSpec[] = [
     help: "留空则使用 CLI 的默认模型。",
   },
 ];
+
+const ADD_DIRS_FIELD: FieldSpec = {
+  key: "add_dirs",
+  label: "额外目录",
+  kind: "list",
+  help: "每行一个绝对路径。子代理默认只在独立的任务工作目录内工作，这里列出它还可以访问的目录。",
+  full: true,
+};
+
+const CODEX_FIELDS: FieldSpec[] = [
+  {
+    key: "sandbox",
+    label: "沙箱模式",
+    kind: "select",
+    options: ["read-only", "workspace-write", "danger-full-access"],
+    optionLabels: {
+      "read-only": "只读（read-only）",
+      "workspace-write": "可写工作目录（workspace-write）",
+      "danger-full-access": "完全访问，无沙箱（danger-full-access）",
+    },
+    help: "对应 Codex 的 sandbox_mode。后台运行不会请求审批，沙箱外的操作直接失败。",
+  },
+  {
+    key: "network_access",
+    label: "允许联网",
+    kind: "boolean",
+    help: "对应 sandbox_workspace_write.network_access，仅在可写工作目录模式下生效；完全访问模式始终可联网。",
+  },
+  {
+    ...ADD_DIRS_FIELD,
+    help: "每行一个绝对路径，作为 workspace-write 模式下额外可写的目录（writable_roots）。",
+  },
+];
+
+const CLAUDE_FIELDS: FieldSpec[] = [
+  {
+    key: "permission_mode",
+    label: "权限模式",
+    kind: "select",
+    options: [
+      "acceptEdits",
+      "default",
+      "dontAsk",
+      "auto",
+      "plan",
+      "bypassPermissions",
+    ],
+    optionLabels: {
+      acceptEdits: "自动接受文件编辑（acceptEdits）",
+      default: "默认（default）",
+      dontAsk: "仅允许列表内的工具（dontAsk）",
+      auto: "自动判断（auto）",
+      plan: "只规划不执行（plan）",
+      bypassPermissions: "跳过所有权限检查（bypassPermissions）",
+    },
+    help: "对应 permissions.defaultMode。后台无人应答权限请求，未被模式或允许列表放行的操作会被拒绝。",
+  },
+  {
+    key: "tools",
+    label: "可用工具集",
+    kind: "list",
+    help: "每行一个内置工具名（如 Read、Edit、Bash），留空使用 CLI 默认工具集。",
+  },
+  {
+    key: "allowed_tools",
+    label: "允许的工具",
+    kind: "list",
+    help: "对应 permissions.allow，无需确认即可使用。每行一条，如 Bash、WebFetch、Bash(git *)。",
+  },
+  {
+    key: "disallowed_tools",
+    label: "禁止的工具",
+    kind: "list",
+    help: "对应 permissions.deny，优先级高于允许列表。每行一条，如 Bash(rm *)。",
+  },
+  ADD_DIRS_FIELD,
+];
+
+export function subagentFields(item: SubagentConfig): FieldSpec[] {
+  if (item.kind === "codex")
+    return [...SUBAGENT_COMMON_FIELDS, ...CODEX_FIELDS];
+  if (item.kind === "claude_code")
+    return [...SUBAGENT_COMMON_FIELDS, ...CLAUDE_FIELDS];
+  return SUBAGENT_COMMON_FIELDS;
+}
+
+export function subagentSummary(item: SubagentConfig): string {
+  if (item.kind === "codex")
+    return "codex · " + item.sandbox + (item.network_access ? " · 联网" : "");
+  if (item.kind === "claude_code")
+    return "claude_code · " + item.permission_mode;
+  return item.kind;
+}
 
 export const POLICY_FIELDS: FieldSpec[] = [
   {
@@ -580,9 +672,15 @@ export function createSubagent(rows: SubagentConfig[]): SubagentConfig {
     enabled: false,
     kind: "codex",
     command: ["codex"],
-    permission: "read_only",
     timeout: 900,
     model: "",
+    sandbox: "workspace-write",
+    network_access: false,
+    permission_mode: "acceptEdits",
+    tools: [],
+    allowed_tools: ["Bash", "WebFetch", "WebSearch"],
+    disallowed_tools: [],
+    add_dirs: [],
   };
 }
 

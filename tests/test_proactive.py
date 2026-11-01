@@ -383,6 +383,31 @@ async def test_delegated_subagent_result_skips_triage_and_is_always_reported(loo
     assert (await loop.store.get("notification", key))["status"] == "sent"
 
 
+async def test_subagent_waiting_for_input_starts_a_loop_that_can_answer_it(loop):
+    judge = loop.proactive.llm
+    loop.runtime.llm = Agent(notify=False)
+    event = ExternalEvent(
+        source="subagent",
+        kind="subagent.needs_input",
+        dedup_key="run-3:0",
+        title="子代理 coder: 等待输入",
+        urgency="high",
+        payload={
+            "run_id": "run-3",
+            "status": "needs_input",
+            "task": "部署服务",
+            "question": "要部署到哪个环境？",
+        },
+    )
+    key = await loop.proactive.emit(event)
+    await loop.proactive.tick()
+    row = await finished(loop, key)
+    assert judge.calls == 0 and row["decision"]["importance"] == 4
+    prompt = loop.runtime.llm.inputs[0][0][-1]["content"]
+    assert "要部署到哪个环境？" in prompt and "subagent_send（id=run-3）" in prompt
+    assert row["notification_queued"]
+
+
 async def test_cancelled_subagent_goes_through_normal_triage(loop):
     event = ExternalEvent(
         source="subagent",
