@@ -11,6 +11,7 @@ import httpx
 from shiritaibot.adapters.onebot11 import qq_download_url
 from shiritaibot.core import PublicError, Tool, now
 from shiritaibot.core.process import run_process
+from shiritaibot.meme.tools import meme_tools
 from shiritaibot.memory.tools import memory_tools
 from shiritaibot.routine import FINISHED, KEEP_FINISHED, RoutineItem
 from shiritaibot.tools import TEXT, schema
@@ -421,6 +422,7 @@ async def register_builtin(app) -> None:
     ]
     entries += memory_tools(app.memory)
     entries += qq_tools(app)
+    entries += meme_tools(app)
     if await search_token(app.config.value.web_search, app.vault):
         entries.append(
             Tool(

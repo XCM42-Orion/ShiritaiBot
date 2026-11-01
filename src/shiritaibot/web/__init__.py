@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -19,6 +19,7 @@ from shiritaibot.app import Application
 from shiritaibot.config import ModelConfig, ProviderConfig, Settings
 from shiritaibot.core import Context, ExternalEvent, Model, PublicError, canonical, logs
 from shiritaibot.core.process import run_process
+from shiritaibot.meme.core import MAX_MEME_BYTES
 from shiritaibot.plugin.core.packages import MAX_ARCHIVE, download_github, validate_id
 from shiritaibot.routine import RoutineItem
 from shiritaibot.store.statistics import statistics
@@ -45,6 +46,11 @@ class ApprovalInput(Model):
 class ModelTestInput(Model):
     provider: ProviderConfig
     model: ModelConfig
+
+
+class MemeInput(Model):
+    category: str | None = Field(default=None, max_length=32)
+    description: str | None = Field(default=None, max_length=300)
 
 
 class PluginRepositoryInput(Model):
@@ -301,6 +307,64 @@ def create_app(
     @api.get("/api/memory/{key}", dependencies=protected)
     async def memory_detail(key: str):
         return await runtime.memory.get(key)
+
+    @api.get("/api/memes", dependencies=protected)
+    async def memes(
+        category: str = "",
+        q: str = "",
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=24, ge=1, le=100),
+    ):
+        core = runtime.memes.core
+        return {
+            **core.listing(category[:32], q[:200].strip(), page, page_size),
+            "count": core.count,
+            "capacity": runtime.config.value.meme.capacity,
+            "counts": core.counts(),
+            "index": await core.vectors.status(core.documents()),
+        }
+
+    @api.post("/api/memes", dependencies=protected)
+    async def meme_upload(
+        request: Request,
+        category: str = Query(default="", max_length=32),
+        description: str = Query(default="", max_length=300),
+    ):
+        data = bytearray()
+        async for chunk in request.stream():
+            data.extend(chunk)
+            if len(data) > MAX_MEME_BYTES:
+                raise HTTPException(413, "表情图片不能超过 2 MB")
+        # Uploads skip the persona check and capacity: the owner chose them.
+        return await runtime.memes.core.ingest(
+            bytes(data), source="manual", category=category, description=description
+        )
+
+    @api.get("/api/memes/{key}/image", dependencies=protected)
+    async def meme_image(key: str):
+        core = runtime.memes.core
+        data = await core.image(key)
+        if data is None:
+            raise HTTPException(404, "表情不存在")
+        return Response(data, media_type=core.items[key].get("mime") or "image/png")
+
+    @api.put("/api/memes/{key}", dependencies=protected)
+    async def meme_update(key: str, body: MemeInput):
+        return await runtime.memes.core.update(key, body.category, body.description)
+
+    @api.post("/api/memes/{key}/describe", dependencies=protected)
+    async def meme_describe(key: str):
+        core = runtime.memes.core
+        data = await core.image(key)
+        if data is None:
+            raise HTTPException(404, "表情不存在")
+        description = await core.describe(data, runtime.config.value)
+        return await core.update(key, None, description)
+
+    @api.delete("/api/memes/{key}", dependencies=protected)
+    async def meme_delete(key: str):
+        await runtime.memes.core.delete(key)
+        return {"ok": True}
 
     @api.post("/api/routines", dependencies=protected)
     async def routine(body: RoutineItem):

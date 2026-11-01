@@ -132,6 +132,42 @@ export interface VisionConfig {
   max_images: number;
 }
 
+export interface MemeCategory {
+  name: string;
+  description: string;
+}
+
+export interface MemeConfig {
+  enabled: boolean;
+  capacity: number;
+  categories: MemeCategory[];
+  collect: boolean;
+  collect_rate: number;
+  stickers_only: boolean;
+  persona_check: boolean;
+  fit_threshold: number;
+  inject: boolean;
+  max_per_reply: number;
+}
+
+export interface MemeRecord {
+  id: string;
+  category: string;
+  description: string;
+  mime: string | null;
+  bytes: number;
+  source: "group" | "agent" | "manual";
+  origin: string;
+  created: string;
+}
+
+export interface MemeListing extends Paginated<MemeRecord> {
+  count: number;
+  capacity: number;
+  counts: Record<string, number>;
+  index: MemoryStatus;
+}
+
 export interface GroupContextConfig {
   enabled: boolean;
   inject_messages: number;
@@ -242,6 +278,7 @@ export interface Settings {
   group_context: GroupContextConfig;
   memory: MemoryConfig;
   vision: VisionConfig;
+  meme: MemeConfig;
 }
 
 export interface Health {

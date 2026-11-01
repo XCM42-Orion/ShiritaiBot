@@ -877,3 +877,85 @@
   margin-right: 6px;
   border-radius: 2px;
 }
+
+/* Meme manager */
+.meme-categories {
+  display: grid;
+  gap: 8px;
+}
+
+.meme-category {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.meme-category small {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.meme-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.meme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.meme-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.meme-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.meme-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.meme-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.meme-card textarea {
+  resize: vertical;
+  font-size: 12px;
+}
+
+.meme-card .actions {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .meme-upload,
+  .meme-category {
+    grid-template-columns: 1fr;
+  }
+}

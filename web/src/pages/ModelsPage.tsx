@@ -71,6 +71,11 @@ const ROUTES: { key: string; label: string; help: string }[] = [
     help: "做什么：主模型不支持图像输入时，把上下文中的图片描述成文字，结果按图片缓存。适合：便宜、看图准确、能转录图中文字的多模态模型。只能选择模态包含图像的模型。",
   },
   {
+    key: "meme",
+    label: "表情转述与分类模型",
+    help: "做什么：表情管理器为收录的表情包写简短文字描述（用于检索，也给看不到图的模型看），并判断表情是否贴合人设、属于哪个分类。适合：便宜快速的多模态轻量模型；Jev 等判断模型可放在前面负责人设与分类判断，转述仍由后面的多模态模型完成。文本模型只能选择模态包含图像的模型。",
+  },
+  {
     key: "embedding",
     label: "Embedding 模型",
     help: "做什么：为记忆条目和查询计算向量，用于语义检索。适合：支持中文的 Embedding 模型。只使用第一个可用模型；更换后后台全量重算，期间只用关键词检索。留空时记忆检索只用名称链接和关键词。",
@@ -78,7 +83,7 @@ const ROUTES: { key: string; label: string; help: string }[] = [
 ];
 
 // Decision models (systemone) classify only, so they fit just these routes.
-const DECISION_ROUTES = ["router", "light", "memory", "approval"];
+const DECISION_ROUTES = ["router", "light", "memory", "approval", "meme"];
 const EMBEDDING_PROTOCOLS: Protocol[] = [
   "chat_completions",
   "responses",
@@ -108,6 +113,7 @@ const CATEGORIES: {
       "memory",
       "approval",
       "vision",
+      "meme",
     ],
     protocols: TEXT_PROTOCOLS,
   },
@@ -127,7 +133,7 @@ const CATEGORIES: {
 const INTRO: Record<Category, string> = {
   text: "生成文本、调用工具的模型。",
   decision:
-    "Jev 等判断模型（systemone 协议）只做分类和打分，不生成文本，只能用于分流、分诊、记忆和自动审批路由；判断失败时改用同一路由里的文本模型。",
+    "Jev 等判断模型（systemone 协议）只做分类和打分，不生成文本，只能用于分流、分诊、记忆、自动审批和表情分类路由；判断失败时改用同一路由里的文本模型。",
   embedding:
     "为长期记忆计算向量的模型，支持 OpenAI 兼容 /embeddings 与 Gemini 接口；可以复用语言模型的提供商。",
 };
@@ -175,11 +181,16 @@ export function ModelsPage({
   function routeAccepts(key: string, model: ModelConfig) {
     if (model.kind === "embedding") return key === "embedding";
     if (key === "embedding") return false;
-    if (key === "vision" && !model.modalities.includes("image")) return false;
     const protocol = config.providers.find(
       (item) => item.id === model.provider,
     )?.protocol;
-    return protocol !== "systemone" || DECISION_ROUTES.includes(key);
+    if (protocol === "systemone") return DECISION_ROUTES.includes(key);
+    if (
+      (key === "vision" || key === "meme") &&
+      !model.modalities.includes("image")
+    )
+      return false;
+    return true;
   }
   const source = provider ? JSON.stringify(provider) : "";
   const results = remote?.source === source ? remote.rows : null;

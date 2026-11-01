@@ -1,4 +1,7 @@
-"""Embedding index for memory items: float32 BLOBs in SQLite, brute-force cosine in numpy."""
+"""Embedding index: float32 BLOBs in SQLite, brute-force cosine in numpy.
+
+Memory items use mem_vector; other libraries (memes) pass their own table.
+"""
 
 from __future__ import annotations
 
@@ -13,9 +16,14 @@ log = get_logger("记忆")
 BATCH = 32
 
 
+TABLES = ("mem_vector", "meme_vector")
+
+
 class VectorIndex:
-    def __init__(self, store, llm):
-        self.store, self.llm = store, llm
+    def __init__(self, store, llm, table: str = "mem_vector"):
+        if table not in TABLES:
+            raise ValueError("unknown vector table")
+        self.store, self.llm, self.table = store, llm, table
         self.wake = asyncio.Event()
         # model_key -> (refs, normalized matrix); rebuilt lazily after writes.
         self.cache: dict[str, tuple[list[str], np.ndarray]] = {}
@@ -25,7 +33,7 @@ class VectorIndex:
         return self.llm.embedding_key(selected[0]) if selected else None
 
     async def stale(self, documents: dict[str, str], key: str) -> dict[str, str]:
-        rows = await self.store.query("SELECT id,hash FROM mem_vector WHERE model=?", (key,))
+        rows = await self.store.query(f"SELECT id,hash FROM {self.table} WHERE model=?", (key,))
         known = {row["id"]: row["hash"] for row in rows}
         return {ref: text for ref, text in documents.items() if known.get(ref) != fingerprint(text)}
 
@@ -44,7 +52,7 @@ class VectorIndex:
                 return done  # The configuration changed mid-run; the next pass restarts.
             async with self.store.lock:
                 await self.store.db.executemany(
-                    "INSERT INTO mem_vector VALUES(?,?,?,?) ON CONFLICT(id,model) DO UPDATE "
+                    f"INSERT INTO {self.table} VALUES(?,?,?,?) ON CONFLICT(id,model) DO UPDATE "
                     "SET hash=excluded.hash,vec=excluded.vec",
                     [
                         (ref, key, fingerprint(text), np.asarray(vec, np.float32).tobytes())
@@ -71,10 +79,14 @@ class VectorIndex:
         try:
             used, vectors = await self.llm.embed([text], query=True)
         except PublicError:
-            log.warning("Embedding 不可用，本次记忆检索只用关键词")
+            log.warning(
+                "Embedding 不可用，本次"
+                + ("记忆" if self.table == "mem_vector" else "表情")
+                + "检索只用关键词"
+            )
             return []
         if used not in self.cache:
-            rows = await self.store.query("SELECT id,vec FROM mem_vector WHERE model=?", (used,))
+            rows = await self.store.query(f"SELECT id,vec FROM {self.table} WHERE model=?", (used,))
             self.cache[used] = await asyncio.to_thread(self._matrix, rows)
         refs, matrix = self.cache[used]
         if not refs:
@@ -85,6 +97,10 @@ class VectorIndex:
         scores = await asyncio.to_thread(self._score, matrix, query)
         best = np.argsort(-scores)[:limit]
         return [(refs[i], float(scores[i])) for i in best]
+
+    async def forget(self, ref: str) -> None:
+        await self.store.execute(f"DELETE FROM {self.table} WHERE id=?", (ref,))
+        self.cache.clear()
 
     @staticmethod
     def _matrix(rows: list[dict]) -> tuple[list[str], np.ndarray]:

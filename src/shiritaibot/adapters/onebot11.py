@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import json
 import random
@@ -23,6 +24,7 @@ from shiritaibot.core import (
     uid,
 )
 from shiritaibot.core.logs import brief, get_logger
+from shiritaibot.meme.inject import MemeInjector
 
 
 def segments(value) -> list[dict]:
@@ -204,6 +206,8 @@ class AdapterHub:
         self.permissions: ApprovalPort | None = None
         # Friend / group requests become events so PE decides whether to tell the owner.
         self.emit: Callable[[ExternalEvent], Awaitable[str]] | None = None
+        # shiritaibot.meme.MemeManager: collects group stickers, turns markers into stickers.
+        self.memes: Any = None
 
     async def start(self) -> None:
         for cfg in self.config.value.adapters:
@@ -258,6 +262,8 @@ class AdapterHub:
         (bot.log.log if not group or mentioned or keyword else bot.log.debug)(
             brief(describe(parts), 200) or "[空消息]", where, speaker
         )
+        if group and self.memes is not None:
+            self.memes.hooker.observe(session, parts)
         if group and settings.group_context.enabled:
             await self.store.record_group(
                 session,
@@ -376,20 +382,54 @@ class AdapterHub:
             )
 
     async def enqueue(self, session: str, text: str) -> None:
+        injector = self.memes.injector if self.memes is not None else None
         if session.startswith(("web:", "background:")):
+            if injector is not None:
+                text = injector.plain(text)
             await self.store.put("reply", uid(), {"text": text, "at": now().isoformat()}, session)
             return
-        for index in range(0, len(text), 3500):
-            await self.store.put(
-                "outbox",
-                uid(),
-                {
-                    "text": text[index : index + 3500],
-                    "status": "pending",
-                    "expires": now().timestamp() + 86400,
+        # <meme> markers become their own sticker messages, splitting the text around them.
+        pieces = injector.split(text) if injector is not None else [text]
+        expires = now().timestamp() + 86400
+        for piece in pieces:
+            if not isinstance(piece, str):
+                await self.store.put(
+                    "outbox",
+                    uid(),
+                    {
+                        "text": MemeInjector.label(piece),
+                        "meme": piece["id"],
+                        "status": "pending",
+                        "expires": expires,
+                    },
+                    session,
+                )
+                continue
+            for index in range(0, len(piece), 3500):
+                await self.store.put(
+                    "outbox",
+                    uid(),
+                    {"text": piece[index : index + 3500], "status": "pending", "expires": expires},
+                    session,
+                )
+
+    async def outgoing(self, row: dict) -> list[dict] | None:
+        """OneBot message segments for an outbox row; None when its sticker is gone."""
+        if not row.get("meme"):
+            return [{"type": "text", "data": {"text": row["text"]}}]
+        data = await self.memes.core.image(row["meme"]) if self.memes is not None else None
+        if data is None:
+            return None
+        return [
+            {
+                "type": "image",
+                "data": {
+                    "file": "base64://" + base64.b64encode(data).decode(),
+                    "sub_type": 1,
+                    "summary": "[动画表情]",
                 },
-                session,
-            )
+            }
+        ]
 
     async def notify_owner(self, text: str, *, handoff: bool = True) -> None:
         target = next((a for a in self.config.value.adapters if a.enabled and a.owner_id), None)
@@ -419,13 +459,16 @@ class AdapterHub:
                     )
                 elif not bot or bot.status != "connected":
                     continue
+                elif (message := await self.outgoing(row)) is None:
+                    row["status"] = "failed"
+                    get_logger(adapter_id).warning(f"表情 {row['meme']} 已被删除，跳过发送")
                 else:
                     try:
                         receipt = await bot.call(
                             "send_group_msg" if kind == "group" else "send_private_msg",
                             {
                                 "group_id" if kind == "group" else "user_id": int(target),
-                                "message": [{"type": "text", "data": {"text": row["text"]}}],
+                                "message": message,
                             },
                         )
                         row.update(status="sent", receipt=receipt)

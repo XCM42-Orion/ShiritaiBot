@@ -5,6 +5,8 @@ import type {
   Health,
   HistoryMessage,
   LogFeed,
+  MemeListing,
+  MemeRecord,
   MemoryDetail,
   MemoryRecord,
   MemoryStatus,
@@ -71,6 +73,24 @@ export interface ApiClient {
   ): Promise<Paginated<MemoryRecord>>;
   memory(id: string): Promise<MemoryDetail>;
   memoryStatus(): Promise<MemoryStatus>;
+  memes(
+    category: string,
+    query: string,
+    page: number,
+    pageSize: number,
+  ): Promise<MemeListing>;
+  memeImage(id: string): Promise<Blob>;
+  uploadMeme(
+    file: File,
+    category: string,
+    description: string,
+  ): Promise<MemeRecord>;
+  updateMeme(
+    id: string,
+    patch: { category?: string; description?: string },
+  ): Promise<MemeRecord>;
+  describeMeme(id: string): Promise<MemeRecord>;
+  deleteMeme(id: string): Promise<unknown>;
   createRoutine(draft: RoutineDraft): Promise<RoutineRecord>;
   setRoutineStatus(id: string, status: string): Promise<RoutineRecord>;
   cancelSubagent(id: string): Promise<unknown>;
@@ -105,7 +125,9 @@ export function createClient(getToken: () => string): ApiClient {
     };
     const binary = body instanceof Blob;
     if (body !== undefined)
-      headers["Content-Type"] = binary ? "application/zip" : "application/json";
+      headers["Content-Type"] = binary
+        ? body.type || "application/octet-stream"
+        : "application/json";
     let response: Response;
     try {
       response = await fetch("/api" + path, {
@@ -198,6 +220,44 @@ export function createClient(getToken: () => string): ApiClient {
       ),
     memory: (id) => request<MemoryDetail>("/memory/" + encodeURIComponent(id)),
     memoryStatus: () => request<MemoryStatus>("/memory/status"),
+    memes: (category, query, page, pageSize) =>
+      request<MemeListing>(
+        "/memes?" +
+          new URLSearchParams({
+            category,
+            q: query,
+            page: String(page),
+            page_size: String(pageSize),
+          }),
+      ),
+    memeImage: async (id) => {
+      let response: Response;
+      try {
+        response = await fetch(
+          "/api/memes/" + encodeURIComponent(id) + "/image",
+          { headers: { Authorization: "Bearer " + getToken() } },
+        );
+      } catch {
+        throw new ApiError("无法连接后端服务，请确认进程仍在运行。", 0);
+      }
+      if (!response.ok)
+        throw new ApiError(messageFor(response.status, null), response.status);
+      return response.blob();
+    },
+    uploadMeme: (file, category, description) =>
+      request<MemeRecord>(
+        "/memes?" + new URLSearchParams({ category, description }),
+        "POST",
+        file,
+      ),
+    updateMeme: (id, patch) =>
+      request<MemeRecord>("/memes/" + encodeURIComponent(id), "PUT", patch),
+    describeMeme: (id) =>
+      request<MemeRecord>(
+        "/memes/" + encodeURIComponent(id) + "/describe",
+        "POST",
+      ),
+    deleteMeme: (id) => request("/memes/" + encodeURIComponent(id), "DELETE"),
     createRoutine: (draft) =>
       request<RoutineRecord>("/routines", "POST", draft),
     setRoutineStatus: (id, status) =>

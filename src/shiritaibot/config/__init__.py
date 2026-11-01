@@ -237,6 +237,58 @@ class VisionConfig(Model):
     max_images: int = Field(default=4, ge=0, le=20)
 
 
+MEME_CATEGORY = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
+class MemeCategory(Model):
+    name: str = Field(pattern=MEME_CATEGORY.pattern)
+    description: str = Field(default="", max_length=200)
+
+
+def default_meme_categories() -> list[MemeCategory]:
+    return [
+        MemeCategory(name=name, description=description)
+        for name, description in (
+            ("happy", "开心、得意、庆祝、哈哈大笑"),
+            ("sad", "难过、委屈、哭泣、心碎"),
+            ("angry", "生气、不满、抓狂、怒了"),
+            ("think", "思考、疑惑、琢磨、让我想想"),
+            ("surprised", "震惊、意外、目瞪口呆"),
+            ("shy", "害羞、不好意思、脸红、捂脸"),
+            ("love", "喜欢、比心、贴贴、抱抱"),
+            ("tired", "累了、困、摆烂、无语、躺平"),
+            ("smug", "调皮、坏笑、嘲讽、阴阳怪气"),
+            ("greet", "打招呼、谢谢、好的、晚安等日常回应"),
+        )
+    ]
+
+
+class MemeConfig(Model):
+    enabled: bool = False
+    # Data core: the stored library; automatic collection stops at this size.
+    capacity: int = Field(default=300, ge=1, le=10000)
+    categories: list[MemeCategory] = Field(
+        default_factory=default_meme_categories, min_length=1, max_length=30
+    )
+    # Hooker: stickers other group members send, at a rate falling as the library fills.
+    collect: bool = True
+    collect_rate: float = Field(default=0.3, ge=0, le=1)
+    stickers_only: bool = True
+    # Collected stickers must suit the default persona (decision model, else text model).
+    persona_check: bool = True
+    fit_threshold: float = Field(default=0.6, ge=0, le=1)
+    # Injector: usage instructions in the system prompt; markers beyond this are dropped.
+    inject: bool = True
+    max_per_reply: int = Field(default=2, ge=1, le=10)
+
+    @field_validator("categories")
+    @classmethod
+    def unique_categories(cls, value: list[MemeCategory]) -> list[MemeCategory]:
+        if len({c.name for c in value}) != len(value):
+            raise ValueError("duplicate meme category")
+        return value
+
+
 class GroupContextConfig(Model):
     enabled: bool = False
     # 0 disables injection; the Bot can still query when the tool is enabled.
@@ -346,9 +398,10 @@ ROUTE_KEYS = (
     "approval",
     "embedding",
     "vision",
+    "meme",
 )
 # Routes whose callers can use a decision model; other candidates still serve text calls.
-DECISION_ROUTES = ("router", "light", "memory", "approval")
+DECISION_ROUTES = ("router", "light", "memory", "approval", "meme")
 # Protocols with an embeddings endpoint (OpenAI-compatible /embeddings or Gemini).
 EMBEDDING_PROTOCOLS = ("chat_completions", "responses", "gemini")
 
@@ -387,7 +440,8 @@ class Settings(Model):
     # chat: Chat 默认；agent: Agent Work（长程任务，含 Main/Proactive Loop）；
     # agent_chat: Agent 模式日常对话；router: Work/Chat 分流；light: 主动事件分诊；
     # memory: 记忆抽取与判断（空则用 light）；approval: 工具自动审批（空则用 light）；
-    # embedding: 记忆向量；vision: 为不支持图像输入的模型转述图片。
+    # embedding: 记忆向量；vision: 为不支持图像输入的模型转述图片；
+    # meme: 表情转述（多模态文本模型）与表情分类判断（决策模型）。
     routes: dict[str, list[str]] = Field(default_factory=lambda: {k: [] for k in ROUTE_KEYS})
     # When off, every Agent-mode turn uses the Agent Work route.
     agent_split: bool = False
@@ -409,6 +463,7 @@ class Settings(Model):
     group_context: GroupContextConfig = Field(default_factory=GroupContextConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
+    meme: MemeConfig = Field(default_factory=MemeConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -497,7 +552,8 @@ class Settings(Model):
             for m in route
         ):
             raise ValueError(
-                "decision models can only be used in the router, light and memory routes"
+                "decision models can only be used in the router, light, memory, approval "
+                "and meme routes"
             )
         embedding = {m.id for m in self.models if m.kind == "embedding"}
         if any(
@@ -516,6 +572,11 @@ class Settings(Model):
             raise ValueError("embedding models need an OpenAI-compatible or Gemini provider")
         if any(m.id in self.routes["vision"] and "image" not in m.modalities for m in self.models):
             raise ValueError("vision route models must accept image input")
+        if any(
+            m.id in self.routes["meme"] and m.id not in decision and "image" not in m.modalities
+            for m in self.models
+        ):
+            raise ValueError("meme route text models must accept image input")
         if self.context.compression_model in decision | embedding:
             raise ValueError("compression models must generate text")
         if self.default_persona and not any(

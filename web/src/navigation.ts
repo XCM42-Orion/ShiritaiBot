@@ -9,6 +9,7 @@ import {
   Puzzle,
   Settings,
   ShieldCheck,
+  Smile,
   Terminal,
   Workflow,
 } from "lucide-react";
@@ -20,6 +21,7 @@ export type PageId =
   | "events"
   | "routine"
   | "memory"
+  | "memes"
   | "subagents"
   | "plugins"
   | "models"
@@ -65,6 +67,12 @@ export const PAGES: PageMeta[] = [
     label: "长期记忆",
     subtitle: "助手明确记住的长期记忆。",
     icon: Database,
+  },
+  {
+    id: "memes",
+    label: "表情管理",
+    subtitle: "表情库、分类、自动收录与使用设置。",
+    icon: Smile,
   },
   {
     id: "subagents",

@@ -694,6 +694,73 @@ export const VISION_FIELDS: FieldSpec[] = [
   },
 ];
 
+export const MEME_FIELDS: FieldSpec[] = [
+  {
+    key: "enabled",
+    label: "启用表情管理器",
+    kind: "boolean",
+    help: "开启后提供表情工具，QQ 会话的回复可以用 <meme>分类</meme> 发送表情包。",
+  },
+  {
+    key: "capacity",
+    label: "表情存储上限",
+    kind: "number",
+    min: 1,
+    max: 10000,
+    help: "自动收录和 meme_save 达到上限后停止；在 WebUI 手动上传不受限制。",
+  },
+  {
+    key: "inject",
+    label: "向模型说明表情用法",
+    kind: "boolean",
+    help: "在 QQ 会话的系统提示词末尾说明分类与标记格式。内容只随配置变化，不影响提示词缓存命中。",
+  },
+  {
+    key: "max_per_reply",
+    label: "每条回复最多表情数",
+    kind: "number",
+    min: 1,
+    max: 10,
+    help: "超出的 <meme> 标记会被忽略。",
+  },
+  {
+    key: "collect",
+    label: "从群聊自动收录",
+    kind: "boolean",
+    help: "白名单群内其他人发表情包时按概率收录，经转述、人设与分类判断后入库。",
+  },
+  {
+    key: "collect_rate",
+    label: "基础收录概率",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    help: "实际概率 = 基础概率 ×（1 − 已存数量 / 上限），表情库越满收录越少。",
+  },
+  {
+    key: "stickers_only",
+    label: "只收录表情包",
+    kind: "boolean",
+    help: "只收录 QQ 标记为表情包（动画表情、商城表情）的图片；关闭后普通图片也会参与收录。",
+  },
+  {
+    key: "persona_check",
+    label: "收录前判断是否贴合人设",
+    kind: "boolean",
+    help: "由表情路由的决策模型（没有则用文本模型）判断默认人格会不会发这个表情。",
+  },
+  {
+    key: "fit_threshold",
+    label: "人设契合度阈值",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    help: "契合度低于此值的表情不收录。",
+  },
+];
+
 export function createPersona(rows: PersonaConfig[]): PersonaConfig {
   return {
     id: uniqueId("persona-new", rows),

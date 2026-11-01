@@ -12,6 +12,7 @@ from shiritaibot.agent.commands import command
 from shiritaibot.agent.context import ContextManager, context_chars
 from shiritaibot.core import Context, PublicError, canonical, fingerprint, now, uid
 from shiritaibot.core.logs import Logger, brief, describe_session, get_logger
+from shiritaibot.meme.inject import meme_prompt
 from shiritaibot.memory.judge import recall_question
 from shiritaibot.memory.recall import MemoryRecall
 from shiritaibot.proactive import (
@@ -484,6 +485,9 @@ class AgentRuntime:
             selected_persona.get("persona", "") if selected_persona else "",
             owner=ctx.owner,
         )
+        if not ctx.background and ctx.session.startswith(("private:", "group:")):
+            # Only QQ sends stickers; the block is config-only, so it stays cache-stable.
+            system += meme_prompt(cfg)
         route = await self.route(ctx, cfg, text)
         selected = await self.store.get("session_model", ctx.session)
         if selected and selected.get("model"):

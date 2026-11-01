@@ -20,6 +20,7 @@ import { LogsPage } from "../src/pages/LogsPage";
 import { PluginsPage } from "../src/pages/PluginsPage";
 import { SettingsPage } from "../src/pages/SettingsPage";
 import { MemoryPage } from "../src/pages/MemoryPage";
+import { MemesPage } from "../src/pages/MemesPage";
 import { SecretField } from "../src/components/SecretField";
 import { NoticeProvider, useNotice } from "../src/hooks/useNotice";
 import { FieldForm } from "../src/components/FieldForm";
@@ -118,6 +119,21 @@ function baseConfig(): Settings {
       extract_idle_minutes: 10,
     },
     vision: { caption: true, max_images: 4 },
+    meme: {
+      enabled: false,
+      capacity: 300,
+      categories: [
+        { name: "happy", description: "开心" },
+        { name: "sad", description: "难过" },
+      ],
+      collect: true,
+      collect_rate: 0.3,
+      stickers_only: true,
+      persona_check: true,
+      fit_threshold: 0.6,
+      inject: true,
+      max_per_reply: 2,
+    },
   };
 }
 
@@ -705,6 +721,102 @@ describe("memory page", () => {
     expect(await screen.findByText(/issue #3 已经处理完成/)).toBeTruthy();
     await user.click(screen.getByText("事件"));
     expect(client.memoriesPage).toHaveBeenLastCalledWith("event", "", 1, 20);
+  });
+});
+
+describe("meme page", () => {
+  it("edits settings and categories in the draft and manages stored memes", async () => {
+    const row = {
+      id: "0123456789abcdef",
+      category: "happy",
+      description: "举牌大笑的猫",
+      mime: "image/png",
+      bytes: 10,
+      source: "group",
+      origin: "group:qq:1",
+      created: "2026-10-30T00:00:00+00:00",
+    };
+    const client = fakeClient({
+      memes: vi.fn().mockResolvedValue({
+        items: [row],
+        total: 1,
+        page: 1,
+        page_size: 24,
+        count: 1,
+        capacity: 300,
+        counts: { happy: 1, sad: 0 },
+        index: { model: null, indexed: 0, pending: 1 },
+      }),
+      memeImage: vi.fn().mockResolvedValue(new Blob(["x"])),
+      updateMeme: vi.fn().mockResolvedValue(row),
+      deleteMeme: vi.fn().mockResolvedValue({ ok: true }),
+      uploadMeme: vi.fn().mockResolvedValue(row),
+    } as Partial<ApiClient>);
+    URL.createObjectURL = vi.fn(() => "blob:meme");
+    URL.revokeObjectURL = vi.fn();
+    let snapshot: Settings | null = null;
+    render(
+      <Host client={client}>
+        {(config, setConfig) => (
+          <MemesPage
+            client={client}
+            act={act}
+            config={config}
+            setConfig={(next) => {
+              snapshot = next;
+              setConfig(next);
+            }}
+          />
+        )}
+      </Host>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByDisplayValue("举牌大笑的猫")).toBeTruthy();
+    expect(await screen.findByAltText("表情 0123456789abcdef")).toBeTruthy();
+    expect(screen.getByText(/1 \/ 300 个/)).toBeTruthy();
+
+    await user.click(screen.getByLabelText("启用表情管理器"));
+    expect(snapshot!.meme.enabled).toBe(true);
+    await user.click(screen.getByText("添加分类"));
+    expect(snapshot!.meme.categories.map((c) => c.name)).toEqual([
+      "happy",
+      "sad",
+      "category_3",
+    ]);
+    const name = screen.getByLabelText("分类 3 名称");
+    await user.clear(name);
+    await user.type(name, "Bad");
+    expect(screen.getByText("名称格式无效")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("表情 0123456789abcdef 分类"), {
+      target: { value: "sad" },
+    });
+    expect(client.updateMeme).toHaveBeenCalledWith("0123456789abcdef", {
+      category: "sad",
+    });
+    const description = screen.getByLabelText("表情 0123456789abcdef 描述");
+    await user.clear(description);
+    await user.type(description, "猫猫");
+    await user.click(screen.getByText("保存描述"));
+    expect(client.updateMeme).toHaveBeenLastCalledWith("0123456789abcdef", {
+      description: "猫猫",
+    });
+
+    await user.click(screen.getByLabelText("删除表情 0123456789abcdef"));
+    expect(client.deleteMeme).not.toHaveBeenCalled();
+    await user.click(screen.getByText("确认删除"));
+    expect(client.deleteMeme).toHaveBeenCalledWith("0123456789abcdef");
+
+    const file = new File(["png"], "cat.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("表情图片"), file);
+    fireEvent.change(screen.getByLabelText("上传分类"), {
+      target: { value: "happy" },
+    });
+    await user.click(screen.getByText("上传"));
+    expect(client.uploadMeme).toHaveBeenCalledWith(file, "happy", "");
+
+    await user.click(screen.getByText("sad (0)"));
+    expect(client.memes).toHaveBeenLastCalledWith("sad", "", 1, 24);
   });
 });
 
