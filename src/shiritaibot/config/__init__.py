@@ -21,6 +21,26 @@ class Instance(Model):
     enabled: bool = True
 
 
+def check_proxy(value: str) -> str:
+    """Normalize an optional HTTP(S)/SOCKS5 proxy URL; raises ValueError when invalid."""
+    value = value.strip()
+    if value:
+        try:
+            url = urlsplit(value)
+            _ = url.port
+        except ValueError:
+            raise ValueError("invalid proxy URL or port") from None
+        if (
+            url.scheme not in {"http", "https", "socks5", "socks5h"}
+            or not url.hostname
+            or url.path not in {"", "/"}
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError("proxy must be an HTTP(S) or SOCKS5 URL")
+    return value
+
+
 class ProviderConfig(Instance):
     id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{1,128}$")
     # systemone: TypeSafe decision models (e.g. Jev); they classify and never generate text.
@@ -36,22 +56,7 @@ class ProviderConfig(Instance):
     @field_validator("proxy")
     @classmethod
     def proxy_valid(cls, value: str) -> str:
-        value = value.strip()
-        if value:
-            try:
-                url = urlsplit(value)
-                _ = url.port
-            except ValueError:
-                raise ValueError("invalid proxy URL or port") from None
-            if (
-                url.scheme not in {"http", "https", "socks5", "socks5h"}
-                or not url.hostname
-                or url.path not in {"", "/"}
-                or url.query
-                or url.fragment
-            ):
-                raise ValueError("proxy must be an HTTP(S) or SOCKS5 URL")
-        return value
+        return check_proxy(value)
 
 
 class ModelConfig(Instance):

@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 import httpx
 
-from shiritaibot.plugin_api import Plugin, PublicError, run_process, schema
+from shiritaibot.plugin_api import Plugin, PublicError, check_proxy, run_process, schema
 
 API = "https://api.github.com"
 GIT = "https://github.com/"
@@ -154,9 +154,15 @@ class Entry(Plugin):
         self.token = await self.context.resolve_secret(settings.get("token", ""))
         if not self.token:
             raise PublicError("请先在插件配置中填写 GitHub 访问令牌")
+        try:
+            self.proxy = check_proxy(settings.get("proxy", ""))
+        except ValueError:
+            raise PublicError("代理地址无效：需为 http(s):// 或 socks5(h):// 开头的 URL") from None
         self.client = httpx.AsyncClient(
             base_url=API,
             timeout=settings.get("timeout", 30),
+            # An explicit proxy wins over HTTP(S)_PROXY; without one, environment proxies apply.
+            proxy=self.proxy or None,
             headers={
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/vnd.github+json",
@@ -713,16 +719,19 @@ class Entry(Plugin):
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=os.devnull,
             GIT_TERMINAL_PROMPT="0",
-            GIT_CONFIG_COUNT="0",
         )
+        config: list[tuple[str, str]] = []
+        if self.proxy:
+            # Scoped to the GitHub remote so local fetches from the workspace stay direct.
+            config.append((f"http.{GIT}.proxy", self.proxy))
         if auth:
             # Passed through the environment so the token never appears in process arguments.
             basic = base64.b64encode(f"x-access-token:{self.token}".encode()).decode()
-            env.update(
-                GIT_CONFIG_COUNT="1",
-                GIT_CONFIG_KEY_0=f"http.{GIT}.extraheader",
-                GIT_CONFIG_VALUE_0=f"Authorization: Basic {basic}",
-            )
+            config.append((f"http.{GIT}.extraheader", f"Authorization: Basic {basic}"))
+        env["GIT_CONFIG_COUNT"] = str(len(config))
+        for i, (key, value) in enumerate(config):
+            env[f"GIT_CONFIG_KEY_{i}"] = key
+            env[f"GIT_CONFIG_VALUE_{i}"] = value
         return env
 
     async def git(self, mirror: Path, *argv: str, auth: bool = False, seconds: float = 120):

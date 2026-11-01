@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from shiritaibot.learn import OneLearnPlugin
 
+from shiritaibot.config import check_proxy
 from shiritaibot.core import Actor
 
 from .base import (
@@ -36,6 +37,7 @@ __all__ = [
     "Logger",
     "get_logger",
     "brief",
+    "check_proxy",
     "OneLearnPlugin",
 ]
 

@@ -34,6 +34,12 @@ default = []
 type = "string"
 pattern = "^[A-Za-z0-9-]{1,39}$"
 
+[settings_schema.properties.proxy]
+type = "string"
+title = "代理"
+description = "访问 GitHub API 和 git 推送时使用的代理，如 http://127.0.0.1:7890 或 socks5h://127.0.0.1:1080。留空则 API 请求沿用 HTTP(S)_PROXY 环境变量，git 推送直连。"
+default = ""
+
 [settings_schema.properties.timeout]
 type = "integer"
 title = "API 超时（秒）"

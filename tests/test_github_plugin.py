@@ -8,6 +8,7 @@ from test_permissions import eventually
 
 from shiritaibot.config import PluginConfig, SubagentConfig
 from shiritaibot.core import Context
+from shiritaibot.plugin_api import PublicError
 
 OWNER = Context("web:owner", "owner", "agent", True)
 TOKEN = "ghp_test_token_value"
@@ -242,3 +243,33 @@ async def test_github_push_uses_plugin_mirror_without_running_workspace_hooks(
          "force": True},
     )  # fmt: skip
     assert "默认分支" in forced["error"]
+
+
+async def test_github_proxy_applies_to_api_client_and_git_remote(app, monkeypatch):
+    plugin, _ = await enable_github(app, monkeypatch)
+    assert "GIT_CONFIG_KEY_0" not in plugin.git_env(auth=False)
+    proxy = "socks5h://127.0.0.1:1080"
+    seen = {}
+    real = httpx.AsyncClient
+
+    def patched(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", patched)
+    plugin, _ = await enable_github(app, monkeypatch, proxy=f" {proxy} ")
+    assert seen["proxy"] == proxy
+    env = plugin.git_env(auth=True)
+    config = {
+        env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]
+        for i in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+    assert config["http.https://github.com/.proxy"] == proxy
+    assert config["http.https://github.com/.extraheader"].startswith("Authorization: Basic ")
+    assert plugin.git_env(auth=False)["GIT_CONFIG_COUNT"] == "1"
+
+
+async def test_github_rejects_invalid_proxy(app, monkeypatch):
+    with pytest.raises(PublicError, match="代理"):
+        await enable_github(app, monkeypatch, proxy="ftp://127.0.0.1:21")
+    assert "github" not in app.plugins.loaded

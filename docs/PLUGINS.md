@@ -175,6 +175,7 @@ token = "secret:自动生成的凭据标识"   # 在 WebUI 填写，自动加密
 commit_name = ""                      # 留空 = token 账号的登录名
 commit_email = ""                     # 留空 = <id>+<login>@users.noreply.github.com
 allowed_owners = ["shiritai-bot"]     # 留空 = 只允许 token 账号本身
+proxy = ""                            # 如 socks5h://127.0.0.1:1080；留空 = API 沿用环境变量代理，git 直连
 timeout = 30
 ```
 
