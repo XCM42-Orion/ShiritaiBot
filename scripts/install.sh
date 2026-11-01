@@ -135,6 +135,8 @@ shiritai_install() {
   printf '%s\n' '[3/4] 安装依赖并构建管理页面'
   cd "$target/app"
   "$uv_bin" sync --frozen --no-dev
+  # uv-created venvs ship without pip; add it so `python -m pip` works in the framework shell.
+  "$uv_bin" pip install --python .venv/bin/python3 pip
   "$npm_bin" --prefix web ci --no-audit --no-fund
   "$npm_bin" --prefix web run build
 
