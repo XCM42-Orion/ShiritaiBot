@@ -117,6 +117,32 @@ async def test_learn_bridge_uses_stdin_and_secrets_not_commandline(app):
         await entry.close()
 
 
+def test_learn_request_accepts_homework_detail():
+    from pydantic import ValidationError
+
+    from shiritaibot.learn.protocol import LearnRequest
+
+    request = LearnRequest.model_validate(
+        {"operation": "homework_detail", "params": {"homework_id": "hw1"}, "data_dir": "/tmp"}
+    )
+    assert request.operation == "homework_detail"
+    with pytest.raises(ValidationError):
+        LearnRequest.model_validate({"operation": "homework_unknown", "data_dir": "/tmp"})
+
+
+async def test_learn_query_schema_offers_homework_detail(app):
+    from shiritaibot.learn import OneLearnPlugin as Entry
+
+    ctx = PluginContext("learn", {}, app.home, app.vault.resolve, app.proactive.emit)
+    entry = Entry(ctx)
+    await entry.start()
+    try:
+        spec = next(t for t in ctx.tools if t.name == "learn_query")
+        assert "homework_detail" in spec.schema["properties"]["operation"]["enum"]
+    finally:
+        await entry.close()
+
+
 async def test_learn_first_sync_is_baseline_then_emits_only_changes(app):
     from shiritaibot.learn import OneLearnPlugin as Entry
 

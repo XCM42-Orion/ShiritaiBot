@@ -23,12 +23,21 @@ class OneLearnPlugin(Plugin):
         self.lock = asyncio.Lock()
         self.context.register_tool(
             "learn_query",
-            "查询课程、公告、未提交作业、课件与作业附件；需要身份验证时，使用学校插件的登录和验证码工具。",
+            "查询课程、公告、未提交作业、课件与作业附件；"
+            "homework_detail 需要 homework_id，返回单个作业的详情。"
+            "需要身份验证时，使用学校插件的登录和验证码工具。",
             schema(
                 {
                     "operation": {
                         "type": "string",
-                        "enum": ["courses", "notices", "homework", "files", "homework_attachments"],
+                        "enum": [
+                            "courses",
+                            "notices",
+                            "homework",
+                            "files",
+                            "homework_attachments",
+                            "homework_detail",
+                        ],
                     },
                     "course_id": {"type": "string", "maxLength": 128},
                     "homework_id": {"type": "string", "maxLength": 128},
