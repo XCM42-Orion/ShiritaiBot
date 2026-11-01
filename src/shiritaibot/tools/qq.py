@@ -27,13 +27,45 @@ PATH = {
     "type": "string",
     "minLength": 1,
     "maxLength": 2000,
-    "description": "会话工作目录内的相对路径，或 qq_file_download 返回的路径",
+    "description": (
+        "会话工作目录内的相对路径，或 qq_file_download 返回的路径，"
+        "或插件数据目录（plugin_data/...）内的绝对路径"
+    ),
+}
+IMAGE = {
+    **PATH,
+    "description": "https 链接，或会话目录、插件数据目录（plugin_data/...）内的图片路径",
 }
 MAX_UPLOAD = 30 * 1024 * 1024
+# Framework-internal files under the data home that must never leave the machine.
+SENSITIVE_FILES = frozenset(
+    {
+        "config.toml",
+        "master.key",
+        "web.token",
+        "state.sqlite3",
+        "state.sqlite3-shm",
+        "state.sqlite3-wal",
+    }
+)
+SENSITIVE_DIRS = frozenset({"logs"})
 
 
 def session_dir(home: Path, kind: str, session: str) -> Path:
     return home / kind / hashlib.sha256(session.encode()).hexdigest()[:24]
+
+
+def is_sensitive(home: Path, path: Path) -> bool:
+    """True for top-level secrets/state in the data home or anything under its logs/."""
+    home = home.resolve()
+    if not path.is_relative_to(home):
+        return False
+    parts = path.relative_to(home).parts
+    if not parts:
+        return False
+    if len(parts) == 1 and parts[0] in SENSITIVE_FILES:
+        return True
+    return parts[0] in SENSITIVE_DIRS
 
 
 def owner_only(ctx: Context) -> None:
@@ -71,11 +103,17 @@ def qq_tools(app) -> list[Tool]:
         roots = [
             session_dir(app.home, "workspaces", ctx.session),
             session_dir(app.home, "files", ctx.session),
+            # Plugins (e.g. thu_learn downloads) keep their files here.
+            app.home / "plugin_data",
         ]
         path = Path(value)
         path = (path if path.is_absolute() else roots[0] / path).resolve()
         if not any(path.is_relative_to(root.resolve()) for root in roots):
-            raise PublicError("只能发送当前会话工作目录或已下载文件目录中的文件")
+            raise PublicError(
+                "只能发送当前会话工作目录、已下载文件目录或插件数据目录（plugin_data/...）中的文件"
+            )
+        if is_sensitive(app.home, path):
+            raise PublicError("框架内部敏感文件禁止发送")
         if not await asyncio.to_thread(path.is_file):
             raise PublicError("文件不存在")
         if (await asyncio.to_thread(path.stat)).st_size > MAX_UPLOAD:
@@ -425,7 +463,7 @@ def qq_tools(app) -> list[Tool]:
                     "reply_to": MESSAGE_ID,
                     "images": {
                         "type": "array",
-                        "items": {**PATH, "description": "https 链接或会话目录内的图片路径"},
+                        "items": IMAGE,
                         "maxItems": 9,
                     },
                     "adapter": ADAPTER,
@@ -618,7 +656,7 @@ def qq_tools(app) -> list[Tool]:
                 {
                     **group_id,
                     "content": {**TEXT, "maxLength": 4000},
-                    "image": {**PATH, "description": "https 链接或会话目录内的图片路径"},
+                    "image": IMAGE,
                     "adapter": ADAPTER,
                 },
                 ["group_id", "content"],
