@@ -772,6 +772,57 @@ export const MEME_FIELDS: FieldSpec[] = [
   },
 ];
 
+export const EMOTION_FIELDS: FieldSpec[] = [
+  {
+    key: "enabled",
+    label: "启用情绪指标",
+    kind: "boolean",
+    help: "识别用户说话时的情绪和近况，影响回复语气。关闭时不调用任何模型，也不会改变提示词。",
+  },
+  {
+    key: "sensitivity",
+    label: "敏感度",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    help: "多小的信号才会更新情绪值。越高越容易被触发。",
+  },
+  {
+    key: "tone",
+    label: "语气幅度",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    help: "情绪对语气的改变幅度；高档允许一句真诚的关心。",
+  },
+  {
+    key: "initiative",
+    label: "主动性",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    help: "回复里主动关心的程度。只有 0.8 及以上、且主人状态很差时，才允许主动发一条关心消息。",
+  },
+  {
+    key: "persistence",
+    label: "延续性",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    help: "情绪值的衰减速度：0 约 6 小时减半，1 约 7 天减半。",
+  },
+  {
+    key: "developer",
+    label: "开发者日志",
+    kind: "boolean",
+    help: "把判定结果与当前值写入日志。界面不显示情绪值，也不记录消息原文。",
+  },
+];
+
 export function createPersona(rows: PersonaConfig[]): PersonaConfig {
   return {
     id: uniqueId("persona-new", rows),

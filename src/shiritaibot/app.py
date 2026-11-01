@@ -10,6 +10,7 @@ from shiritaibot.auth import Permissions, Vault
 from shiritaibot.config import ConfigService, Settings
 from shiritaibot.core import EventBus
 from shiritaibot.core.logs import get_logger
+from shiritaibot.emotion import EmotionManager
 from shiritaibot.llm import ProviderManager
 from shiritaibot.meme import MemeManager
 from shiritaibot.memory import MemoryManager, ShortTermMemory
@@ -59,6 +60,7 @@ class Application:
         self.proactive = ProactiveEngine(
             self.config, self.store, self.llm, self.adapters.notify_owner, self.short_term
         )
+        self.emotion = EmotionManager(self.store, self.llm, self.config, self.proactive.emit)
         # Handled events feed long-term memory; the plugin that emitted them is not involved.
         self.extractor = MemoryExtractor(self.memory, self.store, self.config, self.llm)
         await self.extractor.open()
@@ -81,6 +83,7 @@ class Application:
             self.memory,
             self.deliver,
             self.short_term,
+            emotion=self.emotion,
         )
         self.adapters.runtime, self.adapters.permissions = self.runtime, self.permissions
         self.permissions.notify = partial(self.adapters.notify_owner, handoff=False)

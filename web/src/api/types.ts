@@ -168,6 +168,15 @@ export interface MemeListing extends Paginated<MemeRecord> {
   index: MemoryStatus;
 }
 
+export interface EmotionConfig {
+  enabled: boolean;
+  sensitivity: number;
+  tone: number;
+  initiative: number;
+  persistence: number;
+  developer: boolean;
+}
+
 export interface GroupContextConfig {
   enabled: boolean;
   inject_messages: number;
@@ -280,6 +289,7 @@ export interface Settings {
   memory: MemoryConfig;
   vision: VisionConfig;
   meme: MemeConfig;
+  emotion: EmotionConfig;
 }
 
 export interface Health {

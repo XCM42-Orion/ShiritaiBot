@@ -135,6 +135,14 @@ function baseConfig(): Settings {
       inject: true,
       max_per_reply: 2,
     },
+    emotion: {
+      enabled: false,
+      sensitivity: 0.5,
+      tone: 0.5,
+      initiative: 0.3,
+      persistence: 0.5,
+      developer: false,
+    },
   };
 }
 

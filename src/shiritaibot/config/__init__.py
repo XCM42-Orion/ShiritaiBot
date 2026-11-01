@@ -388,6 +388,15 @@ class ProactiveConfig(Model):
         return value
 
 
+class EmotionConfig(Model):
+    enabled: bool = False
+    sensitivity: float = Field(default=0.5, ge=0, le=1)
+    tone: float = Field(default=0.5, ge=0, le=1)
+    initiative: float = Field(default=0.3, ge=0, le=1)
+    persistence: float = Field(default=0.5, ge=0, le=1)
+    developer: bool = False
+
+
 ROUTE_KEYS = (
     "chat",
     "agent",
@@ -466,6 +475,7 @@ class Settings(Model):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     meme: MemeConfig = Field(default_factory=MemeConfig)
+    emotion: EmotionConfig = Field(default_factory=EmotionConfig)
 
     @model_validator(mode="before")
     @classmethod

@@ -6,6 +6,7 @@ import {
   IDENTITY_FIELDS,
   PERSONA_FIELDS,
   CONTEXT_FIELDS,
+  EMOTION_FIELDS,
   GROUP_CONTEXT_FIELDS,
   MEMORY_FIELDS,
   MESSAGE_MERGE_FIELDS,
@@ -255,6 +256,18 @@ export function SettingsPage({ config, setConfig }: ConfigPageProps) {
             />
           ))}
         </div>
+      </section>
+      <section className="panel">
+        <h2>情绪（开发者选项）</h2>
+        <p className="muted">
+          情绪值只在后台使用，不显示在界面上。群聊只调整整体语气，不会点名或公开关心任何人；
+          主动关心只发给主人。
+        </p>
+        <FieldForm
+          value={config.emotion}
+          fields={EMOTION_FIELDS}
+          onChange={(emotion) => setConfig({ ...config, emotion })}
+        />
       </section>
     </>
   );

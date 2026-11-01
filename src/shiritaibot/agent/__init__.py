@@ -309,13 +309,16 @@ class SessionActor:
 
 
 class AgentRuntime:
-    def __init__(self, config, store, llm, registry, memory, deliver, short_term=None):
+    def __init__(
+        self, config, store, llm, registry, memory, deliver, short_term=None, emotion=None
+    ):
         self.config, self.store, self.llm = config, store, llm
         self.registry, self.memory, self.deliver = registry, memory, deliver
         self.recall = MemoryRecall(memory) if memory is not None else None
         # Turn -> P(the message relies on the past), from the router's decision model.
         self.recall_hints: dict[str, float] = {}
         self.short_term = short_term
+        self.emotion = emotion
         self.actors: dict[str, SessionActor] = {}
         self.submit_locks: dict[str, asyncio.Lock] = {}
         self.context_locks: dict[str, asyncio.Lock] = {}
@@ -364,6 +367,8 @@ class AgentRuntime:
         for actor in self.actors.values():
             actor.task.cancel()
         await asyncio.gather(*(a.task for a in self.actors.values()), return_exceptions=True)
+        if self.emotion:
+            await self.emotion.close()
 
     async def group_context(self, ctx: Context, cfg, tools: list[dict]) -> str:
         settings = cfg.group_context
@@ -488,6 +493,9 @@ class AgentRuntime:
         if not ctx.background and ctx.session.startswith(("private:", "group:")):
             # Only QQ sends stickers; the block is config-only, so it stays cache-stable.
             system += meme_prompt(cfg)
+        emotion_block = await self.emotion.context(ctx, cfg) if self.emotion else ""
+        if self.emotion:
+            await self.emotion.observe(ctx, text)
         route = await self.route(ctx, cfg, text)
         selected = await self.store.get("session_model", ctx.session)
         if selected and selected.get("model"):
@@ -515,11 +523,11 @@ class AgentRuntime:
         try:
             async with asyncio.timeout(cfg.policy.max_turn_seconds):
                 zone = ZoneInfo(cfg.proactive.timezone)
-                recalled = []
+                blocks = [emotion_block] if emotion_block else []
                 # Chat never calls the private memory interface, even for the owner in a group.
                 if ctx.owner and ctx.mode == "agent" and not ctx.group:
                     if self.recall is not None and cfg.memory.inject:
-                        recalled.append(
+                        blocks.append(
                             await self.recall.render(
                                 ctx,
                                 text,
@@ -528,14 +536,14 @@ class AgentRuntime:
                             )
                         )
                     if self.short_term:
-                        recalled.append(recent_lines(await self.short_term.recent(limit=5), zone))
+                        blocks.append(recent_lines(await self.short_term.recent(limit=5), zone))
                 user = {
                     "role": "user",
                     "_speaker": cfg.owner_name if ctx.owner else ctx.actor,
                     "_original_content": text,
                     "content": text
                     + f"\n<context local_time='{local_clock(zone)}' timezone='{cfg.proactive.timezone}'>\n"
-                    + "\n".join(block for block in recalled if block)
+                    + "\n".join(block for block in blocks if block)
                     + "\n</context>",
                 }
                 # Persist the original input even if context compression fails.
