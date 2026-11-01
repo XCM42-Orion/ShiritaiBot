@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import re
 import sys
 import tomllib
@@ -40,10 +41,22 @@ class PluginManager:
         # Proactive notification channels per plugin; the engine reads this mapping directly.
         self.notifiers: dict[str, list] = {}
         self.get_event: Callable[[str], Awaitable[dict | None]] | None = None
+        # Non-secret environment variables each plugin adds to shell / subagent processes.
+        self.process_env: dict[str, dict[str, str]] = {}
 
     def unregister(self, key: str) -> None:
         self.registry.remove_plugin(key)
         self.notifiers.pop(key, None)
+        self.process_env.pop(key, None)
+
+    def child_env(self) -> dict[str, str] | None:
+        """Environment for model-driven child processes; None inherits the host unchanged."""
+        if not any(self.process_env.values()):
+            return None
+        env = dict(os.environ)
+        for values in self.process_env.values():
+            env.update(values)
+        return env
 
     async def discover(self) -> list[dict]:
         def scan():
@@ -294,6 +307,7 @@ class PluginManager:
                     key, plugin_settings, data_dir, self.vault.resolve, self.emit
                 )
                 context.get_event = self.get_event
+                context.workspaces = self.home / "workspaces"
                 plugin = module.Entry(context)
                 await plugin.start()
                 names = [t.name for t in context.tools]
@@ -302,6 +316,13 @@ class PluginManager:
                     for t in context.tools
                 ):
                     raise PublicError("插件工具名称冲突")
+                if any(
+                    name in values
+                    for other, values in self.process_env.items()
+                    if other != key
+                    for name in context.process_env
+                ):
+                    raise PublicError("插件环境变量与其他插件冲突")
                 for tool in context.tools:
                     self.registry.validate(tool)
             except BaseException:
@@ -337,6 +358,8 @@ class PluginManager:
                 self.registry.add(tool)
             if context.notifiers:
                 self.notifiers[key] = [guard(handler) for handler in context.notifiers]
+            if context.process_env:
+                self.process_env[key] = dict(context.process_env)
             self.loaded[key] = plugin
             self._forget_modules(key, keep=module_name)
             log.log(

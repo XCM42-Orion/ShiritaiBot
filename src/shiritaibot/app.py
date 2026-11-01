@@ -66,6 +66,7 @@ class Application:
         self.plugins = PluginManager(
             self.home, self.config, self.registry, self.vault, self.store, self.proactive.emit
         )
+        self.subagents.env = self.plugins.child_env
         await register_builtin(self)
         self.runtime = AgentRuntime(
             self.config,

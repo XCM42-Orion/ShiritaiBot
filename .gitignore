@@ -16,3 +16,4 @@ src/shiritaibot/plugin/*
 !src/shiritaibot/plugin/core/
 # Generic, account-free plugins shipped with the host.
 !src/shiritaibot/plugin/email/
+!src/shiritaibot/plugin/github/

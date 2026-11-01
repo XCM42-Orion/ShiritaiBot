@@ -18,7 +18,6 @@ from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import formatdate, make_msgid, parseaddr
 from html.parser import HTMLParser
-from time import mktime
 from typing import Literal
 
 from pydantic import (
@@ -34,6 +33,28 @@ from pydantic import (
 from shiritaibot.plugin_api import Actor, ExternalEvent, Plugin, PublicError, brief
 
 Security = Literal["ssl", "starttls", "none"]
+
+
+# imaplib.Internaldate2tuple requires a two-character day ("01" / " 1"), but some
+# servers (QQ Mail) send "1-Nov-2026", so parse INTERNALDATE leniently ourselves.
+INTERNALDATE = re.compile(
+    rb'INTERNALDATE "\s*(\d{1,2})-([A-Za-z]{3})-(\d{4}) (\d{2}):(\d{2}):(\d{2}) ([-+])(\d{2})(\d{2})"'
+)
+MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+
+
+def parse_internaldate(response: bytes) -> datetime | None:
+    match = INTERNALDATE.search(response)
+    if match is None:
+        return None
+    day, mon, year, hour, minute, sec, sign, zh, zm = match.groups()
+    try:
+        month = MONTHS.index(mon.decode().lower()) + 1
+        offset = timedelta(hours=int(zh), minutes=int(zm)) * (-1 if sign == b"-" else 1)
+        local = datetime(int(year), month, int(day), int(hour), int(minute), int(sec))
+    except ValueError:
+        return None
+    return (local - offset).replace(tzinfo=UTC)
 
 
 class EmailSettings(BaseModel):
@@ -332,10 +353,9 @@ class Entry(Plugin):
                 part = next((part for part in data if isinstance(part, tuple)), None)
                 if status != "OK" or part is None:
                     raise imaplib.IMAP4.error("message fetch failed")
-                received = imaplib.Internaldate2tuple(part[0])
-                if cutoff is not None and received is None:
+                received_at = parse_internaldate(part[0])
+                if cutoff is not None and received_at is None:
                     raise imaplib.IMAP4.error("message INTERNALDATE missing")
-                received_at = datetime.fromtimestamp(mktime(received), UTC) if received else None
                 if cutoff is None or (received_at is not None and received_at >= cutoff):
                     mail = describe(part[1], cfg.max_body_chars)
                     mail["received_at"] = received_at.isoformat() if received_at else None
@@ -353,7 +373,10 @@ class Entry(Plugin):
             try:
                 await self.sync_once()
             except Exception as exc:
-                self.context.logger.warning(f"收件失败（{type(exc).__name__}）")
+                # Server replies (e.g. "[AUTHENTICATIONFAILED] ...") carry no credentials.
+                self.context.logger.warning(
+                    f"收件失败（{type(exc).__name__}：{brief(str(exc), 300)}）"
+                )
                 await self.context.emit(
                     ExternalEvent(
                         source="email",

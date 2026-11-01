@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Callable
 
 from shiritaibot.core import Context, ExternalEvent, PublicError, uid
 from shiritaibot.core.logs import brief, get_logger
@@ -46,6 +47,8 @@ class SubagentManager:
         self.config, self.store, self.home, self.emit = config, store, home, emit
         self.tasks: dict[str, asyncio.Task] = {}
         self.semaphore = asyncio.Semaphore(3)
+        # Environment for child CLIs (plugin-provided git identity); None inherits the host.
+        self.env: Callable[[], dict[str, str] | None] = lambda: None
 
     def instances(self) -> list[dict]:
         """Describe enabled instances from live config without exposing CLI arguments."""
@@ -93,7 +96,12 @@ class SubagentManager:
                 await self.store.put("subagent_run", key, row, ctx.session)
                 log.log(f"{config.id} 开始运行", key[:8])
                 result = await run_process(
-                    command_for(config, workspace), workspace, prompt, config.timeout, limit=256000
+                    command_for(config, workspace),
+                    workspace,
+                    prompt,
+                    config.timeout,
+                    env=self.env(),
+                    limit=256000,
                 )
                 summary, native = result["stdout"], None
                 if config.kind == "claude_code":

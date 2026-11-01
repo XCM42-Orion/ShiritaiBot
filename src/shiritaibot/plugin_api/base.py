@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -22,6 +23,10 @@ class PluginContext:
     tools: list[Tool] = field(default_factory=list)
     notifiers: list[Callable[[str, str], Awaitable[None]]] = field(default_factory=list)
     get_event: Callable[[str], Awaitable[dict | None]] | None = None
+    # Root of shell and subagent working directories (``<home>/workspaces``).
+    workspaces: Path | None = None
+    # Non-secret variables for shell and subagent child processes (see set_process_env).
+    process_env: dict[str, str] = field(default_factory=dict)
     # Colored terminal + rolling file + WebUI feed, tagged with this plugin's id.
     logger: Logger = field(init=False)
 
@@ -56,6 +61,27 @@ class PluginContext:
                 plugin=self.id,
             )
         )
+
+    def set_process_env(self, env: dict[str, str]) -> None:
+        """Add non-secret variables to shell tool and subagent processes, such as git identity.
+
+        Child processes are model-controlled, so never pass credentials here. The host revokes
+        the variables on reload or stop; two plugins may not set the same name.
+        """
+        for name, value in env.items():
+            if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", name):
+                raise ValueError(f"invalid environment variable name: {name!r}")
+            if not isinstance(value, str) or "\0" in value:
+                raise ValueError(f"invalid value for environment variable {name}")
+        self.process_env.update(env)
+
+    def session_workspace(self, session: str) -> Path:
+        """The shell tool's working directory for a session."""
+        if self.workspaces is None:
+            raise RuntimeError("workspaces root is not configured")
+        from shiritaibot.tools.qq import session_dir
+
+        return session_dir(self.workspaces.parent, self.workspaces.name, session)
 
     def register_notifier(self, handler: Callable[[str, str], Awaitable[None]]) -> None:
         """Receive (source, text) for every proactive notification already sent to the owner."""

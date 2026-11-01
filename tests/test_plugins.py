@@ -235,6 +235,8 @@ async def fake_imap(box: dict, logins: list):
                 raw = box["messages"][uid]
                 stamp = box.get("dates", {}).get(uid, datetime(2000, 1, 1, tzinfo=UTC))
                 internal_date = imaplib.Time2Internaldate(stamp)
+                if box.get("unpadded_day"):  # QQ Mail style: "1-Nov-2026"
+                    internal_date = internal_date.replace('"0', '"', 1)
                 await send(
                     f"* 1 FETCH (UID {uid} INTERNALDATE {internal_date} BODY[] {{{len(raw)}}}\r\n".encode()
                     + raw
@@ -297,6 +299,38 @@ async def test_email_imap_new_mail_becomes_proactive_event(app):
     assert "周五 23:59" in event["payload"]["messages"][0]["snippet"]
     assert logins[0] == ["bot@example.com", "mail-secret-value"]
     assert "mail-secret-value" not in str(events) + str(await app.store.list("activity"))
+
+
+def test_email_parses_internaldate_with_unpadded_day():
+    from shiritaibot.plugin.email.main import parse_internaldate
+
+    expected = datetime(2026, 10, 31, 17, 36, 5, tzinfo=UTC)
+    for day in ["01", " 1", "1"]:
+        line = f'1 (UID 9 INTERNALDATE "{day}-Nov-2026 01:36:05 +0800" BODY[] {{3}}'
+        assert parse_internaldate(line.encode()) == expected
+    assert parse_internaldate(b'1 (UID 9 INTERNALDATE "5-Jan-2026 10:00:00 -0130"') == datetime(
+        2026, 1, 5, 11, 30, tzinfo=UTC
+    )
+    assert parse_internaldate(b"1 (UID 9 BODY[] {3}") is None
+    assert parse_internaldate(b'1 (INTERNALDATE "32-Nov-2026 00:00:00 +0000"') is None
+
+
+async def test_email_accepts_unpadded_internaldate_day(app):
+    await app.vault.set("mail-pass", "mail-secret-value")
+    box = {"validity": 7, "messages": {1: mail("旧邮件", "old", "<old@x>")}, "unpadded_day": True}
+    server = await fake_imap(box, [])
+    port = server.sockets[0].getsockname()[1]
+    app.config.value.plugins = [
+        PluginConfig(id="email", enabled=True, settings=email_settings(port))
+    ]
+    await app.plugins.reload("email")
+    plugin = app.plugins.loaded["email"]
+    async with server:
+        assert await plugin.sync_once() == 0
+        box["messages"][2] = mail("单数日期", "body", "<d1@x>")
+        box["dates"] = {2: datetime(2099, 11, 1, 1, 36, tzinfo=UTC)}
+        assert await plugin.sync_once() == 1
+        assert await plugin.sync_once() == 0
 
 
 async def test_email_optional_smtp_channel_is_best_effort(app):

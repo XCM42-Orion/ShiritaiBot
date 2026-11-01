@@ -2,7 +2,7 @@
 
 ## 目录约定
 
-`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/` 和通用的邮件插件 `email/` 外，其余目录都被 `.gitignore` 忽略，飞书和网络学堂需在部署环境中单独安装实际代码与清单。干净 checkout 不含这两个插件。旧的 `integrations/`、`builtin_plugins/` 已撤销。
+`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/`、通用的邮件插件 `email/` 和 GitHub 插件 `github/` 外，其余目录都被 `.gitignore` 忽略，飞书和网络学堂需在部署环境中单独安装实际代码与清单。干净 checkout 不含这两个插件。旧的 `integrations/`、`builtin_plugins/` 已撤销。
 
 `src/shiritaibot/learn/` 属于核心代码：定义学校无关的请求/响应、stdio 接入、查询和下载工具、同步基线与变更事件；不包含清华 URL、SSO、SM2 或学校客户端。`plugin/thu_learn/` 则负责清华具体实现，包括客户端和单请求适配进程。
 
@@ -160,6 +160,38 @@ notify_to = []
 
 SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之后再发邮件，失败只记录 `notify.channel_failed`，不影响 IM 通知、不重发。其他插件可调用 `PluginContext.register_notifier(handler)` 接入同一通道，`handler(source, text)` 为异步函数；重载和停用时宿主自动撤销。
 
+## GitHub
+
+目录：`src/shiritaibot/plugin/github/`（随主仓库提交）。插件 ID：`github`，默认未启用。
+
+用于让 Agent 以一个**专用 bot 账号**维护仓库。建议在 bot 账号下创建 Fine-grained PAT：Repository access 选 *All repositories*（之后新建的仓库也能覆盖），按需授予 Contents、Issues、Pull requests、Workflows、Actions、Administration 的读写权限。不要使用主账号的 token。
+
+```toml
+[[plugins]]
+id = "github"
+enabled = true
+[plugins.settings]
+token = "secret:自动生成的凭据标识"   # 在 WebUI 填写，自动加密
+commit_name = ""                      # 留空 = token 账号的登录名
+commit_email = ""                     # 留空 = <id>+<login>@users.noreply.github.com
+allowed_owners = ["shiritai-bot"]     # 留空 = 只允许 token 账号本身
+timeout = 30
+```
+
+| 工具 | risk | 内容 |
+|---|---|---|
+| `github_read` | safe | 账号、仓库、分支、文件、提交、Issue / PR（含评论、diff）、Actions、Release |
+| `github_write` | normal | 创建、修改 Issue 和 PR，评论，Review，创建 Label |
+| `github_publish` | sensitive | 合并 PR、发 Release、重跑或触发 workflow、删除非默认分支 |
+| `github_admin` | dangerous | 创建仓库、修改仓库设置和 topics、设置分支保护；**不提供删除仓库** |
+| `github_push` | sensitive | 把工作区本地分支推送到 GitHub；`force` 不能用于默认分支 |
+
+所有工具仅限主人在私聊 / WebUI 的 Agent 模式调用，群聊不可用；仓库 owner 必须在 `allowed_owners` 内。Issue、PR 和文件内容视为不可信资料。
+
+**token 不进入 shell 和子代理。** 插件只通过 `PluginContext.set_process_env` 向 shell 工具和子代理注入 `GIT_AUTHOR_*` / `GIT_COMMITTER_*`，模型在 shell 里 `git commit` 即使用 bot 身份；推送必须调用 `github_push`。该工具不在模型控制的仓库里运行 git（其配置和 hooks 可能读取凭据），而是把分支 fetch 到插件私有的裸镜像 `<home>/plugin_data/github/mirrors/`，再从镜像带 token 推送；token 经环境变量传给 git，不出现在命令行参数和工具输出中。推送子代理的改动时传 `subagent_run`。
+
+局限：shell 工具与宿主以同一系统账号运行，能读到 `<home>/master.key` 和数据库的模型理论上仍可解密 Vault。以上设计防止的是 token 意外进入上下文、日志和聊天记录；如需更强的隔离，应让 shell 在沙箱或独立账号中运行，并保持 token 的最小权限。用 `env:` 引用的 token 会被所有子进程继承，请改在 WebUI 中填写。
+
 ## 主动性引擎
 
 事件源统一调用 `PluginContext.emit(event)`、`emit_many(events)`、`get_event(receipt_id)`；宿主提供同名 API，HTTP 分别是认证后的 `POST /api/events`、`POST /api/events/batch`、`GET /api/events/{id}`。事件包含来源事件 `id`、事件名 `kind`、`source`、带时区的 `occurred_at`、标题 `title`、内容 `payload`、稳定的 `dedup_key`、参考值 `urgency`，以及可选的 `actors`（事件涉及的人：`identity` 如 `email:someone@example.edu` / `qq:12345`，`name`，`role` 如 `sender`）。`actors` 只是原始身份数据：插件不调用任何记忆接口，事件处理完后由核心统一决定是否写入长期记忆（见 [MEMORY.md](MEMORY.md)）。`id` 可由入口自动补齐。返回的接收记录 ID 按 `(source, dedup_key)` 稳定去重；提交不代表处理完成，状态查询可查看分类和执行结果。
@@ -198,7 +230,7 @@ class Entry(Plugin):
         return {"answer": "hello"}
 ```
 
-`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册、主动通知通道注册和日志。
+`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册、主动通知通道注册和日志。`set_process_env(env)` 可向 shell 工具和子代理进程添加**非敏感**环境变量（重载、停用时撤销，不同插件不能设置同名变量）；`session_workspace(session)` 返回会话的 shell 工作目录。
 
 ## 日志
 

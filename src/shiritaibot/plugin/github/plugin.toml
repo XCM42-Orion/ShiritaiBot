@@ -1,0 +1,42 @@
+api = 1
+name = "GitHub"
+description = "以专用 bot 账号读写 GitHub 仓库；token 只在插件进程内使用，不进入模型上下文"
+
+[settings_schema]
+type = "object"
+
+[settings_schema.properties.token]
+type = "string"
+title = "访问令牌"
+description = "建议在 bot 账号下创建 Fine-grained PAT（Repository access 选 All repositories）。加密保存，模型和 shell 都拿不到。"
+writeOnly = true
+default = ""
+
+[settings_schema.properties.commit_name]
+type = "string"
+title = "提交者名称"
+description = "注入 shell 和子代理的 GIT_AUTHOR_NAME / GIT_COMMITTER_NAME；留空则使用 token 账号的登录名。"
+default = ""
+
+[settings_schema.properties.commit_email]
+type = "string"
+title = "提交者邮箱"
+description = "留空则使用 token 账号的 noreply 邮箱（<id>+<login>@users.noreply.github.com）。"
+default = ""
+
+[settings_schema.properties.allowed_owners]
+type = "array"
+title = "允许操作的账号或组织"
+description = "每行一个；只能操作这些账号名下的仓库。留空则只允许 token 账号本身。"
+default = []
+
+[settings_schema.properties.allowed_owners.items]
+type = "string"
+pattern = "^[A-Za-z0-9-]{1,39}$"
+
+[settings_schema.properties.timeout]
+type = "integer"
+title = "API 超时（秒）"
+minimum = 5
+maximum = 120
+default = 30

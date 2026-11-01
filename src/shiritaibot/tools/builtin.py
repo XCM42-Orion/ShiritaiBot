@@ -41,6 +41,7 @@ async def register_builtin(app) -> None:
             [*app.config.value.policy.shell_command, args["command"]],
             workspace,
             timeout=args.get("timeout", 60),
+            env=app.plugins.child_env(),
         )
 
     async def history_query(ctx, args):
