@@ -62,40 +62,6 @@ aside {
   object-position: center top;
 }
 
-.workspace {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin: 26px 0 18px;
-  padding: 11px;
-  border: 1px solid var(--pink-border);
-  border-radius: var(--radius-sm);
-}
-
-.workspace strong {
-  font-size: 12px;
-}
-
-.workspace small {
-  display: block;
-  margin-top: 3px;
-  font-size: 10px;
-}
-
-.workspace > .dot {
-  margin-left: auto;
-}
-
-.avatar {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: var(--pink-soft);
-  color: var(--pink);
-}
-
 nav {
   display: flex;
   flex-direction: column;
@@ -103,6 +69,7 @@ nav {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  margin-top: 24px;
 }
 
 nav button {
@@ -135,7 +102,7 @@ nav button b {
 
 .sidebar-bottom {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
   margin-top: auto;
   flex-shrink: 0;
@@ -144,8 +111,21 @@ nav button b {
   font-size: 11px;
 }
 
+.sidebar-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .sidebar-bottom small {
   margin-left: auto;
+}
+
+.restart-button {
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px;
+  font-size: 12px;
 }
 
 .dot {
@@ -254,11 +234,14 @@ footer .muted {
     padding: 0;
   }
   .brand > span:last-child,
-  .workspace,
-  .sidebar-bottom,
+  .sidebar-status,
+  .restart-button span,
   nav button span,
   nav button b {
     display: none;
+  }
+  .sidebar-bottom {
+    padding: 12px 0 0;
   }
   nav {
     margin-top: 18px;

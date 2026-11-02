@@ -48,6 +48,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export interface ApiClient {
   health(): Promise<Health>;
+  restart(): Promise<{ status: string; instance_id: string }>;
   config(): Promise<Settings>;
   tools(session?: string): Promise<ToolCatalog>;
   saveConfig(settings: Settings): Promise<ConfigSaveResult>;
@@ -163,6 +164,7 @@ export function createClient(getToken: () => string): ApiClient {
 
   return {
     health: () => request<Health>("/health"),
+    restart: () => request("/restart", "POST"),
     config: () => request<Settings>("/config"),
     tools: (session = "web:owner") =>
       request<ToolCatalog>("/tools?session=" + encodeURIComponent(session)),

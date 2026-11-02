@@ -1,4 +1,6 @@
 import logging
+import os
+import sys
 from copy import copy, deepcopy
 from pathlib import Path
 from urllib.parse import urlencode
@@ -50,13 +52,32 @@ def run(
     admin_token = ensure_token(home)
     log_config = deepcopy(LOGGING_CONFIG)
     log_config["formatters"]["default"].update({"()": LoginLinkFormatter, "token": admin_token})
-    uvicorn.run(
-        create_app(home, token=admin_token, allowed_hosts=allowed_host, log_level=log_level),
+    restart_requested = False
+
+    def request_restart() -> None:
+        nonlocal restart_requested
+        restart_requested = True
+        server.should_exit = True
+
+    config = uvicorn.Config(
+        create_app(
+            home,
+            token=admin_token,
+            allowed_hosts=allowed_host,
+            log_level=log_level,
+            request_restart=request_restart,
+        ),
         host="127.0.0.1",
         port=port,
         access_log=False,
         log_config=log_config,
     )
+    server = uvicorn.Server(config)
+    server.run()
+    if restart_requested:
+        # Re-enter Python only after Uvicorn has closed connections and the
+        # application lifespan has flushed data and stopped its workers.
+        os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
 
 
 @cli.command()

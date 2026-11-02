@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, RotateCw } from "lucide-react";
 import { PAGES, pageMeta } from "../navigation";
 import type { PageId } from "../navigation";
 
@@ -10,6 +10,10 @@ export function AppShell({
   online,
   version,
   onLogout,
+  onRestart,
+  restarting,
+  restartDisabled,
+  restartHint,
   children,
 }: {
   page: PageId;
@@ -18,6 +22,10 @@ export function AppShell({
   online: boolean;
   version: string;
   onLogout: () => void;
+  onRestart: () => void;
+  restarting: boolean;
+  restartDisabled: boolean;
+  restartHint: string;
   children: ReactNode;
 }) {
   const meta = pageMeta(page);
@@ -36,19 +44,9 @@ export function AppShell({
             <img src="/icon.png" alt="" />
           </span>
           <span>
-            ShiritaiBot<small>个人控制台</small>
+            ShiritaiBot<small>控制台</small>
           </span>
         </a>
-        <div className="workspace">
-          <span className="avatar" aria-hidden="true">
-            知
-          </span>
-          <div>
-            <strong>我的工作空间</strong>
-            <small>Owner · 私人助理</small>
-          </div>
-          <span className={"dot " + (online ? "on" : "")} aria-hidden="true" />
-        </div>
         <nav aria-label="主导航">
           {PAGES.map(({ id, label, icon: Icon }) => (
             <button
@@ -68,9 +66,29 @@ export function AppShell({
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <span className={"dot " + (online ? "on" : "")} aria-hidden="true" />
-          {online ? "系统运行中" : "连接未就绪"}
-          <small>{version}</small>
+          <div className="sidebar-status" role="status">
+            <span
+              className={"dot " + (online ? "on" : "")}
+              aria-hidden="true"
+            />
+            {restarting ? "正在重启…" : online ? "系统运行中" : "连接未就绪"}
+            <small>{version}</small>
+          </div>
+          <button
+            type="button"
+            className="restart-button"
+            onClick={onRestart}
+            disabled={restartDisabled || restarting}
+            title={restartHint}
+            aria-label={restarting ? "正在重启" : "重启"}
+          >
+            <RotateCw
+              size={16}
+              className={restarting ? "spinner" : undefined}
+              aria-hidden="true"
+            />
+            <span>{restarting ? "正在重启…" : "重启"}</span>
+          </button>
         </div>
       </aside>
       <main id="main-content">

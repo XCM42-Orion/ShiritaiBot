@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import os
 import secrets
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
+from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from shiritaibot.agent.commands import COMMANDS
@@ -74,10 +76,13 @@ def create_app(
     token: str | None = None,
     allowed_hosts: list[str] | None = None,
     log_level: str | None = None,
+    request_restart: Callable[[], None] | None = None,
 ) -> FastAPI:
     runtime = Application(home)
     manager = logs.LogManager(home, log_level)
     web_log = logs.get_logger("WebUI")
+    instance_id = secrets.token_hex(16)
+    restarting = False
 
     @asynccontextmanager
     async def lifespan(api):
@@ -148,6 +153,8 @@ def create_app(
         return {
             "status": "ok",
             "version": "0.1.0",
+            "instance_id": instance_id,
+            "restart_available": request_restart is not None,
             "config_version": runtime.config.version,
             "adapters": {k: x.status for k, x in runtime.adapters.instances.items()},
             "plugins": list(runtime.plugins.loaded),
@@ -156,6 +163,22 @@ def create_app(
             "actors": len(runtime.runtime.actors),
             "subagents": len(runtime.subagents.tasks),
         }
+
+    @api.post("/api/restart", dependencies=protected, status_code=202)
+    async def restart():
+        nonlocal restarting
+        if request_restart is None:
+            raise HTTPException(503, "当前启动方式不支持重启，请使用 shiritaibot run 启动")
+        background = None
+        if not restarting:
+            restarting = True
+            web_log.log("收到管理后台重启请求，正在关闭服务")
+            background = BackgroundTask(request_restart)
+        return JSONResponse(
+            {"status": "restarting", "instance_id": instance_id},
+            status_code=202,
+            background=background,
+        )
 
     @api.get("/api/config", dependencies=protected)
     async def config():

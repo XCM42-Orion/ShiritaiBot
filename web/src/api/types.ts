@@ -358,6 +358,8 @@ export interface Settings {
 export interface Health {
   status: string;
   version: string;
+  instance_id: string;
+  restart_available: boolean;
   config_version: number;
   adapters: Record<string, string>;
   plugins: string[];

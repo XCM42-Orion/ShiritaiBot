@@ -56,6 +56,8 @@ function ConsoleApp() {
   const { succeed, fail, dismiss } = useNotice();
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [restartInstance, setRestartInstance] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const authenticate = useCallback(
@@ -104,7 +106,8 @@ function ConsoleApp() {
     queryKey: ["health"],
     queryFn: () => client!.health(),
     enabled: client !== null,
-    refetchInterval: 10000,
+    refetchInterval: restarting ? 1000 : 10000,
+    retry: restarting ? false : 3,
   });
   const approvals = useQuery({
     queryKey: ["records", "approval"],
@@ -119,13 +122,36 @@ function ConsoleApp() {
     (health.error instanceof Error ? health.error : null) ??
     (client && health.isError ? new Error("无法连接后端服务") : null);
   useEffect(() => {
-    if (!queryError) return;
+    if (!queryError || restarting) return;
     if (queryError.message.includes("管理令牌")) {
       sessionStorage.removeItem(TOKEN_KEY);
       setToken(null);
     }
     fail(queryError.message);
-  }, [queryError, fail]);
+  }, [queryError, restarting, fail]);
+
+  useEffect(() => {
+    if (
+      !restartInstance ||
+      !health.data?.instance_id ||
+      health.data.instance_id === restartInstance
+    )
+      return;
+    setRestarting(false);
+    setRestartInstance(null);
+    succeed("重启完成");
+    void queryClient.invalidateQueries();
+  }, [restartInstance, health.data?.instance_id, queryClient, succeed]);
+
+  useEffect(() => {
+    if (!restarting) return;
+    const timer = setTimeout(() => {
+      setRestarting(false);
+      setRestartInstance(null);
+      fail("等待重启超时，请检查服务日志或稍后刷新页面。");
+    }, 60000);
+    return () => clearTimeout(timer);
+  }, [restarting, fail]);
 
   const onRealtime = useCallback(
     (event: RealtimeEvent) => {
@@ -179,6 +205,19 @@ function ConsoleApp() {
       fail(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function restart() {
+    if (!client || restarting || busy || saving || draft.dirty) return;
+    dismiss();
+    setRestarting(true);
+    try {
+      const result = await client.restart();
+      setRestartInstance(result.instance_id);
+    } catch (error) {
+      setRestarting(false);
+      fail(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -249,10 +288,28 @@ function ConsoleApp() {
       page={page}
       onNavigate={navigate}
       pendingApprovals={pending}
-      online={health.isSuccess}
+      online={health.isSuccess && !restarting}
       version={"v" + (health.data?.version ?? "0.1.0")}
+      onRestart={() => void restart()}
+      restarting={restarting}
+      restartDisabled={
+        busy ||
+        saving ||
+        draft.dirty ||
+        !health.isSuccess ||
+        health.data?.restart_available === false
+      }
+      restartHint={
+        draft.dirty
+          ? "请先保存或放弃未保存的配置"
+          : health.data?.restart_available === false
+            ? "请使用 shiritaibot run 启动以支持重启"
+            : "重启 ShiritaiBot 服务"
+      }
       onLogout={() => {
         dismiss();
+        setRestarting(false);
+        setRestartInstance(null);
         sessionStorage.removeItem(TOKEN_KEY);
         setToken(null);
         queryClient.clear();

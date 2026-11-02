@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,15 +37,17 @@ def test_startup_link_uses_bound_port_without_exposing_token_to_other_handlers(c
 def test_cli_uses_selected_home_token_and_preserves_uvicorn_defaults(tmp_path, monkeypatch):
     (tmp_path / "web.token").write_text("existing-local-token", encoding="utf-8")
     calls = []
-    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kwargs: calls.append((app, kwargs)))
+    monkeypatch.setattr(
+        cli.uvicorn, "Server", lambda config: SimpleNamespace(run=lambda: calls.append(config))
+    )
     result = CliRunner().invoke(cli.cli, ["run", "--home", str(tmp_path), "--port", "24680"])
     assert result.exit_code == 0, result.output
-    app, options = calls[0]
-    assert app.state.runtime.home == tmp_path
-    assert options["host"] == "127.0.0.1"
-    assert options["port"] == 24680
-    assert options["access_log"] is False
-    assert options["log_config"]["formatters"]["default"]["token"] == "existing-local-token"
+    config = calls[0]
+    assert config.app.state.runtime.home == tmp_path
+    assert config.host == "127.0.0.1"
+    assert config.port == 24680
+    assert config.access_log is False
+    assert config.log_config["formatters"]["default"]["token"] == "existing-local-token"
     assert LOGGING_CONFIG["formatters"]["default"]["()"] == "uvicorn.logging.DefaultFormatter"
     assert "existing-local-token" not in result.output
 
