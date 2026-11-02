@@ -89,4 +89,6 @@ shiritaibot token             # 一键安装（macOS / Linux）
 
 欢迎参与ShiritaiBot的开发！
 
+[![贡献者](https://contrib.rocks/image?repo=XCM42-Orion/ShiritaiBot)](https://github.com/XCM42-Orion/ShiritaiBot/graphs/contributors)
+
 加入ShiritaiBot Issue反馈群，参与ShiritaiBot的后续工作：1134225815
