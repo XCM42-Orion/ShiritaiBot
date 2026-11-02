@@ -11,6 +11,8 @@ aside {
   flex-direction: column;
   gap: 6px;
   padding: 24px 14px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: linear-gradient(
     180deg,
     var(--pink-soft),
@@ -98,6 +100,9 @@ nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 nav button {
@@ -133,6 +138,7 @@ nav button b {
   align-items: center;
   gap: 8px;
   margin-top: auto;
+  flex-shrink: 0;
   padding: 20px 8px 0;
   color: var(--muted);
   font-size: 11px;
