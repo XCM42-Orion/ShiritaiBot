@@ -117,7 +117,7 @@ def create_app(
         finally:
             manager.uninstall()
 
-    api = FastAPI(title="ShiritaiBot", version="0.1.0", lifespan=lifespan)
+    api = FastAPI(title="ShiritaiBot", version="0.2.0", lifespan=lifespan)
     api.state.runtime = runtime
     api.add_middleware(
         TrustedHostMiddleware,
@@ -172,7 +172,7 @@ def create_app(
     async def health():
         return {
             "status": "ok",
-            "version": "0.1.0",
+            "version": "0.2.0",
             "instance_id": instance_id,
             "restart_available": request_restart is not None,
             "config_version": runtime.config.version,

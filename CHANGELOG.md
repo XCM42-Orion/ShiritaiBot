@@ -3,7 +3,7 @@
 本文件记录 ShiritaiBot 的重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，
 版本号遵循语义化版本。
 
-## [未发布]
+## 0.2.0 - 2026-11-2
 
 ### 新增
 

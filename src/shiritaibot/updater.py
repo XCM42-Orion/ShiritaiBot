@@ -52,7 +52,7 @@ def package_version() -> str:
     try:
         return metadata.version("shiritaibot")
     except metadata.PackageNotFoundError:
-        return "0.1.0"
+        return "0.2.0"
 
 
 def first_line(text: str) -> str:

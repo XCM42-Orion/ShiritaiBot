@@ -319,7 +319,7 @@ function ConsoleApp() {
       onNavigate={navigate}
       pendingApprovals={pending}
       online={health.isSuccess && !restarting}
-      version={"v" + (health.data?.version ?? "0.1.0")}
+      version={"v" + (health.data?.version ?? "0.2.0")}
       onRestart={() => void restart()}
       restarting={restarting}
       restartDisabled={

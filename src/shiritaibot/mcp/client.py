@@ -23,7 +23,7 @@ from shiritaibot.core.logs import get_logger
 log = get_logger("MCP")
 
 PROTOCOL_VERSION = "2025-06-18"
-CLIENT_INFO = {"name": "ShiritaiBot", "version": "0.1.0"}
+CLIENT_INFO = {"name": "ShiritaiBot", "version": "0.2.0"}
 MAX_LINE = 16 * 1024 * 1024
 
 
