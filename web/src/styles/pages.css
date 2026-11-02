@@ -959,3 +959,19 @@
     grid-template-columns: 1fr;
   }
 }
+
+.plain-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.plain-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}

@@ -107,6 +107,64 @@ export interface PluginInfo extends Instance {
   tools?: { name: string; risk: string; safe: boolean }[];
 }
 
+export interface SkillsConfig {
+  enabled: boolean;
+  inject: boolean;
+  disabled: string[];
+}
+
+export type ToolRisk = "safe" | "normal" | "sensitive" | "dangerous";
+
+export interface McpServerConfig extends Instance {
+  transport: "stdio" | "http";
+  command: string[];
+  env: Record<string, string> | string;
+  cwd: string;
+  url: string;
+  headers: Record<string, string> | string;
+  timeout: number;
+  risk: ToolRisk;
+  tool_risks: Record<string, ToolRisk>;
+  disabled_tools: string[];
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  source: "bundled" | "installed";
+  path: string;
+  overrides: boolean;
+  enabled: boolean;
+  error: string;
+  license?: string;
+}
+
+export interface SkillDetail extends SkillInfo {
+  content: string;
+  files: { path: string; bytes: number }[];
+}
+
+export interface McpToolInfo {
+  name: string;
+  original: string;
+  description: string;
+  risk: ToolRisk;
+  read_only_hint: boolean;
+  enabled: boolean;
+  error: string;
+}
+
+export interface McpServerStatus {
+  id: string;
+  enabled: boolean;
+  transport: string;
+  status: "connected" | "connecting" | "error" | "disabled";
+  error: string;
+  server: { name?: string; version?: string };
+  instructions: string;
+  tools: McpToolInfo[];
+}
+
 export interface PersonaConfig extends Instance {
   name: string;
   prompt: string;
@@ -275,6 +333,8 @@ export interface Settings {
   adapters: AdapterConfig[];
   subagents: SubagentConfig[];
   plugins: PluginConfig[];
+  skills: SkillsConfig;
+  mcp_servers: McpServerConfig[];
   policy: Policy;
   proactive: ProactiveConfig;
   web_search: WebSearchConfig;

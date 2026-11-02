@@ -7,6 +7,17 @@
 
 ### 新增
 
+- Skill Manager：安装和管理 `.skill` 技能包（Agent Skills 格式，ZIP 内含 `SKILL.md`）。
+  - 已启用技能的名称和描述注入 Agent 系统提示，模型按需用 `skill_read` 读取正文和附带文件。
+  - 新工具 `skill_list` / `skill_read` / `skill_write` / `skill_update` / `skill_install` /
+    `skill_remove` / `skill_pack`；聊天中收到的技能文件可经 `qq_file_download` 后直接安装。
+  - 内置示例技能 `skill-creator`，打包示例见 `examples/skills/skill-creator.skill`。
+  - WebUI 新增「技能」页面：上传安装、查看内容、逐个停用、删除。详见 `docs/SKILLS.md`。
+- MCP Manager：接入 MCP 服务器（stdio 与 Streamable HTTP）。
+  - 服务器工具注册为 `mcp_<服务>_<工具>`，安全等级由配置决定，受会话工具权限与审批约束。
+  - 请求头与凭据类环境变量自动加密保存；配置变更只重启受影响的服务，进程崩溃后自动重连。
+  - WebUI 新增「MCP 服务」页面：配置服务、查看连接状态与工具、手动重连。详见 `docs/MCP.md`。
+
 - 情绪指标系统，默认关闭（`emotion.enabled`）。开启后，每轮对话结束时会异步判断主人的情绪，
   结果影响下一轮的回复语气；情绪足够强烈且主动性足够高时，主动发起一次关心。
   - 三个信号融合成 0–1 的强度：判断模型（`light` 路由，多标签情绪向量）、规则词表、负面用词。

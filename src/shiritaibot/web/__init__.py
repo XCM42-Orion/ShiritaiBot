@@ -22,6 +22,7 @@ from shiritaibot.core.process import run_process
 from shiritaibot.meme.core import MAX_MEME_BYTES
 from shiritaibot.plugin.core.packages import MAX_ARCHIVE, download_github, validate_id
 from shiritaibot.routine import RoutineItem
+from shiritaibot.skill import MAX_ARCHIVE as MAX_SKILL_ARCHIVE
 from shiritaibot.store.statistics import statistics
 from shiritaibot.tools.builtin import register_builtin
 
@@ -150,6 +151,7 @@ def create_app(
             "config_version": runtime.config.version,
             "adapters": {k: x.status for k, x in runtime.adapters.instances.items()},
             "plugins": list(runtime.plugins.loaded),
+            "mcp": {k: x.status for k, x in runtime.mcp.servers.items()},
             "tools": sorted(runtime.registry.tools),
             "actors": len(runtime.runtime.actors),
             "subagents": len(runtime.subagents.tasks),
@@ -434,6 +436,38 @@ def create_app(
             except Exception:
                 raise PublicError(runtime.plugins.errors.get(key, "插件加载失败")) from None
             return await runtime.plugins.listing()
+
+    @api.get("/api/skills", dependencies=protected)
+    async def skills():
+        return await runtime.skills.listing()
+
+    @api.get("/api/skills/{name}", dependencies=protected)
+    async def skill_detail(name: str):
+        return await runtime.skills.detail(name)
+
+    @api.post("/api/skills/install", dependencies=protected)
+    async def install_skill(request: Request, replace: bool = False):
+        data = bytearray()
+        async for chunk in request.stream():
+            data.extend(chunk)
+            if len(data) > MAX_SKILL_ARCHIVE:
+                raise HTTPException(413, "技能包不能超过 10 MiB")
+        await runtime.skills.install_bytes(bytes(data), replace=replace)
+        return await runtime.skills.listing()
+
+    @api.delete("/api/skills/{name}", dependencies=protected)
+    async def remove_skill(name: str):
+        await runtime.skills.remove(name)
+        return await runtime.skills.listing()
+
+    @api.get("/api/mcp", dependencies=protected)
+    async def mcp_servers():
+        return runtime.mcp.listing()
+
+    @api.post("/api/mcp/{key}/reconnect", dependencies=protected)
+    async def reconnect_mcp(key: str):
+        async with runtime.configure_lock:
+            return await runtime.mcp.reconnect(key)
 
     @api.post("/api/subagents/{key}/cancel", dependencies=protected)
     async def cancel(key: str):

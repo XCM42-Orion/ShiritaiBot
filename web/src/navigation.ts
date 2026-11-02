@@ -6,10 +6,12 @@ import {
   LayoutDashboard,
   MessageSquare,
   Network,
+  Plug,
   Puzzle,
   Settings,
   ShieldCheck,
   Smile,
+  Sparkles,
   Terminal,
   Workflow,
 } from "lucide-react";
@@ -24,6 +26,8 @@ export type PageId =
   | "memes"
   | "subagents"
   | "plugins"
+  | "skills"
+  | "mcp"
   | "models"
   | "adapters"
   | "approvals"
@@ -85,6 +89,18 @@ export const PAGES: PageMeta[] = [
     label: "插件",
     subtitle: "插件启停、配置和重载。",
     icon: Puzzle,
+  },
+  {
+    id: "skills",
+    label: "技能",
+    subtitle: "安装、查看和停用 .skill 技能包。",
+    icon: Sparkles,
+  },
+  {
+    id: "mcp",
+    label: "MCP 服务",
+    subtitle: "接入 MCP 服务器，把它们的工具提供给助手。",
+    icon: Plug,
   },
   {
     id: "models",

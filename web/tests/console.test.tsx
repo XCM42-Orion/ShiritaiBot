@@ -21,6 +21,8 @@ import { PluginsPage } from "../src/pages/PluginsPage";
 import { SettingsPage } from "../src/pages/SettingsPage";
 import { MemoryPage } from "../src/pages/MemoryPage";
 import { MemesPage } from "../src/pages/MemesPage";
+import { McpPage } from "../src/pages/McpPage";
+import { SkillsPage } from "../src/pages/SkillsPage";
 import { SecretField } from "../src/components/SecretField";
 import { NoticeProvider, useNotice } from "../src/hooks/useNotice";
 import { FieldForm } from "../src/components/FieldForm";
@@ -49,6 +51,8 @@ function baseConfig(): Settings {
     adapters: [],
     subagents: [],
     plugins: [],
+    skills: { enabled: true, inject: true, disabled: [] },
+    mcp_servers: [],
     policy: {
       denied_tools: [],
       scope_tools: {},
@@ -222,6 +226,12 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     installPluginZip: vi.fn().mockResolvedValue([]),
     installPluginGithub: vi.fn().mockResolvedValue([]),
     removePlugin: vi.fn().mockResolvedValue([]),
+    skills: vi.fn().mockResolvedValue([]),
+    skill: stub(),
+    installSkill: vi.fn().mockResolvedValue([]),
+    removeSkill: vi.fn().mockResolvedValue([]),
+    mcpServers: vi.fn().mockResolvedValue([]),
+    reconnectMcp: vi.fn().mockResolvedValue([]),
     discoverModels: vi.fn().mockResolvedValue([]),
     testModel: vi.fn().mockResolvedValue({ text: "OK", usage: {} }),
     sessions: vi.fn().mockResolvedValue([]),
@@ -230,6 +240,130 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 const act = (work: () => Promise<unknown>) => work().then(() => undefined);
+
+function ConfigHost({
+  page: Page,
+  client,
+  initial,
+  onConfig,
+}: {
+  page: typeof SkillsPage;
+  client: ApiClient;
+  initial: Settings;
+  onConfig: (next: Settings) => void;
+}) {
+  const [config, setConfig] = useState(initial);
+  return (
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <Page
+        client={client}
+        act={act}
+        config={config}
+        setConfig={(next) => {
+          onConfig(next);
+          setConfig(next);
+        }}
+      />
+    </QueryClientProvider>
+  );
+}
+
+describe("skills page", () => {
+  it("shows skill content, toggles a skill and uploads a package", async () => {
+    const info = {
+      name: "skill-creator",
+      description: "创建技能",
+      source: "bundled" as const,
+      path: "/skills/skill-creator",
+      overrides: false,
+      enabled: true,
+      error: "",
+    };
+    const client = fakeClient({
+      skills: vi.fn().mockResolvedValue([info]),
+      skill: vi.fn().mockResolvedValue({
+        ...info,
+        content: "---\nname: skill-creator\n---\n# Skill Creator",
+        files: [{ path: "SKILL.md", bytes: 42 }],
+      }),
+      installSkill: vi.fn().mockResolvedValue([info]),
+    });
+    let latest = baseConfig();
+    render(
+      <ConfigHost
+        page={SkillsPage}
+        client={client}
+        initial={latest}
+        onConfig={(next) => (latest = next)}
+      />,
+    );
+    expect(await screen.findByText(/# Skill Creator/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /删除/ })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("启用此技能"));
+    expect(latest.skills.disabled).toEqual(["skill-creator"]);
+    await user.click(screen.getByRole("button", { name: /安装技能/ }));
+    const file = new File(["PK"], "demo.skill");
+    await user.upload(screen.getByLabelText("技能文件"), file);
+    await user.click(screen.getByRole("button", { name: "上传并安装" }));
+    await waitFor(() =>
+      expect(client.installSkill).toHaveBeenCalledWith(file, false),
+    );
+  });
+});
+
+describe("mcp page", () => {
+  it("adds a server and shows connection status with tools", async () => {
+    const client = fakeClient({
+      mcpServers: vi.fn().mockResolvedValue([
+        {
+          id: "files",
+          enabled: true,
+          transport: "stdio",
+          status: "connected",
+          error: "",
+          server: { name: "filesystem", version: "1.0" },
+          instructions: "",
+          tools: [
+            {
+              name: "mcp_files_read_file",
+              original: "read_file",
+              description: "Read a file",
+              risk: "safe",
+              read_only_hint: true,
+              enabled: true,
+              error: "",
+            },
+          ],
+        },
+      ]),
+    });
+    let latest = baseConfig();
+    render(
+      <ConfigHost
+        page={McpPage}
+        client={client}
+        initial={latest}
+        onConfig={(next) => (latest = next)}
+      />,
+    );
+    expect(await screen.findByText("mcp_files_read_file")).toBeTruthy();
+    expect(screen.getByText("已连接")).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /添加/ }));
+    expect(latest.mcp_servers).toHaveLength(1);
+    expect(latest.mcp_servers[0]).toMatchObject({
+      id: "mcp",
+      transport: "stdio",
+      risk: "sensitive",
+    });
+    expect(screen.getByLabelText("启动命令")).toBeTruthy();
+  });
+});
 
 describe("email plugin configuration", () => {
   it("edits existing mail settings without losing credentials and can fill a new template", async () => {
@@ -681,7 +815,9 @@ describe("model categories", () => {
     let snapshot: Settings | null = null;
     renderModels(client, (next) => (snapshot = next));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "决策模型（Systemone）" }));
+    await user.click(
+      screen.getByRole("button", { name: "决策模型（Systemone）" }),
+    );
     expect(screen.queryByText("main")).toBeNull();
     await user.click(screen.getByLabelText("新增提供商"));
     expect(snapshot!.providers[1]).toMatchObject({

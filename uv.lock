@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -1305,6 +1305,7 @@ dependencies = [
     { name = "pillow" },
     { name = "psutil" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "tomli-w" },
     { name = "typer" },
     { name = "tzdata" },
@@ -1342,6 +1343,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=11,<13" },
     { name = "psutil", specifier = ">=6,<8" },
     { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "requests", marker = "extra == 'learn'", specifier = ">=2.32.3,<3" },
     { name = "tomli-w", specifier = ">=1.2,<2" },
     { name = "typer", specifier = ">=0.15,<1" },

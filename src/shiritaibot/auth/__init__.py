@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from shiritaibot.llm import ProviderManager
 
 log = get_logger("审批")
+# Environment variable names that hold credentials and get stored in the Vault.
+SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH", re.I)
 
 
 class Review(Model):
@@ -80,6 +82,13 @@ class Vault:
         for search_provider in ("tavily", "serpapi", "deepseek"):
             search = getattr(result.web_search, search_provider)
             search.api_key = await protect(search.api_key)
+        for server in result.mcp_servers:
+            # HTTP headers usually carry authorization; env only for credential-like names.
+            for key, item in server.headers.items():
+                server.headers[key] = await protect(item)
+            for key, item in server.env.items():
+                if SECRET_NAME.search(key):
+                    server.env[key] = await protect(item)
 
         async def walk(value):
             if isinstance(value, dict):

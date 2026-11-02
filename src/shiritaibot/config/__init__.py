@@ -195,6 +195,73 @@ class PluginConfig(Instance):
     settings: dict = Field(default_factory=dict)
 
 
+SKILL_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+ToolRisk = Literal["safe", "normal", "sensitive", "dangerous"]
+
+
+class SkillsConfig(Model):
+    enabled: bool = True
+    # List installed skills (name + description) in the Agent system prompt.
+    inject: bool = True
+    disabled: list[str] = Field(default_factory=list)
+
+    @field_validator("disabled")
+    @classmethod
+    def names_valid(cls, value: list[str]) -> list[str]:
+        value = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if any(not SKILL_NAME.fullmatch(item) for item in value):
+            raise ValueError("skill names use lowercase letters, digits and hyphens")
+        return value
+
+
+class McpServerConfig(Instance):
+    enabled: bool = False
+    transport: Literal["stdio", "http"] = "stdio"
+    # stdio: argv of the server process; env values may be env:/secret: references.
+    command: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+    # http: Streamable HTTP endpoint; header values may be env:/secret: references.
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout: int = Field(default=60, ge=5, le=600)
+    # Security level of every tool from this server, unless overridden per tool.
+    risk: ToolRisk = "sensitive"
+    tool_risks: dict[str, ToolRisk] = Field(default_factory=dict)
+    # Tools hidden from the model, by their original MCP name.
+    disabled_tools: list[str] = Field(default_factory=list)
+
+    @field_validator("env", "headers", "tool_risks", mode="before")
+    @classmethod
+    def parse_mapping(cls, value):
+        # The JSON editor sends text; TOML stores the table directly.
+        if isinstance(value, str):
+            value = json.loads(value) if value.strip() else {}
+        if not isinstance(value, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str) for k, v in value.items()
+        ):
+            raise ValueError("env, headers and tool_risks must map strings to strings")
+        return value
+
+    @field_validator("cwd")
+    @classmethod
+    def cwd_absolute(cls, value: str) -> str:
+        value = os.path.expanduser(value.strip())
+        if value and not os.path.isabs(value):
+            raise ValueError("cwd must be an absolute path")
+        return value
+
+    @model_validator(mode="after")
+    def transport_valid(self) -> McpServerConfig:
+        if self.transport == "http" and self.enabled:
+            url = urlsplit(self.url)
+            if url.scheme not in {"http", "https"} or not url.hostname or "@" in self.url:
+                raise ValueError("MCP URL must be http(s) without embedded credentials")
+        if self.transport == "stdio" and self.enabled and not self.command:
+            raise ValueError("stdio MCP servers need a command")
+        return self
+
+
 class PersonaConfig(Instance):
     name: str = Field(min_length=1, max_length=100)
     prompt: str = Field(min_length=1)
@@ -462,6 +529,8 @@ class Settings(Model):
     adapters: list[AdapterConfig] = Field(default_factory=list)
     subagents: list[SubagentConfig] = Field(default_factory=list)
     plugins: list[PluginConfig] = Field(default_factory=list)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     policy: Policy = Field(default_factory=Policy)
     proactive: ProactiveConfig = Field(default_factory=ProactiveConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
@@ -547,6 +616,7 @@ class Settings(Model):
             self.subagents,
             self.plugins,
             self.personas,
+            self.mcp_servers,
         ]:
             if len({x.id for x in items}) != len(items):
                 raise ValueError("duplicate instance id")

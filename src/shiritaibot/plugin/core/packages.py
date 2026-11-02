@@ -25,6 +25,40 @@ def validate_id(key: str) -> None:
         raise PublicError("插件标识只能包含小写字母、数字和下划线，且不能为保留名称")
 
 
+def check_entries(archive: zipfile.ZipFile, max_unpacked: int, label: str) -> None:
+    """Reject oversized archives, absolute/parent paths, links and special files."""
+    entries = archive.infolist()
+    if len(entries) > 2000 or sum(i.file_size for i in entries) > max_unpacked:
+        raise PublicError(f"{label}解压后过大或文件数量超过 2000")
+    for item in entries:
+        path = PurePosixPath(item.filename)
+        mode = item.external_attr >> 16
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or "\\" in item.filename
+            or ":" in item.filename
+            or stat.S_ISLNK(mode)
+            or (stat.S_IFMT(mode) and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)))
+        ):
+            raise PublicError(f"{label} ZIP 包含不安全的路径或文件类型")
+
+
+def extract_entries(archive: zipfile.ZipFile, stage: Path) -> None:
+    """Extract an archive already accepted by check_entries, skipping VCS and caches."""
+    for item in archive.infolist():
+        path = PurePosixPath(item.filename)
+        if any(p in {".git", "__pycache__"} for p in path.parts):
+            continue
+        target = stage.joinpath(*path.parts)
+        if item.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(item) as source, target.open("xb") as output:
+                shutil.copyfileobj(source, output)
+
+
 def install_archive(root: Path, key: str, data: bytes) -> None:
     validate_id(key)
     if len(data) > MAX_ARCHIVE:
@@ -37,34 +71,10 @@ def install_archive(root: Path, key: str, data: bytes) -> None:
         raise PublicError("同名插件目录已存在")
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            entries = archive.infolist()
-            if len(entries) > 2000 or sum(i.file_size for i in entries) > MAX_UNPACKED:
-                raise PublicError("插件解压后过大或文件数量超过 2000")
-            for item in entries:
-                path = PurePosixPath(item.filename)
-                mode = item.external_attr >> 16
-                if (
-                    path.is_absolute()
-                    or ".." in path.parts
-                    or "\\" in item.filename
-                    or ":" in item.filename
-                    or stat.S_ISLNK(mode)
-                    or (stat.S_IFMT(mode) and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)))
-                ):
-                    raise PublicError("插件 ZIP 包含不安全的路径或文件类型")
+            check_entries(archive, MAX_UNPACKED, "插件")
             with tempfile.TemporaryDirectory(prefix=".install-", dir=root) as staging:
                 stage = Path(staging)
-                for item in entries:
-                    path = PurePosixPath(item.filename)
-                    if any(p in {".git", "__pycache__"} for p in path.parts):
-                        continue
-                    target = stage.joinpath(*path.parts)
-                    if item.is_dir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with archive.open(item) as source, target.open("xb") as output:
-                            shutil.copyfileobj(source, output)
+                extract_entries(archive, stage)
                 manifests = list(stage.rglob("plugin.toml"))
                 manifest = stage / "plugin.toml"
                 if not manifest.is_file():

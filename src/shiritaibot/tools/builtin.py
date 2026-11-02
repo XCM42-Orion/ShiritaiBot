@@ -14,6 +14,7 @@ from shiritaibot.core.process import run_process
 from shiritaibot.meme.tools import meme_tools
 from shiritaibot.memory.tools import memory_tools
 from shiritaibot.routine import FINISHED, KEEP_FINISHED, RoutineItem
+from shiritaibot.skill.tools import skill_tools
 from shiritaibot.tools import TEXT, schema
 from shiritaibot.tools.qq import qq_tools, session_dir
 from shiritaibot.tools.web_search import search_token, search_web
@@ -423,6 +424,8 @@ async def register_builtin(app) -> None:
     entries += memory_tools(app.memory)
     entries += qq_tools(app)
     entries += meme_tools(app)
+    if app.config.value.skills.enabled:
+        entries += skill_tools(app)
     if await search_token(app.config.value.web_search, app.vault):
         entries.append(
             Tool(

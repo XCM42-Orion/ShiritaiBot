@@ -12,6 +12,7 @@ from shiritaibot.core import EventBus
 from shiritaibot.core.logs import get_logger
 from shiritaibot.emotion import EmotionManager
 from shiritaibot.llm import ProviderManager
+from shiritaibot.mcp import McpManager
 from shiritaibot.meme import MemeManager
 from shiritaibot.memory import MemoryManager, ShortTermMemory
 from shiritaibot.memory.extract import MemoryExtractor
@@ -19,6 +20,7 @@ from shiritaibot.memory.maintenance import MemoryMaintenance
 from shiritaibot.plugin.core import PluginManager
 from shiritaibot.proactive import PREPARE_SESSION, ProactiveEngine
 from shiritaibot.routine import RoutineManager
+from shiritaibot.skill import SkillManager
 from shiritaibot.store import Store
 from shiritaibot.subagent import SubagentManager
 from shiritaibot.tools import ToolRegistry
@@ -73,6 +75,8 @@ class Application:
             self.home, self.config, self.registry, self.vault, self.store, self.proactive.emit
         )
         self.subagents.env = self.plugins.child_env
+        self.skills = SkillManager(self.home, self.config)
+        self.mcp = McpManager(self.config, self.registry, self.vault, self.store)
         self.subagents.notes = self.plugins.subagent_notes
         await register_builtin(self)
         self.runtime = AgentRuntime(
@@ -84,6 +88,7 @@ class Application:
             self.deliver,
             self.short_term,
             emotion=self.emotion,
+            skills=self.skills,
         )
         self.adapters.runtime, self.adapters.permissions = self.runtime, self.permissions
         self.permissions.notify = partial(self.adapters.notify_owner, handoff=False)
@@ -91,6 +96,7 @@ class Application:
         self.proactive.channels = self.plugins.notifiers
         self.plugins.get_event = self.proactive.get_event
         await self.plugins.start()
+        await self.mcp.start()
         await self.adapters.start()
         self.tasks = [
             asyncio.create_task(self.routine.run()),
@@ -104,7 +110,7 @@ class Application:
         cfg = self.config.value
         log.log(
             f"启动完成：{len(self.registry.tools)} 个工具，{len(self.plugins.loaded)} 个插件，"
-            f"{len(self.adapters.instances)} 个协议端；主动性引擎"
+            f"{len(self.adapters.instances)} 个协议端，{len(self.mcp.servers)} 个 MCP 服务；主动性引擎"
             + ("已启用" if cfg.proactive.enabled else "未启用")
         )
 
@@ -126,6 +132,7 @@ class Application:
             await self.adapters.start()
             await register_builtin(self)
             await self.plugins.reload_all()
+            await self.mcp.reload()
 
     async def close(self) -> None:
         log.log("正在关闭…")
@@ -135,6 +142,7 @@ class Application:
         await self.runtime.close()
         await self.subagents.close()
         await self.plugins.close()
+        await self.mcp.close()
         await self.adapters.close()
         await self.llm.close()
         await self.store.close()

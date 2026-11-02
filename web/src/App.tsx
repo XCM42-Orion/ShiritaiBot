@@ -21,6 +21,7 @@ import { ApprovalsPage } from "./pages/ApprovalsPage";
 import { ChatPage } from "./pages/ChatPage";
 import { EventsPage } from "./pages/EventsPage";
 import { LogsPage } from "./pages/LogsPage";
+import { McpPage } from "./pages/McpPage";
 import { MemesPage } from "./pages/MemesPage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { ModelsPage } from "./pages/ModelsPage";
@@ -28,6 +29,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { PluginsPage } from "./pages/PluginsPage";
 import { RoutinePage } from "./pages/RoutinePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SkillsPage } from "./pages/SkillsPage";
 import { SubagentsPage } from "./pages/SubagentsPage";
 import type { Action } from "./pages/common";
 
@@ -229,6 +231,10 @@ function ConsoleApp() {
         return <SubagentsPage {...configProps} />;
       case "plugins":
         return <PluginsPage {...configProps} />;
+      case "skills":
+        return <SkillsPage {...configProps} />;
+      case "mcp":
+        return <McpPage {...configProps} />;
       case "approvals":
         return <ApprovalsPage {...configProps} />;
       case "settings":

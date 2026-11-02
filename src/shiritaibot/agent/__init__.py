@@ -310,7 +310,16 @@ class SessionActor:
 
 class AgentRuntime:
     def __init__(
-        self, config, store, llm, registry, memory, deliver, short_term=None, emotion=None
+        self,
+        config,
+        store,
+        llm,
+        registry,
+        memory,
+        deliver,
+        short_term=None,
+        emotion=None,
+        skills=None,
     ):
         self.config, self.store, self.llm = config, store, llm
         self.registry, self.memory, self.deliver = registry, memory, deliver
@@ -319,6 +328,7 @@ class AgentRuntime:
         self.recall_hints: dict[str, float] = {}
         self.short_term = short_term
         self.emotion = emotion
+        self.skills = skills
         self.actors: dict[str, SessionActor] = {}
         self.submit_locks: dict[str, asyncio.Lock] = {}
         self.context_locks: dict[str, asyncio.Lock] = {}
@@ -553,6 +563,8 @@ class AgentRuntime:
                 proactive = ctx.background and ctx.session.startswith(PREPARE_SESSION)
                 if proactive:
                     tools = [*tools, REPORT_SPEC]
+                if self.skills and any(t["function"]["name"] == "skill_read" for t in tools):
+                    system += await self.skills.prompt()
                 nudged = False
                 # Group chat is supplied per turn and never archived into the session history.
                 ambient = await self.group_context(ctx, cfg, tools)

@@ -12,6 +12,7 @@ import type {
   MemoryStatus,
   ModelConfig,
   ModelTestResult,
+  McpServerStatus,
   PluginInfo,
   ProviderConfig,
   RecordKind,
@@ -19,6 +20,8 @@ import type {
   RoutineDraft,
   RoutineRecord,
   Settings,
+  SkillDetail,
+  SkillInfo,
   Statistics,
   ToolCatalog,
   Paginated,
@@ -101,6 +104,12 @@ export interface ApiClient {
   installPluginZip(id: string, file: File): Promise<PluginInfo[]>;
   installPluginGithub(id: string, url: string): Promise<PluginInfo[]>;
   removePlugin(id: string): Promise<PluginInfo[]>;
+  skills(): Promise<SkillInfo[]>;
+  skill(name: string): Promise<SkillDetail>;
+  installSkill(file: File, replace: boolean): Promise<SkillInfo[]>;
+  removeSkill(name: string): Promise<SkillInfo[]>;
+  mcpServers(): Promise<McpServerStatus[]>;
+  reconnectMcp(id: string): Promise<McpServerStatus[]>;
   discoverModels(provider: ProviderConfig): Promise<DiscoveredModel[]>;
   testModel(
     provider: ProviderConfig,
@@ -286,6 +295,23 @@ export function createClient(getToken: () => string): ApiClient {
       request<PluginInfo[]>("/plugins/install/github", "POST", { id, url }),
     removePlugin: (id) =>
       request<PluginInfo[]>("/plugins/" + encodeURIComponent(id), "DELETE"),
+    skills: () => request<SkillInfo[]>("/skills"),
+    skill: (name) =>
+      request<SkillDetail>("/skills/" + encodeURIComponent(name)),
+    installSkill: (file, replace) =>
+      request<SkillInfo[]>(
+        "/skills/install?replace=" + String(replace),
+        "POST",
+        file,
+      ),
+    removeSkill: (name) =>
+      request<SkillInfo[]>("/skills/" + encodeURIComponent(name), "DELETE"),
+    mcpServers: () => request<McpServerStatus[]>("/mcp"),
+    reconnectMcp: (id) =>
+      request<McpServerStatus[]>(
+        "/mcp/" + encodeURIComponent(id) + "/reconnect",
+        "POST",
+      ),
     discoverModels: (provider) =>
       request<DiscoveredModel[]>("/providers/discover", "POST", provider),
     testModel: (provider, model) =>

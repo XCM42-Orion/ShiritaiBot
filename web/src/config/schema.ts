@@ -1,5 +1,6 @@
 import type {
   AdapterConfig,
+  McpServerConfig,
   PersonaConfig,
   ProviderConfig,
   SubagentConfig,
@@ -997,3 +998,144 @@ export const WEB_SEARCH_PROVIDER_FIELDS: Record<string, FieldSpec[]> = {
     },
   ],
 };
+
+const MCP_COMMON_FIELDS: FieldSpec[] = [
+  {
+    key: "id",
+    label: "服务名称",
+    kind: "text",
+    help: "工具名会以 mcp_<名称>_ 开头，只能使用字母、数字、下划线或短横线。",
+  },
+  {
+    key: "enabled",
+    label: "启用服务",
+    kind: "boolean",
+    help: "保存后连接服务并注册其工具；停用会断开连接并撤销工具。",
+  },
+  {
+    key: "transport",
+    label: "传输方式",
+    kind: "select",
+    options: ["stdio", "http"],
+    optionLabels: {
+      stdio: "stdio（本地进程）",
+      http: "Streamable HTTP（远程服务）",
+    },
+  },
+];
+
+const MCP_STDIO_FIELDS: FieldSpec[] = [
+  {
+    key: "command",
+    label: "启动命令",
+    kind: "list",
+    placeholder:
+      "npx\n-y\n@modelcontextprotocol/server-filesystem\n/home/me/docs",
+    help: "每行一个参数（argv），不经过 shell。",
+    full: true,
+  },
+  {
+    key: "env",
+    label: "环境变量",
+    kind: "json",
+    placeholder: '{"API_KEY": "env:MY_API_KEY"}',
+    help: "JSON 对象。名称含 KEY、TOKEN、SECRET、PASSWORD 等的值保存时自动加密；也可填 env:变量名。",
+    full: true,
+  },
+  {
+    key: "cwd",
+    label: "工作目录",
+    kind: "text",
+    placeholder: "留空则使用当前目录",
+    help: "绝对路径。",
+  },
+];
+
+const MCP_HTTP_FIELDS: FieldSpec[] = [
+  {
+    key: "url",
+    label: "服务地址",
+    kind: "text",
+    placeholder: "https://example.com/mcp",
+    help: "Streamable HTTP 端点，不要在地址里包含账号密码。",
+    full: true,
+  },
+  {
+    key: "headers",
+    label: "请求头",
+    kind: "json",
+    placeholder: '{"Authorization": "Bearer ..."}',
+    help: "JSON 对象，所有值保存时自动加密；也可填 env:变量名。",
+    full: true,
+  },
+];
+
+const MCP_POLICY_FIELDS: FieldSpec[] = [
+  {
+    key: "timeout",
+    label: "调用超时（秒）",
+    kind: "number",
+    min: 5,
+    max: 600,
+  },
+  {
+    key: "risk",
+    label: "工具安全等级",
+    kind: "select",
+    options: ["safe", "normal", "sensitive", "dangerous"],
+    optionLabels: {
+      safe: "safe（只读安全）",
+      normal: "normal",
+      sensitive: "sensitive",
+      dangerous: "dangerous",
+    },
+    help: "此服务所有工具的默认等级，决定默认权限。不信任服务自报的只读标记。",
+  },
+  {
+    key: "tool_risks",
+    label: "逐工具安全等级",
+    kind: "json",
+    placeholder: '{"read_file": "safe", "write_file": "dangerous"}',
+    help: "按 MCP 原始工具名覆盖安全等级。",
+    full: true,
+  },
+  {
+    key: "disabled_tools",
+    label: "隐藏的工具",
+    kind: "list",
+    placeholder: "每行一个 MCP 原始工具名",
+    help: "这些工具不会提供给模型。",
+    full: true,
+  },
+];
+
+export function mcpFields(item: McpServerConfig): FieldSpec[] {
+  return [
+    ...MCP_COMMON_FIELDS,
+    ...(item.transport === "http" ? MCP_HTTP_FIELDS : MCP_STDIO_FIELDS),
+    ...MCP_POLICY_FIELDS,
+  ];
+}
+
+export function mcpSummary(item: McpServerConfig): string {
+  return item.transport === "http"
+    ? "http · " + (item.url || "未填写地址")
+    : "stdio · " + (item.command[0] || "未填写命令");
+}
+
+export function createMcpServer(rows: McpServerConfig[]): McpServerConfig {
+  return {
+    id: uniqueId("mcp", rows),
+    enabled: false,
+    transport: "stdio",
+    command: [],
+    env: {},
+    cwd: "",
+    url: "",
+    headers: {},
+    timeout: 60,
+    risk: "sensitive",
+    tool_risks: {},
+    disabled_tools: [],
+  };
+}
