@@ -142,6 +142,9 @@ function baseConfig(): Settings {
       initiative: 0.3,
       persistence: 0.5,
       developer: false,
+      judge_weight: 0.6,
+      rules_weight: 0.25,
+      sentiment_weight: 0.15,
     },
   };
 }

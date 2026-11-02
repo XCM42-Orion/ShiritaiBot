@@ -13,6 +13,19 @@ KIND = "emotion"
 HALF_LIFE = 6 * 3600
 
 
+def combine(semantic: float | None, level: float, negativity: float, cfg: EmotionConfig) -> float:
+    """Fuse the checks that ran, renormalizing their configured weights."""
+    values = {"rules": level, "sentiment": negativity}
+    weights = {"rules": cfg.rules_weight, "sentiment": cfg.sentiment_weight}
+    if semantic is not None:
+        values["judge"] = semantic
+        weights["judge"] = cfg.judge_weight
+    total = sum(weights.values())
+    if not total:
+        return 0.0
+    return min(1.0, sum(weights[name] * value for name, value in values.items()) / total)
+
+
 def scope_keys(ctx: Context) -> list[str]:
     if ctx.group:
         return [ctx.session, "owner"] if ctx.owner else [ctx.session]

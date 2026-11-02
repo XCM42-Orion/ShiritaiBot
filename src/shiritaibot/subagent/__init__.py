@@ -427,7 +427,7 @@ class SubagentManager:
                     else result["exit_code"],
                     truncated=result["truncated"],
                 )
-                if row["status"] == "needs_input":
+                if row["status"] == "needs_input" and question:
                     row["question"] = question[:2000]
                 # Raw stderr is deliberately not written into the activity feed.
         except asyncio.CancelledError:

@@ -1,12 +1,12 @@
 """Decision-model (Jev) emotion judgment.
 
-System One classifies; it never generates text. `intensity` and `impact` are noul
-questions, `affect` is a choice. The text model is asked only for a short situation
-summary, and only when the light route has a text model. Any failure returns None so
-the caller can fall back to rules.
+System One classifies; it never generates text. Each emotion label is a noul
+question, so one call returns a small label vector whose maximum becomes the
+dominant affect. The text model is asked only for a short situation summary, and
+only when the semantic signal is strong enough to matter.
 
-Instructions are written in English (Jev's primary language); the state stays in the
-original Chinese.
+Instructions are written in English (Jev's primary language); the state stays in
+the original Chinese.
 """
 
 from __future__ import annotations
@@ -15,10 +15,11 @@ from dataclasses import dataclass
 
 from shiritaibot.core import canonical
 from shiritaibot.emotion.rules import Screen
-from shiritaibot.emotion.state import threshold
 
 ROUTES = ("light", "memory")
-AFFECTS = ("frustrated", "anxious", "sad", "calm")
+LABELS = ("frustrated", "anxious", "sad", "angry", "tired")
+DOMINANT_FLOOR = 0.4
+SITUATION_FLOOR = 0.2
 
 SITUATION_PROMPT = (
     "根据用户最近的消息，用不超过 40 字概括对方眼下的近况或烦心事。只写概括，不抄原话，"
@@ -26,15 +27,25 @@ SITUATION_PROMPT = (
 )
 
 QUESTIONS = {
-    "affect": {
-        "type": "choice",
-        "instructions": "Which emotion does `message` most show?",
-        "criteria": {
-            "frustrated": "Irritated or impatient, often after repeated failure or not being understood.",
-            "anxious": "Urgent or worried about something coming up.",
-            "sad": "Low or distressed about a personal hardship or bad news.",
-            "calm": "Neutral, ordinary or joking, with no notable emotion.",
-        },
+    "frustrated": {
+        "type": "noul",
+        "instructions": "How strongly does `message` show irritation or impatience?",
+    },
+    "anxious": {
+        "type": "noul",
+        "instructions": "How strongly does `message` show urgency or worry about something coming up?",
+    },
+    "sad": {
+        "type": "noul",
+        "instructions": "How strongly does `message` show low mood or distress about a personal hardship?",
+    },
+    "angry": {
+        "type": "noul",
+        "instructions": "How strongly does `message` show anger or outrage rather than mere irritation?",
+    },
+    "tired": {
+        "type": "noul",
+        "instructions": "How strongly does `message` show exhaustion, overload or burnout?",
     },
     "intensity": {
         "type": "noul",
@@ -56,18 +67,15 @@ class Judgment:
     situation: str
     source: str
 
+    @property
+    def semantic(self) -> float:
+        return 0.65 * self.intensity + 0.35 * self.impact
+
 
 def _noul(answer) -> float:
     if not isinstance(answer, dict) or not isinstance(answer.get("noul"), (int, float)):
         raise ValueError("malformed noul")
     return min(1.0, max(0.0, float(answer["noul"])))
-
-
-def _choice(answer) -> str:
-    if not isinstance(answer, dict) or not isinstance(answer.get("choice"), str):
-        raise ValueError("malformed choice")
-    picked = answer["choice"]
-    return picked if picked in AFFECTS else "calm"
 
 
 class EmotionJudge:
@@ -103,13 +111,16 @@ class EmotionJudge:
         }
         try:
             answers = await self.llm.decide(route, state, QUESTIONS, settings)
-            affect = _choice(answers["affect"])
+            scores = {label: _noul(answers[label]) for label in LABELS}
             intensity = _noul(answers["intensity"])
             impact = _noul(answers["impact"])
         except Exception:
             return None
-        if 0.65 * intensity + 0.35 * impact < threshold(settings.emotion):
-            return Judgment(affect, intensity, impact, "", "judge")
+        best = max(scores, key=lambda label: scores[label])
+        affect = best if scores[best] >= DOMINANT_FLOOR else "calm"
+        judgment = Judgment(affect, intensity, impact, "", "judge")
+        if judgment.semantic < SITUATION_FLOOR:
+            return judgment
         situation = await self._situation(settings, text, recent)
         return Judgment(affect, intensity, impact, situation, "judge")
 
@@ -119,7 +130,10 @@ class EmotionJudge:
         message = canonical({"message": text[:2000], "recent": recent[-3:]})
         try:
             reply = await self.llm.complete(
-                "light", SITUATION_PROMPT, [{"role": "user", "content": message}], [],
+                "light",
+                SITUATION_PROMPT,
+                [{"role": "user", "content": message}],
+                [],
                 settings=settings,
             )
         except Exception:

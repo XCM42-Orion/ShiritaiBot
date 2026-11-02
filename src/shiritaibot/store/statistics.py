@@ -118,13 +118,15 @@ async def statistics(store, hours: int, end: datetime | None = None, models=()):
     costs: dict[str, float] = {}
     for entry in per_model.values():
         model = configured.get(entry["model"])
-        entry["cost"] = cost(entry, model)
-        entry["currency"] = model.currency if entry["cost"] is not None else None
+        price = cost(entry, model)
+        entry["cost"] = price
+        currency = model.currency if model is not None and price is not None else None
+        entry["currency"] = currency
         entry["cache_hit_rate"] = (
             entry["cached_tokens"] / entry["input_tokens"] if entry["input_tokens"] else None
         )
-        if entry["cost"] is not None:
-            costs[entry["currency"]] = costs.get(entry["currency"], 0) + entry["cost"]
+        if price is not None and currency is not None:
+            costs[currency] = costs.get(currency, 0) + price
     return {
         "hours": hours,
         "timezone": "Asia/Shanghai",

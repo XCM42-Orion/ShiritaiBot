@@ -175,6 +175,9 @@ export interface EmotionConfig {
   initiative: number;
   persistence: number;
   developer: boolean;
+  judge_weight: number;
+  rules_weight: number;
+  sentiment_weight: number;
 }
 
 export interface GroupContextConfig {

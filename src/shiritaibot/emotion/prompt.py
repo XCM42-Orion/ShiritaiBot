@@ -7,7 +7,13 @@ value is atmosphere only and never names or cares for anyone publicly.
 
 from __future__ import annotations
 
-EMOTIONS = {"frustrated": "烦躁", "anxious": "焦急", "sad": "低落"}
+EMOTIONS = {
+    "frustrated": "烦躁",
+    "anxious": "焦急",
+    "sad": "低落",
+    "angry": "生气",
+    "tired": "疲惫",
+}
 CALM_FLOOR = 0.25
 
 
@@ -70,6 +76,8 @@ def render(
             "不要每轮都关心，也不要让话题偏离开用户的问题。"
         )
     if situation and value >= 0.4:
-        lines.append(f"此前提到：{situation}（{_age(at, updated)}）。可以自然接上，但不要主动追问细节。")
+        lines.append(
+            f"此前提到：{situation}（{_age(at, updated)}）。可以自然接上，但不要主动追问细节。"
+        )
     lines.append("</emotion>")
     return "\n".join(lines)

@@ -395,6 +395,11 @@ class EmotionConfig(Model):
     initiative: float = Field(default=0.3, ge=0, le=1)
     persistence: float = Field(default=0.5, ge=0, le=1)
     developer: bool = False
+    # Relative weights of the three checks; they are renormalized over whichever
+    # checks actually ran, so they need not sum to 1.
+    judge_weight: float = Field(default=0.6, ge=0, le=1)
+    rules_weight: float = Field(default=0.25, ge=0, le=1)
+    sentiment_weight: float = Field(default=0.15, ge=0, le=1)
 
 
 ROUTE_KEYS = (

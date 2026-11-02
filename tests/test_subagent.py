@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,6 +14,14 @@ from shiritaibot.proactive import delegated
 from shiritaibot.subagent import OUTPUT_LIMIT, clip, command_for, parse_output, question_in
 
 OWNER = Context("web:owner", "owner", "agent", True)
+
+# add_dirs must be absolute on the host platform, and command_for renders paths with
+# str(Path), so the expected command lines follow the platform too.
+POSIX = os.name != "nt"
+REPO = "/srv/repo" if POSIX else "C:/srv/repo"
+REPO_GIT = f"{REPO}/.git"
+WORKSPACE = Path("/w") if POSIX else Path("C:/w")
+WORK = str(WORKSPACE)
 
 
 async def test_instances_describe_only_enabled_config_without_cli_arguments(app):
@@ -162,17 +171,15 @@ def test_legacy_permission_migrates_to_cli_specific_settings():
 
 
 def test_codex_permissions_map_to_config_overrides_for_fresh_and_resumed_runs():
-    config = SubagentConfig(
-        id="c", kind="codex", network_access=True, add_dirs=["/srv/repo"], model="m"
-    )
-    fresh = command_for(config, Path("/w"))
-    assert fresh[:2] == ["codex", "exec"] and fresh[-3:] == ["-C", "/w", "-"]
-    resumed = command_for(config, Path("/w"), "thread-1")
+    config = SubagentConfig(id="c", kind="codex", network_access=True, add_dirs=[REPO], model="m")
+    fresh = command_for(config, WORKSPACE)
+    assert fresh[:2] == ["codex", "exec"] and fresh[-3:] == ["-C", WORK, "-"]
+    resumed = command_for(config, WORKSPACE, "thread-1")
     assert resumed[:3] == ["codex", "exec", "resume"] and resumed[-2:] == ["thread-1", "-"]
     for command in (fresh, resumed):
         assert "sandbox_workspace_write.network_access=true" in command
-        assert 'sandbox_workspace_write.writable_roots=["/srv/repo"]' in command
-    full = command_for(SubagentConfig(id="c", sandbox="danger-full-access"), Path("/w"))
+        assert f"sandbox_workspace_write.writable_roots={json.dumps([REPO])}" in command
+    full = command_for(SubagentConfig(id="c", sandbox="danger-full-access"), WORKSPACE)
     assert not any(arg.startswith("sandbox_workspace_write") for arg in full)
 
 
@@ -185,9 +192,9 @@ def test_claude_permissions_map_to_cli_flags():
         tools=["Read", "Bash"],
         allowed_tools=["Read", "Bash(git *)"],
         disallowed_tools=["Bash(rm *)"],
-        add_dirs=["/srv/repo"],
+        add_dirs=[REPO],
     )
-    command = command_for(config, Path("/w"), "session-1")
+    command = command_for(config, WORKSPACE, "session-1")
 
     def flag(name):
         return command[command.index(name) + 1]
@@ -196,7 +203,7 @@ def test_claude_permissions_map_to_cli_flags():
     assert flag("--tools") == "Read,Bash"
     assert flag("--allowedTools") == "Read,Bash(git *)"
     assert flag("--disallowedTools") == "Bash(rm *)"
-    assert flag("--add-dir") == "/srv/repo"
+    assert flag("--add-dir") == REPO
     assert flag("--resume") == "session-1"
 
 
@@ -230,7 +237,7 @@ print(json.dumps({"result": text, "session_id": "native-1", "is_error": False}))
 
 async def test_subagent_question_activates_proactive_loop_and_resumes(app, tmp_path):
     script = tmp_path / "fake_claude.py"
-    script.write_text(FAKE_CLAUDE)
+    script.write_text(FAKE_CLAUDE, encoding="utf-8")
     app.config.value.subagents = [
         SubagentConfig(id="cc", kind="claude_code", command=[sys.executable, str(script)])
     ]
@@ -278,10 +285,10 @@ def test_deepseek_harness_permissions_map_to_headless_flags():
         kind="deepseek_harness",
         command=["dsh"],
         permission_preset="danger-full-access",
-        add_dirs=["/srv/repo/.git"],
+        add_dirs=[REPO_GIT],
         model="ignored",
     )
-    fresh = command_for(config, Path("/w"))
+    fresh = command_for(config, WORKSPACE)
     assert fresh[:4] == ["dsh", "--profile", "headless", "--json"] and fresh[-1] == "-"
 
     def flag(command, name):
@@ -289,9 +296,9 @@ def test_deepseek_harness_permissions_map_to_headless_flags():
 
     assert flag(fresh, "--permission-mode") == "danger-full-access"
     assert flag(fresh, "--approval-policy") == "never"
-    assert flag(fresh, "--add-dir") == "/srv/repo/.git"
+    assert flag(fresh, "--add-dir") == REPO_GIT
     assert "--session-id" not in fresh and "ignored" not in fresh
-    resumed = command_for(config, Path("/w"), "session-1")
+    resumed = command_for(config, WORKSPACE, "session-1")
     assert flag(resumed, "--session-id") == "session-1"
     # Policy options are per invocation, so a resume repeats them.
     assert flag(resumed, "--permission-mode") == "danger-full-access"
@@ -348,7 +355,7 @@ print(json.dumps({"type": "final", "sessionId": sid, "reason": {"kind": "complet
 
 async def test_deepseek_harness_run_asks_and_resumes_in_same_session(app, tmp_path):
     script = tmp_path / "fake_dsh.py"
-    script.write_text(FAKE_DSH)
+    script.write_text(FAKE_DSH, encoding="utf-8")
     app.config.value.subagents = [
         SubagentConfig(id="ds", kind="deepseek_harness", command=[sys.executable, str(script)])
     ]

@@ -13,7 +13,7 @@ import json
 from shiritaibot.core import Context, ExternalEvent, now
 from shiritaibot.core.logs import brief, get_logger
 from shiritaibot.emotion import rules, state
-from shiritaibot.emotion.judge import EmotionJudge, Judgment
+from shiritaibot.emotion.judge import EmotionJudge
 from shiritaibot.emotion.prompt import render
 
 JUDGE_TIMEOUT = 30
@@ -77,27 +77,39 @@ class EmotionManager:
             if not hit.hit:
                 return
             judge = EmotionJudge(self.llm, self.config)
-            try:
-                async with asyncio.timeout(JUDGE_TIMEOUT):
-                    judgment = await judge.judge(cfg, text, recent, hit)
-            except Exception as exc:
-                log.debug("情绪判定失败", exc=exc)
-                return
-            if judgment is None:
-                if judge.usable(cfg):
+            judgment = None
+            if judge.usable(cfg):
+                try:
+                    async with asyncio.timeout(JUDGE_TIMEOUT):
+                        judgment = await judge.judge(cfg, text, recent, hit)
+                except Exception as exc:
+                    log.debug("情绪判定失败", exc=exc)
                     return
-                judgment = Judgment("", hit.level, 0.0, "", "rules")
-            raw = 0.65 * judgment.intensity + 0.35 * judgment.impact
+                if judgment is None:
+                    return
+            if judgment is not None:
+                semantic = judgment.semantic
+                affect, impact = judgment.affect, judgment.impact
+                situation, source = judgment.situation, judgment.source
+            else:
+                semantic, affect, impact, situation, source = (
+                    None,
+                    rules.expected_affect(hit),
+                    0.0,
+                    "",
+                    "rules",
+                )
+            raw = state.combine(semantic, hit.level, hit.negativity, cfg.emotion)
             at = now().timestamp()
             for key in state.scope_keys(ctx):
                 previous = await self.store.get(state.KIND, key)
                 updated = state.merge(
                     previous,
                     raw,
-                    affect=judgment.affect,
-                    impact=judgment.impact,
-                    situation=judgment.situation,
-                    source=judgment.source,
+                    affect=affect,
+                    impact=impact,
+                    situation=situation,
+                    source=source,
                     cfg=cfg.emotion,
                     at=at,
                 )

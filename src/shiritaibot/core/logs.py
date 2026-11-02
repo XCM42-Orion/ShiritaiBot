@@ -228,11 +228,13 @@ class LogManager:
             logging.getLogger(noisy).setLevel(logging.WARNING)
         bot = logging.getLogger(ROOT)
         bot.setLevel(self.level)
-        self.handlers = [(name, text) for name in TARGETS] + [(ROOT, feed)]
+        handlers: list[tuple[str, logging.Handler]] = [(name, text) for name in TARGETS]
+        handlers.append((ROOT, feed))
         if self.console:
             stream = logging.StreamHandler(sys.stderr)
             stream.setFormatter(TextFormatter(color=self._colorful(sys.stderr)))
-            self.handlers.append((ROOT, stream))
+            handlers.append((ROOT, stream))
+        self.handlers = handlers
         for name, handler in self.handlers:
             logging.getLogger(name).addHandler(handler)
         return self

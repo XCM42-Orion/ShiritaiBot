@@ -67,12 +67,13 @@ def line_splitter(on_line: Callable[[bytes], None]) -> Callable[[bytes], None]:
         for line in lines:
             pending.extend(line)
             if not oversized and len(pending) <= LINE_LIMIT:
-                on_line(bytes(pending))
+                # Windows pipes carry \r\n; callers parse lines, so drop the \r.
+                on_line(bytes(pending).removesuffix(b"\r"))
             pending.clear()
             oversized = False
         pending.extend(rest)
         if not chunk and pending and not oversized and len(pending) <= LINE_LIMIT:
-            on_line(bytes(pending))
+            on_line(bytes(pending).removesuffix(b"\r"))
         if len(pending) > LINE_LIMIT:
             pending.clear()
             oversized = True
