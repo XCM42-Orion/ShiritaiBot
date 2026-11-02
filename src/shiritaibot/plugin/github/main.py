@@ -303,6 +303,7 @@ class Entry(Plugin):
             raise PublicError("代理地址无效：需为 http(s):// 或 socks5(h):// 开头的 URL") from None
         self.client = httpx.AsyncClient(
             base_url=API,
+            follow_redirects=True,
             timeout=settings.get("timeout", 30),
             # An explicit proxy wins over HTTP(S)_PROXY; without one, environment proxies apply.
             proxy=self.proxy or None,

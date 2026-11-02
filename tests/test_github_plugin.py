@@ -160,6 +160,41 @@ async def test_github_derives_noreply_identity_when_blank(app, monkeypatch):
     assert env["GIT_AUTHOR_EMAIL"] == "42+shiritai-bot@users.noreply.github.com"
 
 
+async def test_github_api_follows_redirect_for_moved_repo(app, monkeypatch):
+    def handler(request):
+        if request.url.path == "/repos/shiritai-bot/old-name":
+            return httpx.Response(
+                301,
+                json={
+                    "message": "Moved Permanently",
+                    "url": "https://api.github.com/repositories/1",
+                },
+                headers={"Location": "https://api.github.com/repositories/1"},
+            )
+        if request.url.path == "/repositories/1":
+            return httpx.Response(200, json={"full_name": "shiritai-bot/new-name"})
+        return httpx.Response(200, json={"login": "shiritai-bot", "id": 42})
+
+    real = httpx.AsyncClient
+
+    def patched(*args, **kwargs):
+        kwargs.setdefault("transport", httpx.MockTransport(handler))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", patched)
+    monkeypatch.setenv("SHIRITAI_GH_TEST_TOKEN", TOKEN)
+    app.config.value.plugins = [
+        PluginConfig(
+            id="github", enabled=True, settings={"token": "env:SHIRITAI_GH_TEST_TOKEN", **IDENTITY}
+        )
+    ]
+    await app.plugins.reload("github")
+    # Keep the client built by start(); enable_github() would swap it out.
+    plugin = app.plugins.loaded["github"]
+    repo = await plugin.api("GET", "/repos/shiritai-bot/old-name")
+    assert repo["full_name"] == "shiritai-bot/new-name"
+
+
 async def test_github_enforces_owner_context_and_allowed_owners(app, monkeypatch):
     _, fake = await enable_github(app, monkeypatch)
     repo = await call(app, "github_read", {"action": "repo", "repo": "shiritai-bot/demo"})
