@@ -95,8 +95,12 @@ def keywords(words: list[str]) -> list[str]:
     return list(seen)
 
 
+def tokenize_sync(text: str) -> list[str]:
+    return list(jieba.cut_for_search(text))
+
+
 async def tokenize(text: str) -> list[str]:
-    return await asyncio.to_thread(lambda: list(jieba.cut_for_search(text)))
+    return await asyncio.to_thread(tokenize_sync, text)
 
 
 class MemoryManager:

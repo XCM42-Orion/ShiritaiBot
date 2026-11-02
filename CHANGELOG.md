@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **知识库**（`[knowledge]`）：存放不会变化的资料，结构扁平，检索不调用文本模型。详见 `docs/KNOWLEDGE.md`。
+  - 支持 txt、md、rst、log、json、yaml、xml、csv、tsv、pdf、doc、docx、xls、xlsx、ppt、pptx。
+  - 可在 WebUI「知识库」页上传，也可在 QQ 私聊把文件发给 Bot，由 `kb_import` 存入；内容相同的文件只存一份。
+  - `kb_search` 用 RRF 融合 BM25（jieba 分词加中文二元组）和 Embedding 余弦相似度；
+    没配 Embedding 或调用失败时只用关键词。新工具还有 `kb_read` / `kb_list` / `kb_delete`。
+  - 检索默认只对主人的 Agent 会话开放，可用 `knowledge.chat` 开放到 Chat 模式；写入和删除始终只限主人私聊。
+  - 新增依赖：pypdf、python-docx、python-pptx、openpyxl、xlrd、olefile。
 - **Skill Manager**：安装和管理 `.skill` 技能包（Agent Skills 格式，ZIP 内含 `SKILL.md`）。
   - 已启用技能的名称和描述注入 Agent 系统提示，模型按需用 `skill_read` 读取正文和附带文件。
   - 新工具 `skill_list` / `skill_read` / `skill_write` / `skill_update` / `skill_install` /
@@ -68,6 +75,8 @@
 
 ### 修复
 
+- `qq_file_download`：协议端的 `get_file` 不返回 QQ HTTPS 地址时，改试 `get_private_file_url` 和消息段自带的链接；
+  文件名兼容 NapCat 的 `file` 字段。
 - 子代理超长输出被截断时丢失最终结果并误判为 completed（#23）：
   - codex 与 deepseek_harness 改为边读边解析 NDJSON，最终消息、失败、`NEEDS_INPUT`、会话 ID
     和权限拒绝不再受保留上限影响；单行上限 4 MiB，内存有界。

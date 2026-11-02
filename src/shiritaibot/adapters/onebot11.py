@@ -325,7 +325,7 @@ class AdapterHub:
             data = part.get("data", {})
             if part.get("type") == "file":
                 ref = await file_ref(self.store, cfg.id, target if group else "", data, session)
-                text += f"\n[QQ 文件引用 {ref}: {data.get('name', 'file')}]"
+                text += f"\n[QQ 文件引用 {ref}: {data.get('name') or data.get('file') or 'file'}]"
             elif part.get("type") in {"image", "video"}:
                 # Media-only messages must still start a turn; the CDN link becomes a
                 # session-bound ref that qq_file_download can fetch.

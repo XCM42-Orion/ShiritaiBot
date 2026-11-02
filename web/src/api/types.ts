@@ -226,6 +226,53 @@ export interface MemeListing extends Paginated<MemeRecord> {
   index: MemoryStatus;
 }
 
+export interface KnowledgeConfig {
+  enabled: boolean;
+  chat: boolean;
+  chunk_chars: number;
+  chunk_overlap: number;
+  max_file_mb: number;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  filename: string;
+  format: string;
+  bytes: number;
+  sha256: string;
+  chars: number;
+  chunks: number;
+  source: "web" | "qq" | "agent";
+  origin: string;
+  created: number;
+  duplicate?: boolean;
+}
+
+export interface KnowledgeListing extends Paginated<KnowledgeDocument> {
+  documents: number;
+  chunks: number;
+  bytes: number;
+  index: MemoryStatus;
+}
+
+export interface KnowledgeChunk {
+  seq: number;
+  label: string;
+  text: string;
+}
+
+export interface KnowledgeDetail extends KnowledgeDocument {
+  items: KnowledgeChunk[];
+}
+
+export interface KnowledgeHit extends KnowledgeChunk {
+  document: string;
+  title: string;
+  score: number;
+  match: "hybrid" | "keyword" | "semantic";
+}
+
 export interface EmotionConfig {
   enabled: boolean;
   sensitivity: number;
@@ -352,6 +399,7 @@ export interface Settings {
   memory: MemoryConfig;
   vision: VisionConfig;
   meme: MemeConfig;
+  knowledge: KnowledgeConfig;
   emotion: EmotionConfig;
 }
 

@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ApiClient } from "../src/api/client";
+import type { Action } from "../src/pages/common";
 import type { PluginInfo, Settings } from "../src/api/types";
 import { Dashboard } from "../src/pages/Dashboard";
 import { ModelsPage } from "../src/pages/ModelsPage";
@@ -20,6 +21,7 @@ import { LogsPage } from "../src/pages/LogsPage";
 import { PluginsPage } from "../src/pages/PluginsPage";
 import { SettingsPage } from "../src/pages/SettingsPage";
 import { MemoryPage } from "../src/pages/MemoryPage";
+import { KnowledgePage } from "../src/pages/KnowledgePage";
 import { MemesPage } from "../src/pages/MemesPage";
 import { McpPage } from "../src/pages/McpPage";
 import { SkillsPage } from "../src/pages/SkillsPage";
@@ -138,6 +140,13 @@ function baseConfig(): Settings {
       fit_threshold: 0.6,
       inject: true,
       max_per_reply: 2,
+    },
+    knowledge: {
+      enabled: true,
+      chat: false,
+      chunk_chars: 600,
+      chunk_overlap: 80,
+      max_file_mb: 50,
     },
     emotion: {
       enabled: false,
@@ -2117,5 +2126,151 @@ describe("paginated lists and web search settings", () => {
       "advanced",
     );
     expect(latest.web_search.tavily.api_key).toBe("env:TAVILY_API_KEY");
+  });
+});
+
+describe("knowledge page", () => {
+  const row = {
+    id: "d1",
+    title: "员工手册",
+    filename: "手册.docx",
+    format: "docx",
+    bytes: 2048,
+    sha256: "abc",
+    chars: 500,
+    chunks: 2,
+    source: "qq" as const,
+    origin: "private:a:1",
+    created: 1790000000,
+  };
+
+  function renderPage(overrides: Partial<ApiClient>) {
+    const act: Action = async (work) => {
+      await work();
+    };
+    const client = fakeClient({
+      knowledge: vi.fn().mockResolvedValue({
+        items: [row],
+        total: 1,
+        page: 1,
+        page_size: 20,
+        documents: 1,
+        chunks: 2,
+        bytes: 2048,
+        index: { model: "emb:v1", indexed: 1, pending: 1 },
+      }),
+      ...overrides,
+    });
+    render(
+      <Host client={client}>
+        {(config, setConfig) => (
+          <KnowledgePage
+            client={client}
+            act={act}
+            config={config}
+            setConfig={setConfig}
+          />
+        )}
+      </Host>,
+    );
+    return client;
+  }
+
+  it("lists documents, shows chunks and confirms before deleting", async () => {
+    const user = userEvent.setup();
+    const client = renderPage({
+      knowledgeDocument: vi.fn().mockResolvedValue({
+        ...row,
+        items: [{ seq: 0, label: "第 1 页", text: "第一块内容" }],
+      }),
+      deleteKnowledge: vi.fn().mockResolvedValue({ ok: true }),
+    });
+    expect(await screen.findByText("员工手册")).toBeTruthy();
+    expect(screen.getByText(/1 已索引，1 待计算/)).toBeTruthy();
+    expect(screen.getByText(/QQ 私聊 ·/)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "查看分块" }));
+    expect(await screen.findByText("第一块内容")).toBeTruthy();
+    expect(client.knowledgeDocument).toHaveBeenCalledWith("d1", 0, 20);
+
+    await user.click(screen.getByRole("button", { name: "删除 员工手册" }));
+    expect(client.deleteKnowledge).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+    expect(client.deleteKnowledge).toHaveBeenCalledWith("d1");
+  });
+
+  it("uploads every selected file and reports which one failed", async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    const upload = vi
+      .fn()
+      .mockResolvedValueOnce(row)
+      .mockRejectedValueOnce(new Error("不支持的文件格式"));
+    const errors: string[] = [];
+    const act: Action = async (work) => {
+      try {
+        await work();
+      } catch (error) {
+        errors.push((error as Error).message);
+      }
+    };
+    const client = fakeClient({
+      knowledge: vi.fn().mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
+        documents: 0,
+        chunks: 0,
+        bytes: 0,
+        index: { model: null, indexed: 0, pending: 0 },
+      }),
+      uploadKnowledge: upload,
+    });
+    render(
+      <Host client={client}>
+        {(config, setConfig) => (
+          <KnowledgePage
+            client={client}
+            act={act}
+            config={config}
+            setConfig={setConfig}
+          />
+        )}
+      </Host>,
+    );
+    expect(await screen.findByText(/知识库还是空的/)).toBeTruthy();
+    expect(screen.getByText(/未配置 Embedding/)).toBeTruthy();
+    await user.upload(screen.getByLabelText("知识库文件"), [
+      new File(["a"], "a.txt"),
+      new File(["b"], "b.exe"),
+    ]);
+    await user.click(screen.getByRole("button", { name: /上传 2 个文件/ }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(errors).toEqual(["b.exe：不支持的文件格式"]));
+    // The failed file stays selected; the one already stored is not resent.
+    expect(screen.getByRole("button", { name: "上传" })).toBeTruthy();
+  });
+
+  it("shows how each search hit matched", async () => {
+    const user = userEvent.setup();
+    const client = renderPage({
+      knowledgeSearch: vi.fn().mockResolvedValue([
+        {
+          document: "d1",
+          seq: 3,
+          title: "员工手册",
+          label: "第 2 页",
+          text: "年假十天",
+          score: 0.03,
+          match: "hybrid",
+        },
+      ]),
+    });
+    await user.type(screen.getByLabelText("检索知识库"), "年假");
+    await user.click(screen.getByRole("button", { name: "检索" }));
+    expect(await screen.findByText("年假十天")).toBeTruthy();
+    expect(screen.getByText("关键词 + 语义")).toBeTruthy();
+    expect(screen.getByText("d1#3")).toBeTruthy();
+    expect(client.knowledgeSearch).toHaveBeenCalledWith("年假");
   });
 });

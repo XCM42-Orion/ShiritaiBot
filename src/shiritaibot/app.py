@@ -11,6 +11,7 @@ from shiritaibot.config import ConfigService, Settings
 from shiritaibot.core import EventBus
 from shiritaibot.core.logs import get_logger
 from shiritaibot.emotion import EmotionManager
+from shiritaibot.knowledge import KnowledgeBase
 from shiritaibot.llm import ProviderManager
 from shiritaibot.mcp import McpManager
 from shiritaibot.meme import MemeManager
@@ -57,6 +58,8 @@ class Application:
         await self.short_term.recover()
         self.memes = MemeManager(self.store, self.config, self.llm)
         await self.memes.open()
+        self.knowledge = KnowledgeBase(self.store, self.config, self.llm)
+        await self.knowledge.open()
         self.adapters = AdapterHub(self.config, self.vault, self.store)
         self.adapters.memes = self.memes
         self.proactive = ProactiveEngine(
@@ -104,6 +107,7 @@ class Application:
             asyncio.create_task(self.short_term.run()),
             asyncio.create_task(self.memory.run()),
             asyncio.create_task(self.memes.run()),
+            asyncio.create_task(self.knowledge.run()),
             asyncio.create_task(self.extractor.run()),
             asyncio.create_task(self.maintenance.run()),
         ]

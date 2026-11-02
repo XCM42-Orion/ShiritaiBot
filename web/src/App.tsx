@@ -22,6 +22,7 @@ import { ChatPage } from "./pages/ChatPage";
 import { EventsPage } from "./pages/EventsPage";
 import { LogsPage } from "./pages/LogsPage";
 import { McpPage } from "./pages/McpPage";
+import { KnowledgePage } from "./pages/KnowledgePage";
 import { MemesPage } from "./pages/MemesPage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { ModelsPage } from "./pages/ModelsPage";
@@ -260,6 +261,8 @@ function ConsoleApp() {
         return <MemoryPage client={api} act={act} />;
       case "memes":
         return <MemesPage {...configProps} />;
+      case "knowledge":
+        return <KnowledgePage {...configProps} />;
       case "logs":
         return <LogsPage client={api} act={act} />;
       case "models":

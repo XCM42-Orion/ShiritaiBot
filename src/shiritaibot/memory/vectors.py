@@ -1,6 +1,6 @@
 """Embedding index: float32 BLOBs in SQLite, brute-force cosine in numpy.
 
-Memory items use mem_vector; other libraries (memes) pass their own table.
+Memory items use mem_vector; other libraries (memes, knowledge) pass their own table.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ log = get_logger("记忆")
 BATCH = 32
 
 
-TABLES = ("mem_vector", "meme_vector")
+# Table -> what a degraded search log line calls it.
+TABLES = {"mem_vector": "记忆", "meme_vector": "表情", "kb_vector": "知识库"}
 
 
 class VectorIndex:
@@ -42,9 +43,12 @@ class VectorIndex:
         key = self.key()
         if key is None:
             return 0
-        pending = await self.stale(documents, key)
+        return await self.embed(await self.stale(documents, key), key)
+
+    async def embed(self, documents: dict[str, str], key: str) -> int:
+        """Embed and store these documents for model `key`; returns how many were stored."""
         done = 0
-        items = list(pending.items())
+        items = list(documents.items())
         for offset in range(0, len(items), BATCH):
             batch = items[offset : offset + BATCH]
             used, vectors = await self.llm.embed([text for _, text in batch])
@@ -79,11 +83,7 @@ class VectorIndex:
         try:
             used, vectors = await self.llm.embed([text], query=True)
         except PublicError:
-            log.warning(
-                "Embedding 不可用，本次"
-                + ("记忆" if self.table == "mem_vector" else "表情")
-                + "检索只用关键词"
-            )
+            log.warning(f"Embedding 不可用，本次{TABLES[self.table]}检索只用关键词")
             return []
         if used not in self.cache:
             rows = await self.store.query(f"SELECT id,vec FROM {self.table} WHERE model=?", (used,))

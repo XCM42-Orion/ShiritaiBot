@@ -4,6 +4,10 @@ import type {
   DiscoveredModel,
   Health,
   HistoryMessage,
+  KnowledgeDetail,
+  KnowledgeDocument,
+  KnowledgeHit,
+  KnowledgeListing,
   LogFeed,
   MemeListing,
   MemeRecord,
@@ -95,6 +99,20 @@ export interface ApiClient {
   ): Promise<MemeRecord>;
   describeMeme(id: string): Promise<MemeRecord>;
   deleteMeme(id: string): Promise<unknown>;
+  knowledge(
+    query: string,
+    page: number,
+    pageSize: number,
+  ): Promise<KnowledgeListing>;
+  knowledgeDocument(
+    id: string,
+    start: number,
+    count: number,
+  ): Promise<KnowledgeDetail>;
+  knowledgeFile(id: string): Promise<Blob>;
+  knowledgeSearch(query: string): Promise<KnowledgeHit[]>;
+  uploadKnowledge(file: File): Promise<KnowledgeDocument>;
+  deleteKnowledge(id: string): Promise<unknown>;
   createRoutine(draft: RoutineDraft): Promise<RoutineRecord>;
   setRoutineStatus(id: string, status: string): Promise<RoutineRecord>;
   cancelSubagent(id: string): Promise<unknown>;
@@ -269,6 +287,48 @@ export function createClient(getToken: () => string): ApiClient {
         "POST",
       ),
     deleteMeme: (id) => request("/memes/" + encodeURIComponent(id), "DELETE"),
+    knowledge: (query, page, pageSize) =>
+      request<KnowledgeListing>(
+        "/knowledge?" +
+          new URLSearchParams({
+            q: query,
+            page: String(page),
+            page_size: String(pageSize),
+          }),
+      ),
+    knowledgeDocument: (id, start, count) =>
+      request<KnowledgeDetail>(
+        "/knowledge/" +
+          encodeURIComponent(id) +
+          "?" +
+          new URLSearchParams({ start: String(start), count: String(count) }),
+      ),
+    knowledgeFile: async (id) => {
+      let response: Response;
+      try {
+        response = await fetch(
+          "/api/knowledge/" + encodeURIComponent(id) + "/file",
+          { headers: { Authorization: "Bearer " + getToken() } },
+        );
+      } catch {
+        throw new ApiError("无法连接后端服务，请确认进程仍在运行。", 0);
+      }
+      if (!response.ok)
+        throw new ApiError(messageFor(response.status, null), response.status);
+      return response.blob();
+    },
+    knowledgeSearch: (query) =>
+      request<KnowledgeHit[]>(
+        "/knowledge/search?" + new URLSearchParams({ q: query }),
+      ),
+    uploadKnowledge: (file) =>
+      request<KnowledgeDocument>(
+        "/knowledge?" + new URLSearchParams({ filename: file.name }),
+        "POST",
+        file,
+      ),
+    deleteKnowledge: (id) =>
+      request("/knowledge/" + encodeURIComponent(id), "DELETE"),
     createRoutine: (draft) =>
       request<RoutineRecord>("/routines", "POST", draft),
     setRoutineStatus: (id, status) =>

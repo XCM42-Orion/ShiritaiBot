@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import httpx
-
-from shiritaibot.adapters.onebot11 import qq_download_url
 from shiritaibot.core import PublicError, Tool, now
 from shiritaibot.core.process import run_process
+from shiritaibot.knowledge.tools import knowledge_tools
 from shiritaibot.meme.tools import meme_tools
 from shiritaibot.memory.tools import memory_tools
 from shiritaibot.routine import FINISHED, KEEP_FINISHED, RoutineItem
 from shiritaibot.skill.tools import skill_tools
 from shiritaibot.tools import TEXT, schema
-from shiritaibot.tools.qq import qq_tools, session_dir
+from shiritaibot.tools.qq import download_qq_file, qq_tools, session_dir
 from shiritaibot.tools.web_search import search_token, search_web
 
 
@@ -187,61 +184,7 @@ async def register_builtin(app) -> None:
         return {"text": row["content"][offset : offset + 12000], "total": len(row["content"])}
 
     async def qq_download(ctx, args):
-        row = await app.store.get("qq_file", args["ref"])
-        if not row or row["scope"] != ctx.session:
-            raise PublicError("文件引用不属于当前会话")
-        bot = app.adapters.instances.get(row["adapter"])
-        if not bot:
-            raise PublicError("文件所属 OneBot 实例不可用")
-        data = row["data"]
-        file_id = data.get("file_id", data.get("id"))
-        if not file_id and not data.get("url"):
-            raise PublicError("文件缺少平台 ID")
-        if not file_id:
-            # Images and videos from message history carry their CDN link directly.
-            resource = {"url": data["url"]}
-        elif row["group_id"]:
-            resource = await bot.call(
-                "get_group_file_url",
-                {
-                    "group_id": int(row["group_id"]),
-                    "file_id": file_id,
-                    "busid": data.get("busid", 0),
-                },
-            )
-        else:
-            resource = await bot.call("get_file", {"file_id": file_id})
-        url = resource.get("url", "")
-        if not qq_download_url(url):
-            raise PublicError("OneBot 没有返回受支持的 QQ HTTPS 下载地址；不读取协议端本地路径")
-        folder = session_dir(app.home, "files", ctx.session)
-        await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
-        temp = folder / (args["ref"] + ".part")
-        digest, size = hashlib.sha256(), 0
-        try:
-            stream = await asyncio.to_thread(temp.open, "wb")
-            try:
-                async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
-                    async with client.stream("GET", url) as response:
-                        response.raise_for_status()
-                        async for chunk in response.aiter_bytes(65536):
-                            size += len(chunk)
-                            if size > 50 * 1024 * 1024:
-                                raise PublicError("文件超过 50 MiB 上限")
-                            digest.update(chunk)
-                            await asyncio.to_thread(stream.write, chunk)
-            finally:
-                await asyncio.to_thread(stream.close)
-            target = folder / digest.hexdigest()
-            await asyncio.to_thread(temp.replace, target)
-            return {
-                "path": str(target),
-                "bytes": size,
-                "sha256": digest.hexdigest(),
-                "name": data.get("name", "file"),
-            }
-        finally:
-            await asyncio.to_thread(temp.unlink, missing_ok=True)
+        return await download_qq_file(app, ctx.session, args["ref"])
 
     entries = [
         Tool(
@@ -424,6 +367,7 @@ async def register_builtin(app) -> None:
     entries += memory_tools(app.memory)
     entries += qq_tools(app)
     entries += meme_tools(app)
+    entries += knowledge_tools(app)
     if app.config.value.skills.enabled:
         entries += skill_tools(app)
     if await search_token(app.config.value.web_search, app.vault):

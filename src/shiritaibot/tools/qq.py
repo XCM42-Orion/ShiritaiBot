@@ -9,7 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from shiritaibot.adapters.onebot11 import describe, file_ref, segments
+import httpx
+
+from shiritaibot.adapters.onebot11 import describe, file_ref, qq_download_url, segments
 from shiritaibot.core import Context, PublicError, Tool
 from shiritaibot.tools import TEXT, schema
 
@@ -53,6 +55,80 @@ SENSITIVE_DIRS = frozenset({"logs"})
 
 def session_dir(home: Path, kind: str, session: str) -> Path:
     return home / kind / hashlib.sha256(session.encode()).hexdigest()[:24]
+
+
+async def qq_file_url(bot, group_id: str, data: dict) -> str:
+    """A QQ HTTPS link for the file; protocol-side local paths are never trusted."""
+    file_id = data.get("file_id", data.get("id"))
+    if file_id and group_id:
+        calls = [
+            (
+                "get_group_file_url",
+                {"group_id": int(group_id), "file_id": file_id, "busid": data.get("busid", 0)},
+            )
+        ]
+    elif file_id:
+        # NapCat's get_file may answer with a local path; its private link call is the fallback.
+        calls = [("get_file", {"file_id": file_id}), ("get_private_file_url", {"file_id": file_id})]
+    else:
+        calls = []
+    failure = None
+    for action, params in calls:
+        try:
+            url = (await bot.call(action, params)).get("url", "")
+        except PublicError as exc:
+            failure = exc
+            continue
+        if qq_download_url(url):
+            return url
+    # Images, videos and some file segments carry their CDN link directly.
+    if qq_download_url(data.get("url", "")):
+        return data["url"]
+    if failure is not None:
+        raise failure
+    raise PublicError("OneBot 没有返回受支持的 QQ HTTPS 下载地址；不读取协议端本地路径")
+
+
+async def download_qq_file(app, session: str, ref: str) -> dict:
+    """Fetch a session-bound QQ file reference into the session's download folder."""
+    row = await app.store.get("qq_file", ref)
+    if not row or row["scope"] != session:
+        raise PublicError("文件引用不属于当前会话")
+    bot = app.adapters.instances.get(row["adapter"])
+    if not bot:
+        raise PublicError("文件所属 OneBot 实例不可用")
+    data = row["data"]
+    if not data.get("file_id", data.get("id")) and not data.get("url"):
+        raise PublicError("文件缺少平台 ID")
+    url = await qq_file_url(bot, row["group_id"], data)
+    folder = session_dir(app.home, "files", session)
+    await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+    temp = folder / (ref + ".part")
+    digest, size = hashlib.sha256(), 0
+    try:
+        stream = await asyncio.to_thread(temp.open, "wb")
+        try:
+            async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes(65536):
+                        size += len(chunk)
+                        if size > 50 * 1024 * 1024:
+                            raise PublicError("文件超过 50 MiB 上限")
+                        digest.update(chunk)
+                        await asyncio.to_thread(stream.write, chunk)
+        finally:
+            await asyncio.to_thread(stream.close)
+        target = folder / digest.hexdigest()
+        await asyncio.to_thread(temp.replace, target)
+        return {
+            "path": str(target),
+            "bytes": size,
+            "sha256": digest.hexdigest(),
+            "name": data.get("name") or data.get("file") or "file",
+        }
+    finally:
+        await asyncio.to_thread(temp.unlink, missing_ok=True)
 
 
 def is_sensitive(home: Path, path: Path) -> bool:

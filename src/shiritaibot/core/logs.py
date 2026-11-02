@@ -224,7 +224,7 @@ class LogManager:
         root = logging.getLogger()
         if root.level > logging.INFO or root.level == logging.NOTSET:
             root.setLevel(logging.INFO)
-        for noisy in ("httpx", "httpcore", "websockets", "aiosqlite", "jieba"):
+        for noisy in ("httpx", "httpcore", "websockets", "aiosqlite", "jieba", "pypdf"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
         bot = logging.getLogger(ROOT)
         bot.setLevel(self.level)

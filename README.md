@@ -52,6 +52,7 @@ ShiritaiBot践行“一切皆工具(和Skill，未来方向)”的理念，希�
 - 🔍 **网页搜索**：支持 Tavily、SerpAPI、DeepSeek Search 等多种网页搜索提供商
 - 🤖 **子代理**：调用本机 Codex / Claude Code / DeepSeek Harness / 通用 CLI（施工中），任务完成后由主动循环接手汇报
 - 🧩 **插件系统**：用插件添加工具或事件源，支持 ZIP / GitHub 安装和热重载
+- 📖 **知识库**：在 WebUI 上传或在私聊里发给 Bot，支持 txt、md、pdf、doc(x)、csv、xls(x)、ppt(x)，关键词与 Embedding 混合检索
 - 📚 **技能系统**：安装 `.skill` 技能包（WebUI 上传或直接在聊天里发给 Bot），内置 skill-creator，助手可自己编写和改进技能
 - 🔌 **MCP 接入**：连接 stdio / Streamable HTTP MCP 服务器，工具统一纳入权限与审批
 - 🌐 **多模型路由**：支持 OpenAI Chat Completions / Responses、Anthropic、Gemini 协议，可设置主备模型和按任务路由，也可接入 Jev 等决策模型

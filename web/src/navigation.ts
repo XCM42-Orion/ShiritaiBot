@@ -1,5 +1,6 @@
 import {
   Activity,
+  BookOpen,
   Bot,
   CalendarDays,
   Database,
@@ -24,6 +25,7 @@ export type PageId =
   | "routine"
   | "memory"
   | "memes"
+  | "knowledge"
   | "subagents"
   | "plugins"
   | "skills"
@@ -77,6 +79,12 @@ export const PAGES: PageMeta[] = [
     label: "表情管理",
     subtitle: "表情库、分类、自动收录与使用设置。",
     icon: Smile,
+  },
+  {
+    id: "knowledge",
+    label: "知识库",
+    subtitle: "存放不会变化的资料，供助手按关键词和语义检索。",
+    icon: BookOpen,
   },
   {
     id: "subagents",

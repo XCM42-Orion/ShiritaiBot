@@ -356,6 +356,23 @@ class MemeConfig(Model):
         return value
 
 
+class KnowledgeConfig(Model):
+    # Tools for the owner's Agent sessions; nothing happens until documents are added.
+    enabled: bool = True
+    # Also offer read-only search in Chat sessions, including other people and groups.
+    chat: bool = False
+    # Applied when a document is imported; existing documents keep their chunks.
+    chunk_chars: int = Field(default=600, ge=200, le=2000)
+    chunk_overlap: int = Field(default=80, ge=0, le=500)
+    max_file_mb: int = Field(default=50, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def overlap_fits(self):
+        if self.chunk_overlap * 2 > self.chunk_chars:
+            raise ValueError("chunk_overlap must be at most half of chunk_chars")
+        return self
+
+
 class GroupContextConfig(Model):
     enabled: bool = False
     # 0 disables injection; the Bot can still query when the tool is enabled.
@@ -521,7 +538,7 @@ class Settings(Model):
     # chat: Chat 默认；agent: Agent Work（长程任务，含 Main/Proactive Loop）；
     # agent_chat: Agent 模式日常对话；router: Work/Chat 分流；light: 主动事件分诊；
     # memory: 记忆抽取与判断（空则用 light）；approval: 工具自动审批（空则用 light）；
-    # embedding: 记忆向量；vision: 为不支持图像输入的模型转述图片；
+    # embedding: 记忆、表情与知识库向量；vision: 为不支持图像输入的模型转述图片；
     # meme: 表情转述（多模态文本模型）与表情分类判断（决策模型）。
     routes: dict[str, list[str]] = Field(default_factory=lambda: {k: [] for k in ROUTE_KEYS})
     # When off, every Agent-mode turn uses the Agent Work route.
@@ -549,6 +566,7 @@ class Settings(Model):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     meme: MemeConfig = Field(default_factory=MemeConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     emotion: EmotionConfig = Field(default_factory=EmotionConfig)
 
     @model_validator(mode="before")

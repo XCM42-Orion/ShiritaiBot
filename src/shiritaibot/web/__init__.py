@@ -391,6 +391,65 @@ def create_app(
         await runtime.memes.core.delete(key)
         return {"ok": True}
 
+    @api.get("/api/knowledge", dependencies=protected)
+    async def knowledge(
+        q: str = "",
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+    ):
+        kb = runtime.knowledge
+        return {**await kb.listing(q[:200].strip(), page, page_size), **await kb.stats()}
+
+    @api.post("/api/knowledge", dependencies=protected)
+    async def knowledge_upload(
+        request: Request,
+        filename: str = Query(min_length=1, max_length=255),
+        title: str = Query(default="", max_length=200),
+    ):
+        limit = runtime.config.value.knowledge.max_file_mb
+        data = bytearray()
+        async for chunk in request.stream():
+            data.extend(chunk)
+            if len(data) > limit * 1024 * 1024:
+                raise HTTPException(413, f"文件不能超过 {limit} MiB")
+        return await runtime.knowledge.add(bytes(data), filename, title=title, source="web")
+
+    @api.get("/api/knowledge/search", dependencies=protected)
+    async def knowledge_search(
+        q: str = Query(min_length=1, max_length=500),
+        limit: int = Query(default=10, ge=1, le=20),
+    ):
+        return await runtime.knowledge.search(q, limit)
+
+    @api.get("/api/knowledge/{key}", dependencies=protected)
+    async def knowledge_detail(
+        key: str,
+        start: int = Query(default=0, ge=0),
+        count: int = Query(default=20, ge=1, le=100),
+    ):
+        document = await runtime.knowledge.get(key)
+        if document is None:
+            raise HTTPException(404, "文档不存在")
+        return {**document, "items": await runtime.knowledge.chunks(key, start, count)}
+
+    @api.get("/api/knowledge/{key}/file", dependencies=protected)
+    async def knowledge_file(key: str):
+        found = await runtime.knowledge.file(key)
+        if found is None:
+            raise HTTPException(404, "文档不存在")
+        document, path = found
+        if not await asyncio.to_thread(path.is_file):
+            raise HTTPException(404, "原始文件缺失")
+        # Attachment and a neutral type: uploaded content never renders on this origin.
+        return FileResponse(
+            path, media_type="application/octet-stream", filename=document["filename"]
+        )
+
+    @api.delete("/api/knowledge/{key}", dependencies=protected)
+    async def knowledge_delete(key: str):
+        await runtime.knowledge.delete(key)
+        return {"ok": True}
+
     @api.post("/api/routines", dependencies=protected)
     async def routine(body: RoutineItem):
         return await runtime.routine.create(body)

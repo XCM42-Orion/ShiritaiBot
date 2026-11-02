@@ -706,6 +706,45 @@ export const VISION_FIELDS: FieldSpec[] = [
   },
 ];
 
+export const KNOWLEDGE_FIELDS: FieldSpec[] = [
+  {
+    key: "enabled",
+    label: "启用知识库工具",
+    kind: "boolean",
+    help: "开启后主人的 Agent 会话可以检索和写入知识库。关闭只隐藏工具，已存的文档不受影响。",
+  },
+  {
+    key: "chat",
+    label: "在 Chat 模式开放检索",
+    kind: "boolean",
+    help: "开启后其他人的私聊和群聊也能让助手检索知识库的全部内容，存有私人资料时不要开启。写入和删除始终只限主人私聊。",
+  },
+  {
+    key: "chunk_chars",
+    label: "分块长度（字符）",
+    kind: "number",
+    min: 200,
+    max: 2000,
+    help: "只影响之后导入的文档。",
+  },
+  {
+    key: "chunk_overlap",
+    label: "分块重叠（字符）",
+    kind: "number",
+    min: 0,
+    max: 500,
+    help: "相邻分块重复的长度，不能超过分块长度的一半；表格按行切分，不使用重叠。",
+  },
+  {
+    key: "max_file_mb",
+    label: "单个文件上限（MiB）",
+    kind: "number",
+    min: 1,
+    max: 50,
+    help: "WebUI 上传和私聊发送都受此限制。",
+  },
+];
+
 export const MEME_FIELDS: FieldSpec[] = [
   {
     key: "enabled",

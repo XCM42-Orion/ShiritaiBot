@@ -975,3 +975,75 @@
   gap: 6px;
   overflow-wrap: anywhere;
 }
+
+.kb-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.kb-documents {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.kb-document {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  min-width: 0;
+}
+
+.kb-document-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kb-document-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.kb-chunks {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.kb-chunk {
+  border-left: 2px solid var(--border);
+  padding: 4px 0 4px 12px;
+  margin-top: 12px;
+  min-width: 0;
+}
+
+.kb-chunks .kb-chunk {
+  margin-top: 0;
+}
+
+.kb-chunk-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.kb-chunk p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .kb-upload {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
