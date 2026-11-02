@@ -11,6 +11,15 @@ import type {
 import { formatHour, formatNumber } from "../lib/utils";
 
 const CURRENCY_SYMBOL: Record<Currency, string> = { USD: "$", CNY: "¥" };
+const CURRENCY_STORAGE_KEY = "shiritaibot.cost-currency";
+
+function savedCurrency(): Currency {
+  try {
+    return localStorage.getItem(CURRENCY_STORAGE_KEY) === "CNY" ? "CNY" : "USD";
+  } catch {
+    return "USD";
+  }
+}
 
 function formatCost(value: number, currency: Currency): string {
   const digits = value > 0 && value < 0.01 ? 4 : 2;
@@ -21,14 +30,43 @@ function formatRate(value: number | null): string {
   return value === null ? "—" : (value * 100).toFixed(1) + "%";
 }
 
-function totalCost(costs: Statistics["costs"]): string {
+function convertedCost(
+  value: number,
+  source: Currency,
+  target: Currency,
+  rate: number | null,
+): string {
+  if (source === target || rate === null) return formatCost(value, source);
+  return formatCost(target === "CNY" ? value * rate : value / rate, target);
+}
+
+function totalCost(
+  costs: Statistics["costs"],
+  currency: Currency,
+  rate: number | null,
+): string {
+  if (rate !== null && Object.keys(costs).length) {
+    const total =
+      currency === "CNY"
+        ? (costs.CNY ?? 0) + (costs.USD ?? 0) * rate
+        : (costs.USD ?? 0) + (costs.CNY ?? 0) / rate;
+    return formatCost(total, currency);
+  }
   const parts = (Object.keys(CURRENCY_SYMBOL) as Currency[])
     .filter((currency) => costs[currency] !== undefined)
     .map((currency) => formatCost(costs[currency]!, currency));
   return parts.length ? parts.join(" + ") : "—";
 }
 
-function ModelTable({ rows }: { rows: ModelUsage[] }) {
+function ModelTable({
+  rows,
+  currency,
+  rate,
+}: {
+  rows: ModelUsage[];
+  currency: Currency;
+  rate: number | null;
+}) {
   return (
     <section className="panel">
       <div className="panel-head">
@@ -69,7 +107,7 @@ function ModelTable({ rows }: { rows: ModelUsage[] }) {
                   <td>{formatNumber(row.output_tokens)}</td>
                   <td>
                     {row.cost !== null && row.currency ? (
-                      formatCost(row.cost, row.currency)
+                      convertedCost(row.cost, row.currency, currency, rate)
                     ) : (
                       <span
                         className="muted"
@@ -296,6 +334,24 @@ function HourlyChart({
 
 export function Dashboard({ client }: { client: ApiClient }) {
   const [hours, setHours] = useState<number>(24);
+  const [currency, setCurrency] = useState<Currency>(savedCurrency);
+  const exchange = useQuery({
+    queryKey: ["exchange-rate"],
+    queryFn: () => client.exchangeRate(),
+    staleTime: 300000,
+    refetchInterval: 300000,
+    retry: false,
+  });
+  const rate = exchange.data?.usd_cny ?? null;
+  const toggleCurrency = () => {
+    const next = currency === "USD" ? "CNY" : "USD";
+    setCurrency(next);
+    try {
+      localStorage.setItem(CURRENCY_STORAGE_KEY, next);
+    } catch {
+      // Currency selection still works when browser storage is unavailable.
+    }
+  };
   const query = useQuery({
     queryKey: ["stats", hours],
     queryFn: () => client.stats(hours),
@@ -346,18 +402,66 @@ export function Dashboard({ client }: { client: ApiClient }) {
                       : null,
                   ),
                 ],
-                ["预估花费", totalCost(data.costs ?? {})],
+                ["预估花费", totalCost(data.costs ?? {}, currency, rate)],
                 ["对话消息", formatNumber(data.totals.messages)],
                 ["模型调用", formatNumber(data.totals.llm_calls)],
                 ["失败轮次", formatNumber(data.totals.failed_turns)],
               ] as const
             ).map(([label, value]) => (
-              <div className="metric" key={label}>
+              <div
+                className={`metric${label === "预估花费" ? " cost-metric" : ""}`}
+                key={label}
+              >
                 <span>{label}</span>
                 <strong>{value}</strong>
-                <small>
-                  过去 {hours === 24 ? "24 小时" : `${hours / 24} 天`}
-                </small>
+                {label === "预估花费" && (
+                  <small className="cost-exchange-rate" role="status">
+                    {rate !== null ? (
+                      <>
+                        <span
+                          title={
+                            exchange.data?.updated_at
+                              ? `汇率更新于 ${new Date(exchange.data.updated_at * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}（北京时间）`
+                              : undefined
+                          }
+                        >
+                          1 USD ≈ {rate.toFixed(4)} CNY
+                          {exchange.data?.stale || exchange.error
+                            ? "（缓存汇率，更新暂不可用）"
+                            : ""}
+                        </span>
+                        {" · "}
+                        <a
+                          href="https://www.exchangerate-api.com"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Rates By Exchange Rate API
+                        </a>
+                      </>
+                    ) : exchange.isPending ? (
+                      "正在获取汇率，暂按原币种显示"
+                    ) : (
+                      "汇率暂不可用，按原币种显示"
+                    )}
+                  </small>
+                )}
+                <div className="metric-footer">
+                  <small>
+                    过去 {hours === 24 ? "24 小时" : `${hours / 24} 天`}
+                  </small>
+                  {label === "预估花费" && (
+                    <button
+                      type="button"
+                      className="currency-toggle"
+                      onClick={toggleCurrency}
+                      aria-label={`切换为${currency === "USD" ? "人民币" : "美元"}花费`}
+                      title={`当前选择${currency === "USD" ? "美元" : "人民币"}，点击切换`}
+                    >
+                      {currency === "USD" ? "$ USD" : "¥ CNY"}
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -366,7 +470,11 @@ export function Dashboard({ client }: { client: ApiClient }) {
             rows={data.buckets}
             series={modelSeries(data.buckets, configured)}
           />
-          <ModelTable rows={data.models ?? []} />
+          <ModelTable
+            rows={data.models ?? []}
+            currency={currency}
+            rate={rate}
+          />
           <HourlyChart
             title="对话消息"
             rows={data.buckets}

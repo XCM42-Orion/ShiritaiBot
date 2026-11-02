@@ -28,6 +28,7 @@ from shiritaibot.skill import MAX_ARCHIVE as MAX_SKILL_ARCHIVE
 from shiritaibot.store.statistics import statistics
 from shiritaibot.tools.builtin import register_builtin
 from shiritaibot.updater import Updater
+from shiritaibot.web.exchange_rates import ExchangeRates
 
 
 class SecretInput(Model):
@@ -88,6 +89,7 @@ def create_app(
     runtime = Application(home)
     manager = logs.LogManager(home, log_level)
     web_log = logs.get_logger("WebUI")
+    exchange_rates = ExchangeRates()
     instance_id = secrets.token_hex(16)
     restarting = False
 
@@ -161,6 +163,10 @@ def create_app(
         if hours not in {24, 72, 168}:
             raise HTTPException(422, "统计范围必须是 24、72 或 168 小时")
         return await statistics(runtime.store, hours, models=runtime.config.value.models)
+
+    @api.get("/api/exchange-rate", dependencies=protected)
+    async def exchange_rate():
+        return await exchange_rates.get()
 
     @api.get("/api/commands", dependencies=protected)
     async def commands():

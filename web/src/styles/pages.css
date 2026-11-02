@@ -28,6 +28,43 @@
   color: var(--accent);
 }
 
+.metric-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.metric-footer small {
+  font-size: 10px;
+}
+
+.cost-metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.cost-metric > strong {
+  overflow-wrap: anywhere;
+}
+
+.cost-exchange-rate {
+  display: block;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.cost-exchange-rate a {
+  color: inherit;
+}
+
+.currency-toggle {
+  padding: 3px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .chart-panel {
   position: relative;
   padding-left: 42px;

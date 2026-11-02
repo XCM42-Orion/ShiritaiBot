@@ -27,6 +27,7 @@ import type {
   SkillDetail,
   SkillInfo,
   Statistics,
+  ExchangeRate,
   ToolCatalog,
   Paginated,
   CommitPreview,
@@ -76,6 +77,7 @@ export interface ApiClient {
     approvalFilter?: "pending" | "history",
   ): Promise<Paginated<RecordMap[K]>>;
   stats(hours: number): Promise<Statistics>;
+  exchangeRate(): Promise<ExchangeRate>;
   commands(): Promise<CommandInfo[]>;
   history(session: string): Promise<HistoryMessage[]>;
   rawLogs(lines: number, query: string): Promise<{ lines: string[] }>;
@@ -236,6 +238,7 @@ export function createClient(getToken: () => string): ApiClient {
           }),
       ),
     stats: (hours) => request<Statistics>("/stats?hours=" + hours),
+    exchangeRate: () => request<ExchangeRate>("/exchange-rate"),
     commands: () => request<CommandInfo[]>("/commands"),
     history: (session) =>
       request<HistoryMessage[]>(

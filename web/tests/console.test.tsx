@@ -31,7 +31,10 @@ import { FieldForm } from "../src/components/FieldForm";
 import { PAGES, pageFromHash } from "../src/navigation";
 import { App } from "../src/App";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.removeItem("shiritaibot.cost-currency");
+});
 
 function baseConfig(): Settings {
   return {
@@ -211,6 +214,11 @@ function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
         failed_turns: 0,
       },
       buckets: [],
+    }),
+    exchangeRate: vi.fn().mockResolvedValue({
+      usd_cny: 7,
+      updated_at: 1793577600,
+      stale: false,
     }),
     commands: vi
       .fn()
@@ -1119,6 +1127,13 @@ it("shows per-model tokens, cache hit rate and estimated cost", async () => {
           currency: "USD",
         },
         {
+          model: "yuan",
+          ...empty,
+          cache_hit_rate: null,
+          cost: 0.5,
+          currency: "CNY",
+        },
+        {
           model: "free",
           llm_calls: 1,
           input_tokens: 1000,
@@ -1133,7 +1148,7 @@ it("shows per-model tokens, cache hit rate and estimated cost", async () => {
       costs: { USD: 1.234, CNY: 0.5 },
     }),
   } as Partial<ApiClient>);
-  render(withQuery(<Dashboard client={client} />));
+  const view = render(withQuery(<Dashboard client={client} />));
   expect(await screen.findByText("模型用量")).toBeTruthy();
   // Chart series follow the configured model order, one color per model.
   const legend = document.querySelector(".chart-legend")!;
@@ -1143,13 +1158,73 @@ it("shows per-model tokens, cache hit rate and estimated cost", async () => {
     ).toEqual(["priced", "free"]),
   );
   expect(screen.getByText("25.0%")).toBeTruthy();
-  expect(screen.getByText("$1.23 + ¥0.50")).toBeTruthy();
+  expect(screen.getByText("$1.31")).toBeTruthy();
   const row = screen.getByRole("rowheader", { name: "priced" }).closest("tr")!;
   expect(row.textContent).toContain("50.0%");
   expect(row.textContent).toContain("$1.23");
   expect(
     screen.getByRole("rowheader", { name: "free" }).closest("tr")!.textContent,
   ).toContain("未设单价");
+  const yuanRow = screen
+    .getByRole("rowheader", { name: "yuan" })
+    .closest("tr")!;
+  expect(yuanRow.textContent).toContain("$0.07");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "切换为人民币花费" }));
+  expect(screen.getByText("¥9.14")).toBeTruthy();
+  expect(row.textContent).toContain("¥8.64");
+  expect(yuanRow.textContent).toContain("¥0.50");
+  expect(localStorage.getItem("shiritaibot.cost-currency")).toBe("CNY");
+  await user.click(screen.getByRole("button", { name: "3 天" }));
+  expect(await screen.findByText("¥9.14")).toBeTruthy();
+  expect(client.exchangeRate).toHaveBeenCalledTimes(1);
+  view.unmount();
+  render(withQuery(<Dashboard client={client} />));
+  expect(await screen.findByText("¥9.14")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "切换为美元花费" }));
+  expect(screen.getByText("$1.31")).toBeTruthy();
+});
+
+it.each([false, true])(
+  "keeps original currency costs when exchange rates are unavailable (request error: %s)",
+  async (requestError) => {
+    const client = fakeClient();
+    const stats = await client.stats(24);
+    client.stats = vi
+      .fn()
+      .mockResolvedValue({ ...stats, costs: { USD: 1.234, CNY: 0.5 } });
+    client.exchangeRate = requestError
+      ? vi.fn().mockRejectedValue(new Error("network unavailable"))
+      : vi
+          .fn()
+          .mockResolvedValue({ usd_cny: null, updated_at: null, stale: false });
+    render(withQuery(<Dashboard client={client} />));
+    expect(await screen.findByText("汇率暂不可用，按原币种显示")).toBeTruthy();
+    expect(screen.getByText("$1.23 + ¥0.50")).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "切换为人民币花费" }));
+    expect(screen.getByText("$1.23 + ¥0.50")).toBeTruthy();
+  },
+);
+
+it("uses a cached rate with a visible notice when refresh fails", async () => {
+  const client = fakeClient({
+    exchangeRate: vi
+      .fn()
+      .mockResolvedValue({ usd_cny: 7, updated_at: 1793577600, stale: true }),
+  });
+  const stats = await client.stats(24);
+  client.stats = vi.fn().mockResolvedValue({ ...stats, costs: { USD: 0.001 } });
+  localStorage.setItem("shiritaibot.cost-currency", "CNY");
+  render(withQuery(<Dashboard client={client} />));
+  expect(await screen.findByText("¥0.0070")).toBeTruthy();
+  expect(screen.getByText(/缓存汇率，更新暂不可用/)).toBeTruthy();
+  expect(
+    screen
+      .getByRole("link", { name: "Rates By Exchange Rate API" })
+      .getAttribute("href"),
+  ).toBe("https://www.exchangerate-api.com");
 });
 
 it("sends a chat message from the composer", async () => {

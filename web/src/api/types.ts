@@ -449,6 +449,12 @@ export interface TokenBucket {
   models: Record<string, number>;
 }
 
+export interface ExchangeRate {
+  usd_cny: number | null;
+  updated_at: number | null;
+  stale: boolean;
+}
+
 export interface Statistics {
   hours: number;
   timezone: string;
