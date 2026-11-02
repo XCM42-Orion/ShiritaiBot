@@ -249,7 +249,7 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "routine_list",
-            "查看日程、待办、提醒和定时任务。默认只列出未结束的；include_finished 为 true 时"
+            "查看日程、课程、待办、提醒和定时任务。默认只列出未结束的；include_finished 为 true 时"
             f"也列出已完成、已取消和已触发的（结束 {KEEP_FINISHED // 86400} 天后自动清理）。",
             schema({"include_finished": {"type": "boolean"}}),
             routine_list,
@@ -257,14 +257,15 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "routine_create",
-            "创建待办、日程、显式提醒或定时任务。时间必须带时区。",
+            "创建待办、日程、课程（course）、显式提醒或定时任务。时间必须带时区。"
+            "课程须有开始时间，可设结束时间；仅供查询，默认不提醒，也不触发 Proactive Loop。",
             RoutineItem.model_json_schema(),
             routine_create,
             risk="normal",
         ),
         Tool(
             "routine_update",
-            "修改已有的待办、日程、提醒或定时任务（id 来自 routine_list），只传要改的字段；"
+            "修改已有的待办、日程、课程、提醒或定时任务（id 来自 routine_list），只传要改的字段；"
             "类型不能修改。时间必须带时区；修改提醒或定时任务的时间会重新排程。"
             "status 设为 completed / cancelled 可标记完成或取消，之后不再提醒。",
             schema(
@@ -284,7 +285,7 @@ async def register_builtin(app) -> None:
         ),
         Tool(
             "routine_delete",
-            "删除一条待办、日程、提醒或定时任务（id 来自 routine_list），删除后不可恢复，"
+            "删除一条待办、日程、课程、提醒或定时任务（id 来自 routine_list），删除后不可恢复，"
             "也不会再提醒；只想标记完成时不要删除。",
             schema({"id": TEXT}, ["id"]),
             routine_delete,

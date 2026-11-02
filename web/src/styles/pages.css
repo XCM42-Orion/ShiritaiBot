@@ -740,6 +740,34 @@
   --kind-soft: var(--accent-soft);
 }
 
+.kind-course {
+  --kind-color: #7c3aed;
+  --kind-soft: #f5f3ff;
+}
+
+.routine-day-popover {
+  position: fixed;
+  z-index: 40;
+  width: min(420px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 40px rgba(30, 44, 70, 0.22);
+}
+
+.routine-day-popover .panel-head {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.routine-day-popover h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
 .kind-reminder {
   --kind-color: var(--pink);
   --kind-soft: var(--pink-soft);

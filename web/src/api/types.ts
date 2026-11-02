@@ -10,7 +10,7 @@ export type ClaudePermissionMode =
 export type SubagentKind =
   "codex" | "claude_code" | "deepseek_harness" | "generic";
 export type ApprovalPolicy = "ask" | "never";
-export type RoutineKind = "todo" | "event" | "reminder" | "job";
+export type RoutineKind = "todo" | "event" | "course" | "reminder" | "job";
 export type Urgency = "low" | "normal" | "high" | "critical";
 
 export interface Instance {

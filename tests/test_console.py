@@ -17,6 +17,37 @@ from shiritaibot.web import create_app
 CHAT_TOOLS = ["artifact_read", "current_time"]
 
 
+def test_course_api_create_query_and_persistence(tmp_path):
+    with TestClient(create_app(tmp_path, token="admin")) as client:
+        client.headers["Authorization"] = "Bearer admin"
+        response = client.post(
+            "/api/routines",
+            json={
+                "kind": "course",
+                "title": "电动力学",
+                "due": "2026-11-02T09:00:00+08:00",
+                "end": "2026-11-02T10:30:00+08:00",
+            },
+        )
+        assert response.status_code == 200
+        row = response.json()
+        assert row["status"] == "open" and row["next_fire"] is None
+        assert row in client.get("/api/records/routine").json()
+        assert (
+            client.post(
+                "/api/routines",
+                json={
+                    "kind": "course",
+                    "title": "缺少时间",
+                },
+            ).status_code
+            == 422
+        )
+    with TestClient(create_app(tmp_path, token="admin")) as client:
+        client.headers["Authorization"] = "Bearer admin"
+        assert row in client.get("/api/records/routine").json()
+
+
 def tool_names(specs):
     return [spec["function"]["name"] for spec in specs]
 

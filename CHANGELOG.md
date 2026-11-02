@@ -7,6 +7,8 @@
 
 ### 新增
 
+- **课程日程**：新增 `course`（课程）分类，支持查询和修改时间，默认不提醒、不触发 Proactive Loop。
+  WebUI 月历默认隐藏课程，点击日期可在旁边带阴影的浮窗查看当天全部安排（含课程），支持点击外部或按 Esc 收起。
 - **检查更新**：WebUI 顶栏右上角新增「检查更新」按钮，打开居中浮窗，从
   [ShiritaiBot-Devs/ShiritaiBot](https://github.com/ShiritaiBot-Devs/ShiritaiBot) 读取发布版本。
   - 上半部分显示所选版本的更新日志，下半部分分页列出版本；默认只列正式版，可勾选显示测试版，

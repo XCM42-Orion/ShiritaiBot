@@ -14,7 +14,7 @@ from shiritaibot.core.logs import brief, get_logger
 
 log = get_logger("日程")
 
-KINDS = {"todo": "待办", "event": "日程", "reminder": "提醒", "job": "定时任务"}
+KINDS = {"todo": "待办", "event": "日程", "course": "课程", "reminder": "提醒", "job": "定时任务"}
 FINISHED = ("completed", "cancelled", "fired")
 DAY = 86400
 # Finished items and past events stay visible this long, then are deleted automatically.
@@ -22,7 +22,7 @@ KEEP_FINISHED = 30 * DAY
 
 
 class RoutineItem(Model):
-    kind: str = Field(pattern=r"^(todo|event|reminder|job)$")
+    kind: str = Field(pattern=r"^(todo|event|course|reminder|job)$")
     title: str = Field(min_length=1, max_length=2000)
     due: AwareDatetime | None = None
     end: AwareDatetime | None = None
@@ -34,7 +34,7 @@ class RoutineItem(Model):
         ZoneInfo(self.timezone)
         if self.kind == "job" and (not croniter.is_valid(self.cron) or len(self.cron.split()) != 5):
             raise ValueError("job requires a five-field cron expression")
-        if self.kind in {"event", "reminder"} and not self.due:
+        if self.kind in {"event", "course", "reminder"} and not self.due:
             raise ValueError("due time with timezone required")
         if self.end and (not self.due or self.end <= self.due):
             raise ValueError("end must follow due")

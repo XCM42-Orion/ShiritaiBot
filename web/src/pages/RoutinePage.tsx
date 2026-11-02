@@ -1,7 +1,8 @@
 import { QueryErrorNotice } from "../components/QueryErrorNotice";
-import { useMemo, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
 import type { RoutineKind, RoutineRecord } from "../api/types";
 import { TIME_ZONE, formatDateTime, localInputToIso } from "../lib/utils";
@@ -10,6 +11,7 @@ import type { PageProps } from "./common";
 const KINDS: { value: RoutineKind; label: string }[] = [
   { value: "todo", label: "待办" },
   { value: "event", label: "日程" },
+  { value: "course", label: "课程" },
   { value: "reminder", label: "提醒" },
   { value: "job", label: "定时 Agent 任务" },
 ];
@@ -17,6 +19,7 @@ const KINDS: { value: RoutineKind; label: string }[] = [
 const KIND_LABEL: Record<RoutineKind, string> = {
   todo: "待办",
   event: "日程",
+  course: "课程",
   reminder: "提醒",
   job: "定时任务",
 };
@@ -170,7 +173,10 @@ function RoutineCalendar({
     const [y, m] = today.split("-").map(Number);
     return { year: y, month: m - 1 };
   });
-  const [selected, setSelected] = useState(today);
+  const [selection, setSelection] = useState<{
+    day: string;
+    anchor: HTMLButtonElement;
+  } | null>(null);
 
   const byDay = useMemo(() => {
     const map = new Map<string, RoutineRecord[]>();
@@ -195,9 +201,8 @@ function RoutineCalendar({
 
   const grid = monthGrid(cursor.year, cursor.month);
   const monthPrefix = `${cursor.year}-${String(cursor.month + 1).padStart(2, "0")}`;
-  const selectedRows = byDay.get(selected) ?? [];
-
   function shiftMonth(delta: number) {
+    setSelection(null);
     setCursor(({ year, month }) => {
       const next = new Date(Date.UTC(year, month + delta, 1));
       return { year: next.getUTCFullYear(), month: next.getUTCMonth() };
@@ -207,11 +212,8 @@ function RoutineCalendar({
   function goToday() {
     const [y, m] = today.split("-").map(Number);
     setCursor({ year: y, month: m - 1 });
-    setSelected(today);
+    setSelection(null);
   }
-
-  const [selY, selM, selD] = selected.split("-").map(Number);
-  const selectedWeekday = WEEKDAYS[(keyToUtc(selected).getUTCDay() + 6) % 7];
 
   return (
     <>
@@ -247,12 +249,14 @@ function RoutineCalendar({
             </div>
           ))}
           {grid.map((key) => {
-            const items = byDay.get(key) ?? [];
+            const items = (byDay.get(key) ?? []).filter(
+              (row) => row.kind !== "course",
+            );
             const classes = [
               "calendar-day",
               key.startsWith(monthPrefix) ? "" : "outside",
               key === today ? "today" : "",
-              key === selected ? "selected" : "",
+              key === selection?.day ? "selected" : "",
             ]
               .filter(Boolean)
               .join(" ");
@@ -262,14 +266,16 @@ function RoutineCalendar({
                 role="gridcell"
                 key={key}
                 className={classes}
-                aria-pressed={key === selected}
+                aria-pressed={key === selection?.day}
+                aria-haspopup="dialog"
+                aria-expanded={key === selection?.day}
                 aria-label={`${key}，${items.length} 项`}
-                onClick={() => {
-                  setSelected(key);
-                  if (!key.startsWith(monthPrefix)) {
-                    const [y, m] = key.split("-").map(Number);
-                    setCursor({ year: y, month: m - 1 });
-                  }
+                onClick={(event) => {
+                  setSelection(
+                    selection?.day === key
+                      ? null
+                      : { day: key, anchor: event.currentTarget },
+                  );
                 }}
               >
                 <span className="calendar-date">{Number(key.slice(8))}</span>
@@ -315,20 +321,20 @@ function RoutineCalendar({
               </span>
             ),
           )}
+          <span>点击日期查看全部安排（含课程）</span>
         </div>
       </section>
-      <section className="panel">
-        <h2>
-          {selY} 年 {selM} 月 {selD} 日 · 周{selectedWeekday}
-        </h2>
-        {selectedRows.length ? (
-          selectedRows.map((row) => (
-            <RoutineItem key={row.id} row={row} client={client} act={act} />
-          ))
-        ) : (
-          <EmptyState text="这一天没有安排。" />
-        )}
-      </section>
+      {selection && (
+        <RoutineDayPopover
+          key={selection.day}
+          day={selection.day}
+          anchor={selection.anchor}
+          rows={byDay.get(selection.day) ?? []}
+          onClose={() => setSelection(null)}
+          client={client}
+          act={act}
+        />
+      )}
       {undated.length > 0 && (
         <section className="panel">
           <h2>未排期待办与定时任务</h2>
@@ -338,6 +344,129 @@ function RoutineCalendar({
         </section>
       )}
     </>
+  );
+}
+
+function RoutineDayPopover({
+  day,
+  anchor,
+  rows,
+  onClose,
+  client,
+  act,
+}: {
+  day: string;
+  anchor: HTMLButtonElement;
+  rows: RoutineRecord[];
+  onClose: () => void;
+} & Pick<PageProps, "client" | "act">) {
+  const popover = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // Event handlers always use the latest callback without resetting focus on refetch.
+  const close = useRef(onClose);
+  close.current = onClose;
+
+  useLayoutEffect(() => {
+    const node = popover.current;
+    if (!node) return;
+
+    function position() {
+      if (!node) return;
+      const rect = anchor.getBoundingClientRect();
+      const gap = 12;
+      const width = node.offsetWidth;
+      const height = node.offsetHeight;
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = window.innerHeight;
+      let left = rect.right + gap;
+      let top = rect.top;
+      if (left + width > viewportWidth - gap) {
+        if (rect.left - gap - width >= gap) {
+          left = rect.left - gap - width;
+        } else {
+          left = rect.left;
+          top = rect.bottom + gap;
+          if (top + height > viewportHeight - gap) {
+            top = rect.top - height - gap;
+          }
+        }
+      }
+      node.style.left = `${Math.max(gap, Math.min(left, viewportWidth - width - gap))}px`;
+      node.style.top = `${Math.max(gap, Math.min(top, viewportHeight - height - gap))}px`;
+    }
+
+    function dismiss(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        !node?.contains(event.target) &&
+        !anchor.contains(event.target)
+      ) {
+        close.current();
+      }
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        anchor.focus();
+        close.current();
+      }
+    }
+
+    position();
+    node.focus({ preventScroll: true });
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(position);
+    observer?.observe(node);
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, true);
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [anchor]);
+
+  const [year, month, date] = day.split("-").map(Number);
+  const weekday = WEEKDAYS[(keyToUtc(day).getUTCDay() + 6) % 7];
+  return createPortal(
+    <div
+      className="routine-day-popover"
+      ref={popover}
+      role="dialog"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+    >
+      <div className="panel-head">
+        <h2 id={titleId}>
+          {year} 年 {month} 月 {date} 日 · 周{weekday}
+        </h2>
+        <button
+          type="button"
+          aria-label="关闭当日安排"
+          onClick={() => {
+            anchor.focus();
+            onClose();
+          }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+      {rows.length ? (
+        rows.map((row) => (
+          <RoutineItem key={row.id} row={row} client={client} act={act} />
+        ))
+      ) : (
+        <EmptyState text="这一天没有安排。" />
+      )}
+    </div>,
+    document.body,
   );
 }
 
@@ -413,8 +542,15 @@ export function RoutinePage({ client, act }: PageProps) {
                   type="datetime-local"
                   value={due}
                   onChange={(event) => setDue(event.target.value)}
-                  required={kind === "event" || kind === "reminder"}
+                  required={
+                    kind === "event" || kind === "course" || kind === "reminder"
+                  }
                 />
+                {kind === "course" && (
+                  <span className="muted">
+                    课程仅供查询，不提醒，也不触发 Proactive Loop。
+                  </span>
+                )}
               </div>
             )}
           </div>

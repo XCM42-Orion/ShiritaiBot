@@ -93,6 +93,19 @@ def test_routine_requires_timezone_and_valid_cron():
         RoutineItem(kind="job", title="x", cron="invalid")
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},
+        {"due": "2026-11-02T09:00:00"},
+        {"due": "2026-11-02T09:00:00+08:00", "end": "2026-11-02T08:00:00+08:00"},
+    ],
+)
+def test_course_requires_aware_start_and_later_end(changes):
+    with pytest.raises(ValueError):
+        RoutineItem.model_validate({"kind": "course", "title": "课程", **changes})
+
+
 async def routine_tool(app, name, args):
     import json
 
@@ -100,6 +113,40 @@ async def routine_tool(app, name, args):
     return json.loads(
         await app.registry.execute(Context("web:owner", "owner", "agent", True), name, args)
     )
+
+
+async def test_course_can_be_queried_and_rescheduled_without_triggering_proactive(app):
+    for task in app.tasks:
+        task.cancel()
+    await asyncio.gather(*app.tasks, return_exceptions=True)
+    # Enable proactive processing so silence cannot be explained by it being disabled.
+    app.config.value.proactive.enabled = True
+    due = now() - timedelta(hours=2)
+    row = await routine_tool(
+        app,
+        "routine_create",
+        {
+            "kind": "course",
+            "title": "电动力学",
+            "due": due.isoformat(),
+            "end": (due + timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert row["status"] == "open" and row["next_fire"] is None
+    assert row in await routine_tool(app, "routine_list", {})
+    await app.routine.tick()
+    moved = await routine_tool(
+        app,
+        "routine_update",
+        {"id": row["id"], "due": (due - timedelta(hours=1)).isoformat()},
+    )
+    assert moved["status"] == "open" and moved["next_fire"] is None
+    await app.routine.tick()
+    await app.proactive.tick()
+    assert await app.store.list("event") == []
+    assert await app.store.list("turn") == []
+    assert await app.store.list("notification") == []
+    assert await app.store.list("reply") == []
 
 
 async def test_routine_update_tool_edits_and_reschedules(app):
