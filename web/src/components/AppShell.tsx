@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronRight, RotateCw } from "lucide-react";
+import { ChevronRight, CloudDownload, RotateCw } from "lucide-react";
 import { PAGES, pageMeta } from "../navigation";
 import type { PageId } from "../navigation";
 
@@ -14,6 +14,8 @@ export function AppShell({
   restarting,
   restartDisabled,
   restartHint,
+  onCheckUpdate,
+  updateAvailable,
   children,
 }: {
   page: PageId;
@@ -26,6 +28,8 @@ export function AppShell({
   restarting: boolean;
   restartDisabled: boolean;
   restartHint: string;
+  onCheckUpdate: () => void;
+  updateAvailable: boolean;
   children: ReactNode;
 }) {
   const meta = pageMeta(page);
@@ -100,6 +104,18 @@ export function AppShell({
           </div>
           <div>
             <span className="local-badge">仅本机</span>
+            <button
+              type="button"
+              className="update-button"
+              onClick={onCheckUpdate}
+              title={updateAvailable ? "有可用的新版本" : "检查更新"}
+            >
+              <CloudDownload size={14} aria-hidden="true" />
+              检查更新
+              {updateAvailable && (
+                <span className="update-dot" aria-label="有新版本" />
+              )}
+            </button>
             <button type="button" onClick={onLogout}>
               退出
             </button>

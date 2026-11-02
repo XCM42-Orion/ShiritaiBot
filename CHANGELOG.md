@@ -7,6 +7,15 @@
 
 ### 新增
 
+- **检查更新**：WebUI 顶栏右上角新增「检查更新」按钮，打开居中浮窗，从
+  [ShiritaiBot-Devs/ShiritaiBot](https://github.com/ShiritaiBot-Devs/ShiritaiBot) 读取发布版本。
+  - 上半部分显示所选版本的更新日志，下半部分分页列出版本；默认只列正式版，可勾选显示测试版，
+    也可显示尚未发布的 `main` 最新提交（更新日志为自最新版本以来的提交列表）。
+  - 选中版本并确认后自动下载源码包、构建 WebUI、替换程序文件、`uv sync --inexact` 同步依赖，然后重启服务。
+    `.venv` 和发布包中没有的插件目录会保留；任一步失败时恢复原文件且不重启。上一版本保存在
+    安装目录的 `.update/previous`，可手动回退。
+  - 有新的正式版时按钮显示提示点。GitHub 查询结果缓存 5 分钟，可在浮窗中手动刷新。
+  - 仅支持一键部署脚本安装、且通过 `shiritaibot run` 启动的实例；源码开发环境请使用 git 更新。
 - **知识库**（`[knowledge]`）：存放不会变化的资料，结构扁平，检索不调用文本模型。详见 `docs/KNOWLEDGE.md`。
   - 支持 txt、md、rst、log、json、yaml、xml、csv、tsv、pdf、doc、docx、xls、xlsx、ppt、pptx。
   - 可在 WebUI「知识库」页上传，也可在 QQ 私聊把文件发给 Bot，由 `kb_import` 存入；内容相同的文件只存一份。

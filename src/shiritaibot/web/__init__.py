@@ -27,6 +27,7 @@ from shiritaibot.routine import RoutineItem
 from shiritaibot.skill import MAX_ARCHIVE as MAX_SKILL_ARCHIVE
 from shiritaibot.store.statistics import statistics
 from shiritaibot.tools.builtin import register_builtin
+from shiritaibot.updater import Updater
 
 
 class SecretInput(Model):
@@ -56,6 +57,11 @@ class MemeInput(Model):
     description: str | None = Field(default=None, max_length=300)
 
 
+class UpdateInput(Model):
+    kind: str = Field(pattern=r"^(release|commit)$")
+    ref: str = Field(min_length=1, max_length=100)
+
+
 class PluginRepositoryInput(Model):
     id: str = Field(pattern=r"^[a-z0-9_]{1,64}$")
     url: str = Field(max_length=300)
@@ -77,12 +83,26 @@ def create_app(
     allowed_hosts: list[str] | None = None,
     log_level: str | None = None,
     request_restart: Callable[[], None] | None = None,
+    updater: Updater | None = None,
 ) -> FastAPI:
     runtime = Application(home)
     manager = logs.LogManager(home, log_level)
     web_log = logs.get_logger("WebUI")
     instance_id = secrets.token_hex(16)
     restarting = False
+
+    def restart_once() -> bool:
+        nonlocal restarting
+        if restarting or request_restart is None:
+            return False
+        restarting = True
+        request_restart()
+        return True
+
+    updater = updater or Updater(
+        Path(__file__).resolve().parents[3],
+        restart_once if request_restart is not None else None,
+    )
 
     @asynccontextmanager
     async def lifespan(api):
@@ -166,19 +186,39 @@ def create_app(
 
     @api.post("/api/restart", dependencies=protected, status_code=202)
     async def restart():
-        nonlocal restarting
         if request_restart is None:
             raise HTTPException(503, "当前启动方式不支持重启，请使用 shiritaibot run 启动")
         background = None
         if not restarting:
-            restarting = True
             web_log.log("收到管理后台重启请求，正在关闭服务")
-            background = BackgroundTask(request_restart)
+            background = BackgroundTask(restart_once)
         return JSONResponse(
             {"status": "restarting", "instance_id": instance_id},
             status_code=202,
             background=background,
         )
+
+    @api.get("/api/update/status", dependencies=protected)
+    async def update_status():
+        return updater.status()
+
+    @api.get("/api/update/releases", dependencies=protected)
+    async def update_releases(
+        page: int = Query(1, ge=1, le=1000),
+        size: int = Query(8, ge=1, le=50),
+        prerelease: bool = False,
+        refresh: bool = False,
+    ):
+        return await updater.releases(page, size, prerelease, refresh)
+
+    @api.get("/api/update/preview", dependencies=protected)
+    async def update_preview(refresh: bool = False):
+        return {"commit": await updater.preview(refresh)}
+
+    @api.post("/api/update/apply", dependencies=protected, status_code=202)
+    async def update_apply(body: UpdateInput):
+        web_log.log(f"收到管理后台更新请求：{body.kind} {body.ref}")
+        return await updater.apply(body.kind, body.ref)
 
     @api.get("/api/config", dependencies=protected)
     async def config():

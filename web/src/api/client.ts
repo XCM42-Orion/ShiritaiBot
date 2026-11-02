@@ -29,6 +29,9 @@ import type {
   Statistics,
   ToolCatalog,
   Paginated,
+  CommitPreview,
+  ReleaseListing,
+  UpdateStatus,
 } from "./types";
 
 export class ApiError extends Error {
@@ -53,6 +56,15 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 export interface ApiClient {
   health(): Promise<Health>;
   restart(): Promise<{ status: string; instance_id: string }>;
+  updateStatus(): Promise<UpdateStatus>;
+  updateReleases(
+    page: number,
+    size: number,
+    prerelease: boolean,
+    refresh?: boolean,
+  ): Promise<ReleaseListing>;
+  updatePreview(refresh?: boolean): Promise<{ commit: CommitPreview | null }>;
+  applyUpdate(kind: "release" | "commit", ref: string): Promise<UpdateStatus>;
   config(): Promise<Settings>;
   tools(session?: string): Promise<ToolCatalog>;
   saveConfig(settings: Settings): Promise<ConfigSaveResult>;
@@ -183,6 +195,23 @@ export function createClient(getToken: () => string): ApiClient {
   return {
     health: () => request<Health>("/health"),
     restart: () => request("/restart", "POST"),
+    updateStatus: () => request<UpdateStatus>("/update/status"),
+    updateReleases: (page, size, prerelease, refresh = false) =>
+      request<ReleaseListing>(
+        "/update/releases?" +
+          new URLSearchParams({
+            page: String(page),
+            size: String(size),
+            prerelease: String(prerelease),
+            refresh: String(refresh),
+          }),
+      ),
+    updatePreview: (refresh = false) =>
+      request<{ commit: CommitPreview | null }>(
+        "/update/preview?refresh=" + String(refresh),
+      ),
+    applyUpdate: (kind, ref) =>
+      request<UpdateStatus>("/update/apply", "POST", { kind, ref }),
     config: () => request<Settings>("/config"),
     tools: (session = "web:owner") =>
       request<ToolCatalog>("/tools?session=" + encodeURIComponent(session)),

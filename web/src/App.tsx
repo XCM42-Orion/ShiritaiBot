@@ -11,6 +11,8 @@ import type { ApiClient } from "./api/client";
 import { AppShell } from "./components/AppShell";
 import { LoginView } from "./components/LoginView";
 import { SaveBar } from "./components/SaveBar";
+import { UpdateDialog } from "./components/UpdateDialog";
+import { isNewer } from "./lib/version";
 import { useConfigDraft } from "./hooks/useConfigDraft";
 import { useHashRoute } from "./hooks/useHashRoute";
 import { NoticeProvider, useNotice } from "./hooks/useNotice";
@@ -59,6 +61,7 @@ function ConsoleApp() {
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [restartInstance, setRestartInstance] = useState<string | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const authenticate = useCallback(
@@ -109,6 +112,24 @@ function ConsoleApp() {
     enabled: client !== null,
     refetchInterval: restarting ? 1000 : 10000,
     retry: restarting ? false : 3,
+  });
+  // Background check for a newer stable release; failures stay silent here.
+  const updateCheck = useQuery({
+    queryKey: ["update", "check", health.data?.instance_id],
+    queryFn: async () => {
+      const [status, latest] = await Promise.all([
+        client!.updateStatus(),
+        client!.updateReleases(1, 1, false),
+      ]);
+      const release = latest?.items?.[0];
+      return Boolean(
+        release && status?.current && isNewer(release, status.current),
+      );
+    },
+    enabled: client !== null && health.isSuccess && !restarting,
+    staleTime: 30 * 60 * 1000,
+    refetchInterval: 6 * 60 * 60 * 1000,
+    retry: false,
   });
   const approvals = useQuery({
     queryKey: ["records", "approval"],
@@ -222,6 +243,12 @@ function ConsoleApp() {
     }
   }
 
+  const startUpdateRestart = useCallback(() => {
+    dismiss();
+    setRestarting(true);
+    setRestartInstance(health.data?.instance_id ?? null);
+  }, [dismiss, health.data?.instance_id]);
+
   if (!client) {
     return (
       <LoginView
@@ -309,8 +336,11 @@ function ConsoleApp() {
             ? "请使用 shiritaibot run 启动以支持重启"
             : "重启 ShiritaiBot 服务"
       }
+      onCheckUpdate={() => setUpdateOpen(true)}
+      updateAvailable={updateCheck.data === true}
       onLogout={() => {
         dismiss();
+        setUpdateOpen(false);
         setRestarting(false);
         setRestartInstance(null);
         sessionStorage.removeItem(TOKEN_KEY);
@@ -320,6 +350,21 @@ function ConsoleApp() {
     >
       {busy && <span className="sr-only">正在执行操作</span>}
       {content(client)}
+      {updateOpen && (
+        <UpdateDialog
+          client={client}
+          onClose={() => setUpdateOpen(false)}
+          onRestarting={startUpdateRestart}
+          restarting={restarting}
+          blockedReason={
+            draft.dirty
+              ? "请先保存或放弃未保存的配置"
+              : busy || saving
+                ? "请等待当前操作完成"
+                : null
+          }
+        />
+      )}
       {draft.dirty && (
         <SaveBar
           busy={saving}

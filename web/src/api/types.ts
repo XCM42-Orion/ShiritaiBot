@@ -668,3 +668,53 @@ export interface RecordMap {
 }
 
 export type RecordKind = keyof RecordMap;
+
+export type UpdatePhase =
+  "idle" | "downloading" | "building" | "deploying" | "restarting" | "failed";
+
+export interface UpdateStatus {
+  phase: UpdatePhase;
+  message: string;
+  target: { kind: "release" | "commit"; ref: string } | null;
+  output: string[];
+  available: boolean;
+  reason: string | null;
+  repository: string;
+  current: {
+    version: string;
+    kind: "release" | "commit" | null;
+    ref: string | null;
+    sha: string | null;
+    deployed_at: string | null;
+  };
+}
+
+export interface ReleaseInfo {
+  tag: string;
+  name: string;
+  body: string;
+  prerelease: boolean;
+  published_at: string | null;
+  url: string | null;
+}
+
+export interface ReleaseListing {
+  items: ReleaseInfo[];
+  total: number;
+  page: number;
+}
+
+export interface CommitPreview {
+  sha: string;
+  message: string;
+  date: string | null;
+  url: string | null;
+  base: string | null;
+  ahead_by: number;
+  commits: {
+    sha: string;
+    message: string;
+    author: string;
+    date: string | null;
+  }[];
+}
