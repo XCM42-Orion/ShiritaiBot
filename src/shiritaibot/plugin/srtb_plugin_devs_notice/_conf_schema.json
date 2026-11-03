@@ -1,0 +1,38 @@
+{
+  "url": {
+    "type": "string",
+    "description": "公告接口地址",
+    "hint": "必须是 https://；仅本机调试时允许 http://127.0.0.1 或 localhost。",
+    "default": "https://notice.shiritaibot.dev/api"
+  },
+  "poll": { "type": "bool", "description": "自动接收公告", "default": true },
+  "poll_seconds": {
+    "type": "int",
+    "description": "轮询间隔（秒）",
+    "hint": "最短 600 秒。",
+    "minimum": 600,
+    "maximum": 86400,
+    "default": 1200
+  },
+  "categories": {
+    "type": "list",
+    "description": "接收的公告类型",
+    "hint": "未勾选的类型会被跳过，不进入主动性引擎。",
+    "options": ["release", "security", "breaking", "maintenance", "plugin", "general"],
+    "labels": ["版本发布", "安全公告", "不兼容变更 / 迁移指引", "服务维护", "插件动态", "一般公告"],
+    "default": ["release", "security", "breaking", "maintenance", "plugin", "general"]
+  },
+  "notify_updates": {
+    "type": "bool",
+    "description": "公告被修改时也通知",
+    "default": true
+  },
+  "min_importance": {
+    "type": "int",
+    "description": "最低重要性",
+    "hint": "分诊结果低于此值时提升到此值，保证公告进入 Proactive Loop。critical 级公告始终为 4。",
+    "slider": { "min": 1, "max": 4, "step": 1 },
+    "default": 2
+  },
+  "timeout": { "type": "int", "description": "请求超时（秒）", "minimum": 5, "maximum": 120, "default": 30 }
+}

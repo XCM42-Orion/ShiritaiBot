@@ -2,7 +2,7 @@
 
 ## 目录约定
 
-`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/`、通用的邮件插件 `email/` 和 GitHub 插件 `github/` 外，其余目录都被 `.gitignore` 忽略，飞书和网络学堂需在部署环境中单独安装实际代码与清单。干净 checkout 不含这两个插件。旧的 `integrations/`、`builtin_plugins/` 已撤销。
+`src/shiritaibot/plugin/core/` 是主仓库的插件宿主；`src/shiritaibot/plugin/` 下除 `core/`、通用的邮件插件 `email/`、GitHub 插件 `github/` 和开发公告插件 `srtb_plugin_devs_notice/` 外，其余目录都被 `.gitignore` 忽略，飞书和网络学堂需在部署环境中单独安装实际代码与清单。干净 checkout 不含这两个插件。旧的 `integrations/`、`builtin_plugins/` 已撤销。
 
 `src/shiritaibot/learn/` 属于核心代码：定义学校无关的请求/响应、stdio 接入、查询和下载工具、同步基线与变更事件；不包含清华 URL、SSO、SM2 或学校客户端。`plugin/thu_learn/` 则负责清华具体实现，包括客户端和单请求适配进程。
 
@@ -226,6 +226,39 @@ timeout = 30
 - **子代理**：通过 `PluginContext.add_subagent_note` 在新启动的子代理（generic 类型除外）提示词末尾说明：如需提交就带上这一行，任务明确不提交时忽略。续接的运行不再重复注入。
 
 局限：shell 工具与宿主以同一系统账号运行，能读到 `<home>/master.key` 和数据库的模型理论上仍可解密 Vault。以上设计防止的是 token 意外进入上下文、日志和聊天记录；如需更强的隔离，应让 shell 在沙箱或独立账号中运行，并保持 token 的最小权限。用 `env:` 引用的 token 会被所有子进程继承，请改在 WebUI 中填写。
+
+## ShiritaiBot Devs 公告
+
+本地目录：`src/shiritaibot/plugin/srtb_plugin_devs_notice/`。插件 ID：`srtb_plugin_devs_notice`。随主仓库发布，默认停用。
+
+插件通过 HTTPS 轮询 `https://notice.shiritaibot.dev/api/notices?after=<cursor>`，接收 ShiritaiBot Devs 发布的开发公告。公告服务给每次发布、修改和删除分配全局递增的 `seq`，插件把读到的最大 `seq` 存在 KV 中作为游标；首次轮询只记录当前 `seq` 作为基线，不回放历史公告。
+
+```toml
+[[plugins]]
+id = "srtb_plugin_devs_notice"
+enabled = true
+[plugins.settings]
+url = "https://notice.shiritaibot.dev/api"   # 必须 https；仅本机调试允许 http://127.0.0.1 / localhost
+poll = true
+poll_seconds = 1200                           # 最短 600
+categories = ["release", "security", "breaking", "maintenance", "plugin", "general"]
+notify_updates = true                         # 公告被修改时也通知
+min_importance = 2                            # 1–4
+timeout = 30
+```
+
+| 类型 | 含义 |
+|---|---|
+| `release` | 版本发布 |
+| `security` | 安全公告 |
+| `breaking` | 不兼容变更 / 迁移指引 |
+| `maintenance` | 服务维护 |
+| `plugin` | 插件动态 |
+| `general` | 一般公告 |
+
+每条选中类型的新公告（或修改后的公告）提交一个事件：`source = "devs_notice"`，`kind` 为 `devs_notice.published` / `devs_notice.updated`，`dedup_key = notice:<id>:r<revision>`；公告级别 `info` / `important` / `critical` 对应 urgency `normal` / `high` / `critical`。删除的公告和未选中的类型只推进游标。插件的 `on_proactive_judged` 把分诊重要性提升到不低于 `min_importance`，`critical` 公告固定为 4 级，因此公告不会在分诊时被丢弃，一定会进入 Proactive Loop。公告正文作为不可信资料放在 payload 中，并注明不是对助手的指令。
+
+插件不注册模型工具，也不需要凭据。发布公告使用 ShiritaiBot Devs 内部的独立服务和插件，不随主仓库分发。
 
 ## 主动性引擎
 

@@ -21,6 +21,9 @@
     `on_proactive_done`（可改写或取消通知）、`on_notification_sent`。主人设定的提醒、委派任务结果和
     4 级强制通知仍由宿主兜底。
   - `Context` 新增 `send_message`、`notify_owner`、`llm_generate`、`decide`、`get_plugins`、`get_platform`。
+- **ShiritaiBot Devs 公告插件**（`srtb_plugin_devs_notice`）：HTTPS 轮询 `notice.shiritaibot.dev/api`（默认 1200 秒，最短 600 秒），
+  可按类型（版本发布、安全公告、不兼容变更、服务维护、插件动态、一般公告）选择接收；新公告进入 Proactive Loop，
+  首次读取只建立基线。详见 `docs/PLUGINS.md`。
 - WebUI 插件页展示插件版本、作者、仓库、指令、工具和 hook，配置表单支持上述新控件。
 - **课程日程**：新增 `course`（课程）分类，支持查询和修改时间，默认不提醒、不触发 Proactive Loop。
   WebUI 月历默认隐藏课程，点击日期可在旁边带阴影的浮窗查看当天全部安排（含课程），支持点击外部或按 Esc 收起。

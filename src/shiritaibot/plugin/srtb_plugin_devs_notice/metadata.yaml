@@ -1,0 +1,8 @@
+name: srtb_plugin_devs_notice
+display_name: ShiritaiBot Devs 公告
+desc: 通过 HTTPS 轮询 ShiritaiBot Devs 的开发公告，按类型筛选后交给主动性引擎；首次读取只建立基线
+short_desc: 接收 ShiritaiBot Devs 开发公告
+version: 1.0.0
+author: ShiritaiBot Devs
+repo: https://github.com/XCM42-Orion/ShiritaiBot
+shiritaibot_version: ">=0.2"
