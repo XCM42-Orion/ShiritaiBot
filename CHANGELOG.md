@@ -3,38 +3,22 @@
 本文件记录 ShiritaiBot 的重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，
 版本号遵循语义化版本。
 
-## 未发布
+## 0.2.1 - 2026-11-3
 
 ### 新增
 
-- **插件 API v2**（`shiritaibot.api`）：结构参照 AstrBot 插件，详见 `docs/PLUGINS.md`。
-  - 清单改为 `metadata.yaml`，配置定义改为 AstrBot 格式的 `_conf_schema.json`。支持滑块、多行文本、
-    代码编辑框、选项显示名、嵌套对象、`dict` 参数模板和 `template_list`；`secret` 字段加密存入 Vault。
-  - 插件类继承 `Plugin`，生命周期为 `initialize()` / `terminate()`。`self.config.save_config()` 写回配置；
-    `get_kv_data` / `put_kv_data` / `delete_kv_data` 提供每个插件独立的 KV 存储。
-  - `hook` 装饰器可注册：指令与指令组（按类型注解绑定参数，并入 `/help`）、消息监听（`message_type`、
-    `regex`，可用 `stop_event()` 拦截）、权限和平台过滤、`llm_tool`（schema 取自 docstring 或类型注解）。
-  - Agent 生命周期 hook：`on_agent_begin`、`on_llm_request`、`on_llm_response`、`on_tool_call`、
-    `on_tool_result`、`on_agent_done`。
-  - 发送 hook：`on_decorating_result`、`after_message_sent`。
-  - 主动性引擎 hook：`on_proactive_event`（可修改或丢弃事件）、`on_proactive_judged`（可调整分诊）、
-    `on_proactive_done`（可改写或取消通知）、`on_notification_sent`。主人设定的提醒、委派任务结果和
-    4 级强制通知仍由宿主兜底。
-  - `Context` 新增 `send_message`、`notify_owner`、`llm_generate`、`decide`、`get_plugins`、`get_platform`。
-- **ShiritaiBot Devs 公告插件**（`srtb_plugin_devs_notice`）：HTTPS 轮询 `notice.shiritaibot.dev/api`（默认 1200 秒，最短 600 秒），
-  可按类型（版本发布、安全公告、不兼容变更、服务维护、插件动态、一般公告）选择接收；新公告进入 Proactive Loop，
+- **插件 API v2**（`shiritaibot.api`）：结构参照 AstrBot 插件，详见 `docs/PLUGINS.md`和[官网开发文档](https://shiritaibot.dev)。同步更新了WebUI。
+- **ShiritaiBot Devs 公告插件**（`srtb_plugin_devs_notice`）：采用 HTTPS 轮询 `notice.shiritaibot.dev/api`（默认 1200 秒，最短 600 秒），
+  可按类型（版本发布、安全公告、不兼容变更、服务维护、插件动态、一般公告）选择接收。新公告进入 Proactive Loop，
   首次读取只建立基线。详见 `docs/PLUGINS.md`。
-- WebUI 插件页展示插件版本、作者、仓库、指令、工具和 hook，配置表单支持上述新控件。
-- **课程日程**：新增 `course`（课程）分类，支持查询和修改时间，默认不提醒、不触发 Proactive Loop。
-  WebUI 月历默认隐藏课程，点击日期可在旁边带阴影的浮窗查看当天全部安排（含课程），支持点击外部或按 Esc 收起。
-- **花费按人民币显示**：概览页的「预估花费」可在美元和人民币之间切换，汇率（USD/CNY）取自
-  open.er-api.com，按数据源的更新时间缓存（最长 24 小时）。获取失败时 5 分钟后重试，期间沿用上次的汇率并标注为缓存；
-  从未取到汇率时按原币种显示。新增接口 `GET /api/exchange-rate`。
+- **课程日程**：新增 `course`（课程）分类，支持查询和修改时间，默认不提醒、不触发 Proactive Loop。WebUI 月历默认隐藏课程，点击日期可在旁边带阴影的浮窗查看当天全部安排（含课程）。
+- **模型调用花费按人民币/美元显示**：概览页的「预估花费」可在美元和人民币之间切换，汇率（USD/CNY）取自
+  open.er-api.com，按数据源的更新时间缓存（最长 24 小时）。
 
 ### 变更
 
 - 内置 email、github 插件迁移到 API v2，`hello_world` 示例改写为 v2 全功能示例。
-- 旧版 API（`plugin.toml` + `Entry`，`shiritaibot.plugin_api`）继续可用，部署环境的飞书、网络学堂插件无需修改。
+- 旧版 API（`plugin.toml` + `Entry`，`shiritaibot.plugin_api`）继续可用。**我们计划在未来的几个版本中停止对v1 API的支持。**
 
 ### 修复
 
