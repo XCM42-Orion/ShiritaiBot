@@ -95,3 +95,21 @@ shiritaibot token             # 一键安装（macOS / Linux）
 [![贡献者](https://contrib.rocks/image?repo=XCM42-Orion/ShiritaiBot)](https://github.com/XCM42-Orion/ShiritaiBot/graphs/contributors)
 
 加入ShiritaiBot Issue反馈群，参与ShiritaiBot的后续工作：1134225815
+
+## Also try...
+
+- [NapNeko/NapcatQQ](https://github.com/NapNeko/NapCatQQ) - 绝赞Onebot QQ协议端接入实现
+- [AstrBotDevs/AstrBot](https://github.com/AstrBotDevs/AstrBot) - 经典的可扩展性Bot框架，ShiritaiBot参考了AstrBot的插件API设计
+    - [lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory](https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory) - 经典的AstrBot记忆层插件
+
+> 应该说2025年3月，在自己的电脑上试着用AstrBot部署自己的Bot，慢慢尝试AstrBot的插件开发是我在开发路上走到现在的起点。
+> 
+> Astrbot教会了我很多：开源精神，架构设计，社区协作，以及有一个想法就要敢于尝试去实现的勇气。
+> 
+> —— M42
+
+- [Mai-with-u/MaiBot](Mai-with-u/MaiBot) - 用于构建你的数字生命的Bot框架，ShiritaiBot参考了MaiBot的记忆层设计
+- [Einsia/OpenChronicle](https://github.com/Einsia/OpenChronicle) - 开创性的主动记忆设计
+- [XCM42-Orion/AutoWater](https://github.com/XCM42-Orion/AutoWater) - 轻量化的整活水群框架，！？轻量化的整整的化量轻？！
+
+
