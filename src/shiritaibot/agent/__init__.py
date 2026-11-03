@@ -4,12 +4,15 @@ import asyncio
 import json
 import time
 from collections import Counter, deque
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from shiritaibot.agent.commands import command
 from shiritaibot.agent.context import ContextManager, context_chars
+from shiritaibot.api.event import AgentResult, LLMRequest, LLMResponse, Turn
 from shiritaibot.core import Context, PublicError, canonical, fingerprint, now, uid
 from shiritaibot.core.logs import Logger, brief, describe_session, get_logger
 from shiritaibot.meme.inject import meme_prompt
@@ -137,6 +140,11 @@ def _is_loop_result(text: str) -> bool:
     except (ValueError, TypeError):
         return False
     return True
+
+
+def _arguments(value) -> dict:
+    """Tool-call arguments as a fresh dict for plugin hooks (malformed JSON → {})."""
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _report(arguments: str | dict) -> tuple[LoopResult | None, str]:
@@ -330,6 +338,8 @@ class AgentRuntime:
         self.emotion = emotion
         self.skills = skills
         self.actors: dict[str, SessionActor] = {}
+        # shiritaibot.plugin.core.hooks.HookBus: plugin LLM / agent lifecycle hooks.
+        self.hooks: Any = None
         self.submit_locks: dict[str, asyncio.Lock] = {}
         self.context_locks: dict[str, asyncio.Lock] = {}
 
@@ -530,6 +540,22 @@ class AgentRuntime:
             "owner_name": cfg.owner_name,
         }
         await self.store.put("turn", ctx.turn, body, ctx.session)
+        hooks = self.hooks
+        info = Turn(
+            ctx.turn,
+            ctx.session,
+            ctx.actor,
+            ctx.owner,
+            ctx.group,
+            ctx.background,
+            ctx.mode,
+            route,
+            text,
+            ctx,
+        )
+        final = ""
+        if hooks is not None:
+            await hooks.call("agent_begin", info)
         try:
             async with asyncio.timeout(cfg.policy.max_turn_seconds):
                 zone = ZoneInfo(cfg.proactive.timezone)
@@ -595,14 +621,24 @@ class AgentRuntime:
                     if context_chars(history) > cfg.policy.max_context_chars * 2:
                         raise PublicError("本轮上下文达到限制，请开启新会话或减少输入")
                     log.debug(f"第 {step + 1} 步：请求模型（上下文 {len(history)} 条消息）")
+                    request = LLMRequest(system, history, tools, route, step)
+                    if hooks is not None and hooks.has("llm_request"):
+                        # Plugins edit a copy: the stored conversation never changes.
+                        request.messages, request.tools = deepcopy(history), deepcopy(tools)
+                        await hooks.call("llm_request", info, request)
                     reply = await self.llm.complete(
                         route,
-                        system,
-                        history,
-                        tools,
+                        request.system_prompt,
+                        request.messages,
+                        request.tools,
                         settings=cfg,
                         scope=ctx.session,
                     )
+                    if hooks is not None and hooks.has("llm_response"):
+                        response = LLMResponse(reply.text, tuple(reply.calls))
+                        await hooks.call("llm_response", info, response)
+                        if isinstance(response.text, str):
+                            reply.text = response.text
                     message = {
                         "role": "assistant",
                         "content": reply.text,
@@ -623,7 +659,8 @@ class AgentRuntime:
                             continue
                         if not proactive:
                             log.log(f"回复：{brief(reply.text, 200) or '（空）'}")
-                        await self.deliver(ctx.session, reply.text or "模型没有返回可显示的内容。")
+                        final = reply.text or "模型没有返回可显示的内容。"
+                        await self.deliver(ctx.session, final)
                         body["status"] = "completed"
                         return
                     # Main-loop text is visible before tools run; proactive turns
@@ -652,9 +689,21 @@ class AgentRuntime:
                                 f"调用工具 {function['name']}（{brief(shown, 120) or '无参数'}）"
                             )
                             called = time.monotonic()
+                            if hooks is not None and hooks.has("tool_call"):
+                                await hooks.call(
+                                    "tool_call", info, function["name"], _arguments(shown)
+                                )
                             output = await self.registry.execute(
                                 ctx, function["name"], function["arguments"]
                             )
+                            if hooks is not None and hooks.has("tool_result"):
+                                await hooks.call(
+                                    "tool_result",
+                                    info,
+                                    function["name"],
+                                    _arguments(shown),
+                                    output,
+                                )
                             ok, summary = tool_outcome(output)
                             spent = time.monotonic() - called
                             if ok:
@@ -673,7 +722,8 @@ class AgentRuntime:
                             ("决定通知主人" if report.notify else "决定不打扰主人")
                             + f"：{brief(report.reason, 120)}"
                         )
-                        await self.deliver(ctx.session, canonical(report.model_dump()))
+                        final = canonical(report.model_dump())
+                        await self.deliver(ctx.session, final)
                         body["status"] = "completed"
                         return
                     body["steps"] = step + 1
@@ -693,8 +743,13 @@ class AgentRuntime:
                 exc=None if isinstance(exc, (PublicError, TimeoutError)) else exc,
             )
             await self.store.append(ctx.session, ctx.turn, {"role": "assistant", "content": error})
+            final = error
             await self.deliver(ctx.session, error)
         finally:
+            if hooks is not None and hooks.has("agent_done"):
+                result = AgentResult(body["status"], body["steps"] + 1, final)
+                # Shielded so a cancelled turn still reports its end to plugins.
+                await asyncio.shield(hooks.call("agent_done", info, result))
             if body["status"] == "completed":
                 log.log(
                     f"本轮完成（{body['steps'] + 1} 步，用时 {time.monotonic() - started:.1f}s）"

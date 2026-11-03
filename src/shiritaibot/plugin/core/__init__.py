@@ -2,21 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
 import os
 import re
 import sys
-import tomllib
 from copy import deepcopy
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from jsonschema import Draft202012Validator
 
+from shiritaibot.api import Context, Plugin, PluginSettings
+from shiritaibot.api.hook import tool_spec
 from shiritaibot.config import PluginConfig
 from shiritaibot.core import PublicError, uid
 from shiritaibot.core.logs import get_logger
 from shiritaibot.plugin_api import PluginContext
 
+from .hooks import HOOK_TIMEOUT, Handler, HookBus, collect
+from .manifest import manifest_file, read_manifest
 from .packages import install_archive, remove_directory
 
 log = get_logger("插件")
@@ -46,6 +50,17 @@ class PluginManager:
         # Per-plugin subagent prompt notes and shell command rewriters.
         self.subagent_note_map: dict[str, list[str]] = {}
         self.shell_filters: dict[str, list[Callable[[str], str]]] = {}
+        # v2 decorator handlers (commands, listeners, pipeline and proactive hooks).
+        self.hooks = HookBus(store, self._alive)
+        self.metadata: dict[str, dict] = {}
+        # Host services for v2 contexts, wired by the application after construction.
+        self.llm: Any = None
+        self.adapters: Any = None
+        # on_loaded hooks run once the host has started, then after every later (re)load.
+        self.ready = False
+
+    def _alive(self, handler: Handler) -> bool:
+        return self.loaded.get(handler.plugin) is handler.owner
 
     def unregister(self, key: str) -> None:
         self.registry.remove_plugin(key)
@@ -53,6 +68,69 @@ class PluginManager:
         self.process_env.pop(key, None)
         self.subagent_note_map.pop(key, None)
         self.shell_filters.pop(key, None)
+        self.hooks.remove(key)
+
+    @staticmethod
+    async def _stop(plugin) -> None:
+        await (plugin.terminate() if isinstance(plugin, Plugin) else plugin.close())
+
+    # Host services used by v2 plugin contexts ---------------------------------------
+
+    async def send_message(self, session: str, text: str) -> None:
+        if self.adapters is None:
+            raise PublicError("消息通道尚未就绪")
+        await self.adapters.enqueue(session, text)
+
+    async def notify_owner(self, text: str) -> None:
+        if self.adapters is None:
+            raise PublicError("消息通道尚未就绪")
+        await self.adapters.notify_owner(text)
+
+    async def llm_generate(
+        self, prompt: str | None, messages: list[dict] | None, system: str, route: str
+    ) -> str:
+        if self.llm is None:
+            raise PublicError("模型服务尚未就绪")
+        history = list(messages or [])
+        if prompt:
+            history.append({"role": "user", "content": prompt})
+        if not history:
+            raise ValueError("prompt or messages is required")
+        return (await self.llm.complete(route, system, history, [])).text
+
+    async def decide(self, state, questions: dict, route: str):
+        if self.llm is None:
+            raise PublicError("模型服务尚未就绪")
+        return await self.llm.decide(route, state, questions)
+
+    def plugin_list(self) -> list[dict]:
+        keys = ("id", "api", "name", "description", "version", "author", "repo")
+        return [
+            {key: self.metadata.get(plugin, {}).get(key, "") for key in keys} | {"id": plugin}
+            for plugin in self.loaded
+        ]
+
+    def platform(self, adapter_id: str):
+        return self.adapters.instances.get(adapter_id) if self.adapters is not None else None
+
+    async def kv_get(self, plugin: str, key: str, default: Any = None) -> Any:
+        row = await self.store.get("plugin_kv", f"{plugin}:{key}")
+        return row["value"] if row else default
+
+    async def kv_put(self, plugin: str, key: str, value: Any) -> None:
+        await self.store.put("plugin_kv", f"{plugin}:{key}", {"value": value}, plugin)
+
+    async def kv_delete(self, plugin: str, key: str) -> None:
+        await self.store.delete("plugin_kv", f"{plugin}:{key}")
+
+    async def save_settings(self, plugin: str, values: dict) -> None:
+        settings = self.config.value.model_copy(deep=True)
+        entry = next((p for p in settings.plugins if p.id == plugin), None)
+        if entry is None:
+            raise PublicError("插件尚未配置")
+        entry.settings = deepcopy(values)
+        settings = await self.vault.protect_settings(settings, await self.schemas())
+        await self.config.save(settings)
 
     def child_env(self) -> dict[str, str] | None:
         """Environment for model-driven child processes; None inherits the host unchanged."""
@@ -88,54 +166,14 @@ class PluginManager:
                     for directory in sorted(root.iterdir()):
                         if directory.name in {"core", "__pycache__"}:
                             continue
-                        manifest = directory / "plugin.toml"
                         if (
                             not directory.is_symlink()
-                            and manifest.is_file()
+                            and manifest_file(directory) is not None
                             and re.fullmatch(r"[a-z0-9_]{1,64}", directory.name)
                         ):
                             if directory.name in result:
                                 continue  # The source-tree plugin takes precedence over data/plugins.
-                            error = ""
-                            meta = {}
-                            try:
-                                meta = tomllib.loads(manifest.read_text(encoding="utf-8"))
-                                if meta.get("api") != 1:
-                                    raise ValueError("不支持的插件 API 版本")
-                                if not (directory / "main.py").is_file():
-                                    raise ValueError("缺少 main.py 入口")
-                                if not isinstance(meta.get("settings", {}), dict):
-                                    raise ValueError("settings 必须是配置表")
-                                schema = meta.get("settings_schema", {"type": "object"})
-                                Draft202012Validator.check_schema(schema)
-                                if schema.get("type") != "object":
-                                    raise ValueError("settings_schema 必须描述对象")
-                            except (OSError, ValueError) as exc:
-                                error = f"插件清单无效（{type(exc).__name__}）"
-                            except Exception:
-                                error = "插件配置 schema 无效"
-                            result[directory.name] = {
-                                "name": meta.get("name", directory.name),
-                                "description": meta.get("description", ""),
-                                "settings_schema": meta.get("settings_schema", {})
-                                if not error
-                                else {},
-                                "defaults": {
-                                    **{
-                                        k: v["default"]
-                                        for k, v in meta.get("settings_schema", {})
-                                        .get("properties", {})
-                                        .items()
-                                        if isinstance(v, dict) and "default" in v
-                                    },
-                                    **meta.get("settings", {}),
-                                }
-                                if not error
-                                else {},
-                                "id": directory.name,
-                                "path": str(directory),
-                                "error": error,
-                            }
+                            result[directory.name] = read_manifest(directory)
             return list(result.values())
 
         return await asyncio.to_thread(scan)
@@ -150,6 +188,14 @@ class PluginManager:
                 settings.plugins.append(
                     PluginConfig(id=meta["id"], settings=deepcopy(meta["defaults"]))
                 )
+            elif meta["api"] == 2 and not meta["error"]:
+                # Like AstrBot: new fields get defaults, fields the schema dropped go away.
+                cfg = next(p for p in settings.plugins if p.id == meta["id"])
+                fields = meta["settings_schema"].get("properties", {})
+                cfg.settings = {
+                    name: deepcopy(cfg.settings.get(name, meta["defaults"].get(name)))
+                    for name in fields
+                }
         settings = await self.vault.protect_settings(
             settings, {p["id"]: p["settings_schema"] for p in discovered}
         )
@@ -174,8 +220,17 @@ class PluginManager:
                 for tool in self.registry.tools.values()
                 if tool.plugin == key
             ]
+            commands, hooks = self.hooks.describe(key)
             result.append(
-                {**meta, "status": status, "error": error, "enabled": cfg.enabled, "tools": tools}
+                {
+                    **meta,
+                    "status": status,
+                    "error": error,
+                    "enabled": cfg.enabled,
+                    "tools": tools,
+                    "commands": commands,
+                    "hooks": hooks,
+                }
             )
         return result
 
@@ -187,7 +242,7 @@ class PluginManager:
             for key in list(self.loaded):
                 if key not in configured or key not in discovered:
                     async with self.locks[key]:
-                        await self.loaded.pop(key).close()
+                        await self._stop(self.loaded.pop(key))
                         self.unregister(key)
                         self._forget_modules(key)
             self.errors = {key: error for key, error in self.errors.items() if key in discovered}
@@ -222,7 +277,7 @@ class PluginManager:
             async with self.locks.setdefault(key, asyncio.Lock()):
                 old = self.loaded.get(key)
                 if old:
-                    await old.close()
+                    await self._stop(old)
                 self.loaded.pop(key, None)
                 self.unregister(key)
                 self._forget_modules(key)
@@ -283,7 +338,7 @@ class PluginManager:
                 old = self.loaded.pop(key, None)
                 self.unregister(key)
                 if old:
-                    await old.close()
+                    await self._stop(old)
                     log.log(f"插件 {key} 已停用")
                 self._forget_modules(key)
                 return
@@ -322,16 +377,36 @@ class PluginManager:
 
             module = await asyncio.to_thread(load)
             plugin = None
+            handlers: list[Handler] = []
             try:
                 data_dir = self.home / "plugin_data" / key
                 await asyncio.to_thread(data_dir.mkdir, parents=True, exist_ok=True, mode=0o700)
-                context = PluginContext(
-                    key, plugin_settings, data_dir, self.vault.resolve, self.emit
-                )
+                if metadata["api"] == 2:
+                    settings = PluginSettings(
+                        plugin_settings, lambda values: self.save_settings(key, values)
+                    )
+                    context = Context(
+                        key, settings, data_dir, self.vault.resolve, self.emit, host=self
+                    )
+                else:
+                    context = PluginContext(
+                        key, plugin_settings, data_dir, self.vault.resolve, self.emit
+                    )
                 context.get_event = self.get_event
                 context.workspaces = self.home / "workspaces"
-                plugin = module.Entry(context)
-                await plugin.start()
+                if isinstance(context, Context):
+                    plugin = self._instantiate(module, context)
+                    handlers = collect(key, plugin, self.hooks.counter)
+                    for handler in handlers:
+                        if handler.kind == "llm_tool":
+                            self._register_tool(context, handler)
+                    await plugin.initialize()
+                    clashes = self.hooks.command_conflicts(key, handlers)
+                    if clashes:
+                        raise PublicError("插件指令与已有指令冲突：" + "、".join(clashes))
+                else:
+                    plugin = module.Entry(context)
+                    await plugin.start()
                 names = [t.name for t in context.tools]
                 if len(set(names)) != len(names) or any(
                     t.name in self.registry.tools and self.registry.tools[t.name].plugin != key
@@ -350,17 +425,17 @@ class PluginManager:
             except BaseException:
                 try:
                     if plugin is not None:
-                        await plugin.close()
+                        await self._stop(plugin)
                 finally:
                     self._drop_module(module_name)
                 raise
             old = self.loaded.get(key)
             if old:
                 try:
-                    await old.close()
+                    await self._stop(old)
                 except BaseException:
                     try:
-                        await plugin.close()
+                        await self._stop(plugin)
                     finally:
                         self._drop_module(module_name)
                     raise
@@ -375,33 +450,113 @@ class PluginManager:
 
                 return guarded
 
+            def channel(handler: Handler):
+                async def notified(source: str, text: str) -> None:
+                    await self.hooks.invoke(handler, HOOK_TIMEOUT, source, text)
+
+                return notified
+
             for tool in context.tools:
                 tool.handler = guard(tool.handler)
                 self.registry.add(tool)
-            if context.notifiers:
-                self.notifiers[key] = [guard(handler) for handler in context.notifiers]
+            channels = [guard(handler) for handler in context.notifiers] + [
+                channel(h) for h in handlers if h.kind == "notification_sent"
+            ]
+            if channels:
+                self.notifiers[key] = channels
             if context.process_env:
                 self.process_env[key] = dict(context.process_env)
             if context.subagent_notes:
                 self.subagent_note_map[key] = list(context.subagent_notes)
             if context.shell_filters:
                 self.shell_filters[key] = list(context.shell_filters)
+            self.hooks.set(key, handlers)
+            self.metadata[key] = metadata
             self.loaded[key] = plugin
             self._forget_modules(key, keep=module_name)
+            commands = sum(h.kind == "command" for h in handlers)
+            hooks = sum(h.kind not in {"command", "llm_tool"} for h in handlers)
             log.log(
                 f"插件 {metadata['name']}（{key}）已{'重新' if old else ''}加载："
                 f"{len(context.tools)} 个工具"
-                + (f"，{len(context.notifiers)} 个通知渠道" if context.notifiers else "")
+                + (f"，{commands} 个指令" if commands else "")
+                + (f"，{hooks} 个 hook" if hooks else "")
+                + (f"，{len(channels)} 个通知渠道" if channels else "")
             )
             await self.store.activity("plugin.loaded", key)
+            if self.ready:
+                self.hooks.spawn(self._loaded(key))
+
+    @staticmethod
+    def _instantiate(module, context: Context) -> Plugin:
+        """Construct the single concrete ``Plugin`` subclass defined in ``main.py``."""
+        defined = [
+            value
+            for value in vars(module).values()
+            if inspect.isclass(value)
+            and issubclass(value, Plugin)
+            and value is not Plugin
+            and value.__module__ == module.__name__
+        ]
+        leaves = [
+            cls for cls in defined if not any(o is not cls and issubclass(o, cls) for o in defined)
+        ]
+        if len(leaves) != 1:
+            raise PublicError("main.py 中需要恰好定义一个 Plugin 子类")
+        cls = leaves[0]
+        try:
+            inspect.signature(cls).bind(context, context.settings)
+            takes_config = True
+        except TypeError:
+            takes_config = False
+        plugin = cls(context, context.settings) if takes_config else cls(context)
+        if getattr(plugin, "config", None) is None:
+            plugin.config = context.settings
+        return plugin
+
+    @staticmethod
+    def _register_tool(context: Context, handler: Handler) -> None:
+        options = handler.options
+        try:
+            description, parameters = tool_spec(
+                handler.func, options["description"], options["parameters"]
+            )
+        except ValueError as exc:
+            raise PublicError(f"工具 {options['name']} 的参数定义无效：{exc}") from None
+        method = handler.func
+
+        async def call(ctx, args):
+            return await method(ctx, **args)
+
+        context.register_tool(
+            options["name"],
+            description,
+            parameters,
+            call,
+            risk=options["risk"],
+            timeout=options["timeout"],
+            chat=options["chat"],
+        )
+
+    async def _loaded(self, key: str) -> None:
+        for handler in self.hooks.of("loaded"):
+            if handler.plugin == key:
+                await self.hooks.invoke(handler, HOOK_TIMEOUT)
+
+    async def mark_ready(self) -> None:
+        """Called once the host has started: run every loaded plugin's on_loaded hooks."""
+        self.ready = True
+        for key in list(self.loaded):
+            self.hooks.spawn(self._loaded(key))
 
     async def start(self) -> None:
         await self.reload_all()
 
     async def close(self) -> None:
+        await self.hooks.close()
         for key, plugin in list(self.loaded.items()):
             async with self.locks[key]:
-                await plugin.close()
+                await self._stop(plugin)
                 self.unregister(key)
                 self._forget_modules(key)
         self.loaded.clear()

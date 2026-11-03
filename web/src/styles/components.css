@@ -1208,3 +1208,149 @@
     transform: none;
   }
 }
+
+/* Plugin settings (schema-driven) */
+
+.field-help-obvious {
+  padding: 7px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.slider-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-field input[type="range"] {
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.code-editor {
+  font:
+    12px/1.7 "JetBrains Mono",
+    Consolas,
+    monospace;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.field-name .tag,
+.panel-head h2 .tag {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.plugin-fieldset {
+  margin: 0;
+  padding: 12px 16px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.plugin-fieldset > legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-label);
+}
+
+.plugin-fieldset > .field-grid {
+  margin: 4px 0 12px;
+}
+
+.plugin-collection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plugin-collection-row,
+.plugin-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.plugin-collection-row > .field,
+.plugin-collection-row > fieldset,
+.plugin-entry > details {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-entry {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+
+.plugin-entry > details > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-height: 30px;
+  color: var(--text);
+}
+
+.plugin-entry > details > summary span {
+  overflow: hidden;
+  max-width: 100%;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-entry > details > summary small {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.plugin-entry-body {
+  padding-top: 12px;
+}
+
+.plugin-entry-body > .field-grid {
+  margin-bottom: 4px;
+}
+
+.plugin-meta a {
+  color: var(--accent);
+}
+
+.plugin-capabilities {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 18px;
+}
+
+.plugin-capabilities .list-row {
+  padding: 8px 0;
+  font-size: 12px;
+}
+
+.plugin-capabilities .list-row .tag {
+  margin-left: auto;
+}
+
+.tag.risk-sensitive {
+  color: var(--warning-ink);
+  border-color: var(--warning-solid);
+}
+
+.tag.risk-dangerous {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}

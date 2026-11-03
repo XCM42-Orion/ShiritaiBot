@@ -1,0 +1,33 @@
+{
+  "greeting": {
+    "type": "string",
+    "description": "欢迎消息",
+    "hint": "/hello 和 hello_world 工具都会使用这句话。",
+    "default": "你好，ShiritaiBot！"
+  },
+  "signature": {
+    "type": "text",
+    "description": "回复签名",
+    "hint": "非空时追加在每条发往 WebUI 的回复末尾（演示 on_decorating_result）。",
+    "default": ""
+  },
+  "drop_sources": {
+    "type": "list",
+    "description": "丢弃这些来源的主动事件",
+    "hint": "演示 on_proactive_event：例如填写 email 后，邮件事件在分诊前被丢弃。主人设定的提醒不受影响。",
+    "default": []
+  },
+  "advanced": {
+    "type": "object",
+    "description": "高级设置",
+    "items": {
+      "min_importance": {
+        "type": "int",
+        "description": "最低重要性",
+        "hint": "演示 on_proactive_judged：分诊重要性低于此值的事件直接丢弃（0 为不处理）。",
+        "slider": { "min": 0, "max": 4, "step": 1 },
+        "default": 0
+      }
+    }
+  }
+}

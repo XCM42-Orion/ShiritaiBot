@@ -1,0 +1,8 @@
+name: github
+display_name: GitHub
+desc: 以专用 bot 账号读写 GitHub 仓库；token 只在插件进程内使用，不进入模型上下文
+short_desc: 以 bot 账号读写 GitHub
+version: 1.0.0
+author: ShiritaiBot
+repo: https://github.com/XCM42-Orion/ShiritaiBot
+shiritaibot_version: ">=0.2"

@@ -17,6 +17,7 @@ from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from shiritaibot.agent.commands import COMMANDS
+from shiritaibot.api.event import MessageEvent
 from shiritaibot.app import Application
 from shiritaibot.config import ModelConfig, ProviderConfig, Settings
 from shiritaibot.core import Context, ExternalEvent, Model, PublicError, canonical, logs
@@ -346,6 +347,16 @@ def create_app(
     async def message(body: MessageInput):
         where = "" if body.session == "web:owner" else body.session
         web_log.log(logs.brief(body.text, 200), where, "主人")
+        event = MessageEvent(
+            session=body.session,
+            text=body.text.strip(),
+            sender_id="owner",
+            sender_name=runtime.config.value.owner_name,
+            platform="web",
+            is_owner=True,
+        )
+        if await runtime.plugins.hooks.dispatch(event):
+            return {"status": "plugin"}
         return {
             "status": await runtime.runtime.submit(
                 Context(body.session, "owner", "agent", True), body.text

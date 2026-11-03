@@ -6,7 +6,19 @@
 
 `src/shiritaibot/learn/` 属于核心代码：定义学校无关的请求/响应、stdio 接入、查询和下载工具、同步基线与变更事件；不包含清华 URL、SSO、SM2 或学校客户端。`plugin/thu_learn/` 则负责清华具体实现，包括客户端和单请求适配进程。
 
-两处插件搜索路径：先 `src/shiritaibot/plugin/<id>/`，再 `<home>/plugins/<id>/`。同名时前者优先。`core` 不作为插件扫描。`plugin.toml` 中 `api = 1`，入口 `main.py` 暴露 `Entry(Plugin)`。
+两处插件搜索路径：先 `src/shiritaibot/plugin/<id>/`，再 `<home>/plugins/<id>/`。同名时前者优先。`core` 不作为插件扫描。目录名就是插件 ID（`[a-z0-9_]{1,64}`）。
+
+插件 API 有两个版本，按目录里的清单文件区分：
+
+| | API v2（推荐） | API v1（旧版，兼容保留） |
+|---|---|---|
+| 清单 | `metadata.yaml` | `plugin.toml`（`api = 1`） |
+| 配置定义 | `_conf_schema.json`（AstrBot 格式） | `plugin.toml` 的 `[settings_schema]`（JSON Schema） |
+| 入口 | `main.py` 中唯一的 `shiritaibot.api.Plugin` 子类 | `main.py` 的 `Entry(shiritaibot.plugin_api.Plugin)` |
+| 生命周期 | `initialize()` / `terminate()` | `start()` / `close()` |
+| 能力 | 指令、消息监听、LLM 工具装饰器、Agent / 发送 / 主动性引擎 hook、KV 存储，以及 v1 的全部能力 | 工具、事件、通知渠道、子进程环境变量等（见下文“旧版 API”） |
+
+两个文件都存在时按 v2 处理。内置的 email、github 插件已迁移到 v2；部署环境的飞书、网络学堂仍是 v1，无需修改即可继续使用。
 
 启动时扫描上述目录，自动为有效插件补齐配置，保留已有启用状态和配置值。新发现的插件默认停用，配置后启用并保存。无效清单或加载失败会显示在 WebUI 中，不阻断其他插件。
 
@@ -18,7 +30,7 @@ WebUI 的“安装插件”支持上传 ZIP 或填写公开 GitHub 仓库地址�
 
 ## 工具安全声明与会话权限
 
-`PluginContext.register_tool` 的 `risk` 为必填参数；直接构造 `Tool` 也必须提供。有效值为 `safe`、`normal`、`sensitive`、`dangerous`，仅 `safe` 属于安全工具。遗漏或无效值会使插件加载失败，失败重载保留旧实例；不得把带副作用的工具标记为 safe。
+`@hook.llm_tool(..., risk=...)` 和 `Context.register_tool` 的 `risk` 为必填参数；直接构造 `Tool` 也必须提供。有效值为 `safe`、`normal`、`sensitive`、`dangerous`，仅 `safe` 属于安全工具。遗漏或无效值会使插件加载失败，失败重载保留旧实例；不得把带副作用的工具标记为 safe。
 
 ```python
 self.context.register_tool("read_status", "读取状态", schema({}), self.read_status, risk="safe")
@@ -33,32 +45,47 @@ OneLearn 的 `learn_query` 声明 safe，`learn_download` 声明 normal。部署
 
 ## 插件自行声明配置项
 
-每个插件在自己的 `plugin.toml` 中通过 `settings_schema` 声明配置项；无需修改前端或宿主的插件配置列表。使用 JSON Schema 对象定义，例如：
+v2 插件在目录内的 `_conf_schema.json` 中声明配置项，格式与 AstrBot 相同，无需修改前端或宿主：
 
-```toml
-api = 1
-name = "My Plugin"
-
-[settings_schema]
-type = "object"
-
-[settings_schema.properties.poll_seconds]
-type = "integer"
-title = "检查间隔（秒）"
-description = "轮询外部服务的间隔"
-minimum = 60
-default = 300
-
-[settings_schema.properties.service_key]
-type = "string"
-title = "服务密钥"
-writeOnly = true
-default = ""
+```json
+{
+  "token": { "type": "string", "description": "访问令牌", "hint": "加密保存", "secret": true },
+  "mode": {
+    "type": "string",
+    "description": "模式",
+    "options": ["fast", "safe"],
+    "labels": ["快速", "安全"],
+    "default": "safe"
+  },
+  "interval": { "type": "int", "description": "间隔（秒）", "slider": { "min": 60, "max": 3600, "step": 60 }, "default": 300 },
+  "advanced": {
+    "type": "object",
+    "description": "高级设置",
+    "items": { "retries": { "type": "int", "default": 3 } }
+  }
+}
 ```
 
-WebUI 按字段类型生成文本、数字、开关、枚举下拉框、字符串列表及复杂对象/数组的 JSON 编辑框。`title`、`description`、`minimum`、`maximum` 用于表单展示，`default` 用于默认配置；也支持 `[settings]` 定义默认值，优先于字段的 `default`。`writeOnly = true` 的字符串用密钥控件填写并加密保存。未声明字段的老插件仍可编辑已有 settings 或完整 JSON。
+| 字段 | 说明 |
+|---|---|
+| `type` | 必填：`string`、`text`（多行）、`int`、`float`、`bool`、`object`、`list`、`dict`、`template_list` |
+| `description` / `hint` | 表单标签 / 帮助文字；`obvious_hint: true` 时醒目显示 |
+| `default` | 默认值；缺省时按类型取 `""`、`0`、`0.0`、`false`、`{}`、`[]` |
+| `items` | `object` 的子项，可嵌套 |
+| `options` / `labels` / `subtitles` | 下拉选项、显示名、选项说明（按下标对应）；`list` 带 `options` 时为多选 |
+| `slider` | `int` / `float` 滑块：`{"min", "max", "step"}` |
+| `secret` | `string` 或字符串 `list`：密钥控件，**加密存入 Vault**（AstrBot 只做界面遮挡） |
+| `invisible` | 不在表单中显示，值仍然保留 |
+| `editor_mode` / `editor_language` | 等宽代码编辑框 |
+| `template_schema` | `dict` 的可选参数模板 |
+| `templates` | `template_list` 的条目模板，保存为带 `__template_key` 的对象数组；`display_item` 指定列表摘要字段 |
+| `minimum` / `maximum` / `pattern` / `format` | ShiritaiBot 扩展：按 JSON Schema 校验 |
 
-配置项定义和默认值属于插件目录；用户填写的配置值及启用状态仍保存在主配置 `config.toml`，凭据存放于 Vault。运行时会合并默认值和已有设置，并校验插件声明的 schema；校验失败只报告字段路径。修改插件清单后点击“重载插件”即可更新表单和运行实例。
+暂不支持 `file` 类型；`_special` 选择器会被忽略，按基础类型显示。宿主把这份定义转换为 JSON Schema（附带 `x-` 扩展字段，见 `plugin/core/manifest.py`），加载前校验配置，校验失败只报告字段路径。
+
+配置值保存在主配置 `config.toml`，凭据存放于 Vault。与 AstrBot 一样，插件更新配置定义后，重载时自动为新字段补默认值、移除已删除的字段。插件代码通过 `self.config`（`PluginSettings`，`dict` 子类）读取；修改后 `await self.config.save_config()` 写回主配置，密钥字段会自动加密。
+
+v1 插件继续在 `plugin.toml` 的 `[settings_schema]` 中使用 JSON Schema（`title`、`description`、`minimum`、`maximum`、`default`、`writeOnly`），也可用 `[settings]` 定义默认值。修改清单后点击“重载插件”即可更新表单和运行实例。
 
 ## 飞书 CLI
 
@@ -121,7 +148,7 @@ poll_seconds = 900
 
 ## 邮件（IMAP 收件事件源）
 
-目录：`src/shiritaibot/plugin/email/`（随主仓库提交）。插件 ID：`email`，默认未启用。
+目录：`src/shiritaibot/plugin/email/`（随主仓库提交，API v2）。插件 ID：`email`，默认未启用。
 
 主线是 **收件 → 统一事件 API → 预处理 → 重要性 Filter → Proactive Loop → 通知与短期摘要**：
 
@@ -162,7 +189,7 @@ SMTP 通道是尽力而为的副本：在 QQ / WebUI 投递并记为已发送之
 
 ## GitHub
 
-目录：`src/shiritaibot/plugin/github/`（随主仓库提交）。插件 ID：`github`，默认未启用。
+目录：`src/shiritaibot/plugin/github/`（随主仓库提交，API v2）。插件 ID：`github`，默认未启用。
 
 用于让 Agent 以一个**专用 bot 账号**维护仓库。建议在 bot 账号下创建 Fine-grained PAT：Repository access 选 *All repositories*（之后新建的仓库也能覆盖），按需授予 Contents、Issues、Pull requests、Workflows、Actions、Administration 的读写权限。不要使用主账号的 token。
 
@@ -223,29 +250,183 @@ timeout = 30
 
 请求包括 `version=1`、`operation`、`params`、`owner`、`config` 和 `data_dir`。响应包括 `ok`、`data`，或 `status` / `message`。这是可运行的最小接入子集，**不是最终 OneLearn 标准的一致性实现**；设计中提到的 `docs/LEARN_PROTOCOL.md` 未出现在本次工作区。暂未实现长连接 hello/capabilities、WebSocket、多学校聚合和写操作。
 
-## 编写普通插件
+## 编写插件（API v2）
 
-将 `examples/plugins/hello_world` 复制到 `src/shiritaibot/plugin/hello_world` 或 `<home>/plugins/hello_world`，在 WebUI 点击“重载插件”，选择自动发现的插件、启用并保存。也可将该目录打包成 ZIP 后通过 WebUI 安装。
+v2 的结构参照 [AstrBot 插件](https://docs.astrbot.app/dev/star/plugin-new.html)：`metadata.yaml` + `_conf_schema.json` + `main.py`，插件类继承 `Plugin`，用 `hook` 装饰器注册指令、监听器、工具和各类 hook。完整示例见 `examples/plugins/hello_world`：把它复制到 `<home>/plugins/hello_world`（或打包成 ZIP 在 WebUI 安装），点击“重载插件”，启用并保存即可。
+
+所有导入都来自 `shiritaibot.api`，这是 v2 唯一受支持的导入边界；主程序其他模块随时可能重构。
+
+### 清单 metadata.yaml
+
+```yaml
+name: hello_world            # 展示名的后备；插件 ID 始终是目录名
+display_name: Hello World    # 插件列表中的名称
+desc: 插件说明
+short_desc: 一句话简介        # 侧栏显示
+version: 1.0.0
+author: you
+repo: https://github.com/you/repo
+support_platforms: [qq, web] # 仅展示
+shiritaibot_version: ">=0.2,<1"   # 可选；不满足时插件显示为加载失败
+```
+
+宿主不会自动安装 `requirements.txt`。
+
+### 插件类
+
+```python
+from shiritaibot.api import Context, MessageEvent, Plugin, PluginSettings, hook
+
+
+class MyPlugin(Plugin):
+    def __init__(self, context: Context, config: PluginSettings):
+        super().__init__(context, config)   # 不需要配置时可以只接收 context
+
+    async def initialize(self):             # 加载时调用，适合启动后台任务
+        ...
+
+    async def terminate(self):              # 停用、重载、移除、退出时调用，必须取消自建任务
+        ...
+
+    @hook.command("hello")
+    async def hello(self, event: MessageEvent, name: str = ""):
+        """打个招呼"""                       # 第一行是 /help 中的说明
+        yield event.plain_result(f"你好 {name or event.get_sender_name()}")
+```
+
+`main.py` 中必须恰好定义一个 `Plugin` 子类（可以有中间基类，取最末端的那个）。实例上可用：`self.config`（配置）、`self.context`（宿主服务）、`self.name`（插件 ID）、`self.data_dir`（`<home>/plugin_data/<id>/`，大文件放这里）、`self.logger`，以及每个插件独立的 KV 存储 `await self.get_kv_data(key, default)` / `put_kv_data(key, value)` / `delete_kv_data(key)`（值需可 JSON 序列化）。
+
+### 指令
+
+| 装饰器 | 作用 |
+|---|---|
+| `@hook.command(name, aliases={...}, priority=0)` | `/name 参数…`；参数按处理函数签名绑定，`int` / `float` / `bool` 自动转换，最后一个 `str` 参数吃掉剩余文本，`*args` 接收全部剩余参数；缺参数或类型不对时回复用法 |
+| `grp = hook.command_group(name)` + `@grp.command(sub)` / `grp.group(sub)` | 指令组 `/name sub 参数…`，可多层嵌套；只输入组名时回复子指令列表 |
+| `@hook.permission(Permission.OWNER)` | 仅主人可用；其他人调用会收到提示 |
+| `@hook.message_type(MessageType.PRIVATE)` / `@hook.platform(Platform.QQ)` | 与指令叠加时只在对应场景匹配 |
+
+处理函数的前两个参数是 `self, event`。回复方式与 AstrBot 相同：`yield event.plain_result(...)`（可多次）、`return` 结果或字符串、或 `await event.send(...)`。指令在后台执行（上限 10 分钟），不阻塞后续消息；执行记录写入会话历史，但不进入模型上下文。
+
+插件指令不能与内置指令（`/help`、`/status`、`/stop` 等）或其他插件的顶层指令重名，冲突时插件加载失败。内置指令、“停 / 取消”和审批回复始终由宿主处理，插件看不到也拦不住。目前只支持文本回复，不支持图片、文转图等富消息。
+
+### 消息监听
+
+| 装饰器 | 作用 |
+|---|---|
+| `@hook.message_type(MessageType.ALL)` | 每条消息都调用；`GROUP` / `PRIVATE` 只看群聊或私聊 |
+| `@hook.regex(pattern)` | 文本匹配 `re.search` 时调用 |
+
+监听器按 `priority` 从高到低依次执行，单个上限 30 秒。调用 `event.stop_event()` 后，后续监听器不再执行，消息也不会交给模型。群里没有 @ 机器人、也不含唤醒词的消息同样会送达监听器（`event.is_wake` 为 False），可用于统计或关键词触发；这类消息原本就不会交给模型。
+
+`MessageEvent` 字段：`session`（统一会话 ID，可传给 `Context.send_message`）、`text`（用户输入的纯文本）、`sender_id`、`sender_name` / `get_sender_name()`、`platform`（`qq` / `web`）、`adapter`、`group_id`、`is_group`、`is_private`、`is_owner`、`is_wake`、`message_id`、`segments`（OneBot 消息段）、`raw`（原始事件）。修改这些字段不会改变模型看到的内容，要改模型输入请用 `on_llm_request`。
+
+### LLM 工具
+
+```python
+@hook.llm_tool("weather", risk="safe", chat=True, timeout=30)
+async def weather(self, ctx: ToolContext, city: str, days: int = 1):
+    """查询天气。
+
+    Args:
+        city(string): 城市名
+        days(integer): 天数
+    """
+    return {"city": city, "forecast": "晴"}
+```
+
+参数 schema 的来源依次为：显式的 `parameters=`、docstring 的 `Args:`（类型可写 `string`、`number`、`integer`、`boolean`、`object`、`array`、`array[string]`），以及类型注解（与 AstrBot 不同，这里会读取注解）。没有默认值的参数是必填参数。`ctx` 是工具调用上下文，包含 `session`、`actor`、`owner`、`group`、`mode` 等字段。`risk` 规则见上文。也可以用 `self.context.register_tool(...)` 或 `self.context.add_tools(Tool(...))` 动态注册。
+
+### Agent 生命周期 hook
+
+| 装饰器 | 处理函数参数 | 可做什么 |
+|---|---|---|
+| `on_agent_begin` | `(turn)` | 观察 |
+| `on_llm_request` | `(turn, request)` | 每次请求模型前调用：修改 `request.system_prompt`、`request.messages`、`request.tools`，或用 `request.add_context(text)` 给最新一条用户消息追加内容；改动只影响这一次请求，不写入历史 |
+| `on_llm_response` | `(turn, response)` | 改写 `response.text`（会写入历史并发送） |
+| `on_tool_call` | `(turn, name, arguments)` | 观察；在权限检查之前调用 |
+| `on_tool_result` | `(turn, name, arguments, result)` | 观察 |
+| `on_agent_done` | `(turn, result)` | 观察 `result.status`（`completed` / `failed` / `cancelled`）、`result.steps`、`result.text` |
+
+`Turn` 包含 `id`、`session`、`actor`、`owner`、`group`、`background`、`mode`、`route`、`text`；`turn.proactive` 和 `turn.event_id` 用于识别 Proactive Loop。这些 hook 作用于主循环和 Proactive Loop，不作用于子代理、分诊和记忆抽取等内部模型调用。
+
+### 发送 hook
+
+| 装饰器 | 处理函数参数 | 可做什么 |
+|---|---|---|
+| `on_decorating_result` | `(message)` | 消息进入发送队列前调用：改写 `message.text`，或 `message.cancel()` 取消发送 |
+| `after_message_sent` | `(message)` | 消息进入发送队列后，在后台调用 |
+
+覆盖所有发往 QQ 和 WebUI 的文本，包括模型回复、指令输出和主动通知。权限审批提示除外，插件既不能改写也不能取消。
+
+### 主动性引擎 hook
+
+| 装饰器 | 时机 | 可做什么 |
+|---|---|---|
+| `on_proactive_event(event)` | 事件开始处理、分诊之前 | 修改 `event.title` / `payload` / `urgency`；`event.drop(reason)` 直接丢弃 |
+| `on_proactive_judged(event, triage)` | 分诊完成后 | 修改 `triage.importance`（0 为丢弃）、`decision`、`message`、`reason`、`prepare` |
+| `on_proactive_done(event, outcome)` | Proactive Loop 结束、通知入队前 | 改写 `outcome.message` / `reason`；把 `outcome.notify` 设为 False 取消通知 |
+| `on_notification_sent(source, text)` | 通知已发给主人后 | 观察，例如转发到其他渠道（v1 的 `register_notifier` 同样可用） |
+
+宿主保留兜底规则。主人设定的提醒和定时任务、主人委派的子代理结果属于 `event.protected`：它们不能被丢弃，分诊仍有最低级别，委派结果始终为 4 级。重要性 4 和主人设定的提醒标记为 `outcome.forced`，此时只能改写内容，不能取消。修改结果无效时（例如 importance 超出 0–4、message 为空或超过 4000 字），宿主忽略该插件的修改并记录警告。只读字段 `source`、`kind` 可以用于判断事件类型。
+
+### 宿主服务 Context
+
+`self.context` 是 `Context`，包含 v1 `PluginContext` 的全部能力（见下文“旧版 API”），另外提供：
+
+| 方法 | 说明 |
+|---|---|
+| `await send_message(session, text)` | 主动向会话推送文本（会经过发送 hook） |
+| `await notify_owner(text)` | 直接给主人发消息，不经过分诊、免打扰和节流 |
+| `await emit(ExternalEvent(...))` / `emit_many` / `get_event` | 向主动性引擎提交事件（见下文“主动性引擎”） |
+| `await llm_generate(prompt, messages=None, system="", route="light")` | 一次不带工具的模型调用，返回文本 |
+| `await decide(state, questions, route="light")` | 向决策模型提出结构化问题；未配置决策模型时返回 None |
+| `get_plugins()` | 已加载插件的元数据 |
+| `get_platform(adapter_id)` | OneBot 协议端实例；`await platform.call(action, params)` 可直接调用协议端 API |
+
+### 运行约定
+
+- 所有处理函数和 hook 都不经过插件的重载锁，慢工具不会阻塞消息处理。插件被重载或停用后，旧实例的处理函数不再被调用。
+- hook 抛出异常或超时（流水线 hook 10 秒，主动性引擎 hook 30 秒）只会记录警告和 `plugin.hook_failed` 活动，不影响主流程。
+- 多个插件的同类 hook 按 `priority`（默认 0）从高到低执行；优先级相同时按加载顺序执行，后一个插件看到的是前一个修改后的对象。
+- 插件列表 API 和 WebUI 会展示每个插件的版本、作者、指令、工具（含 risk）和 hook。
+
+## 旧版 API（v1）
+
+`plugin.toml`（`api = 1`）+ `main.py` 中的 `Entry(Plugin)`，从 `shiritaibot.plugin_api` 导入。这一版本继续受支持，但新插件请使用 v2。
 
 ```python
 from shiritaibot.plugin_api import Plugin, schema
 
 class Entry(Plugin):
     async def start(self):
-        self.context.register_tool("my_query", "工具说明", schema({}), self.query)
+        self.context.register_tool("my_query", "工具说明", schema({}), self.query, risk="safe")
 
     async def query(self, ctx, args):
         return {"answer": "hello"}
+
+    async def close(self):
+        ...
 ```
 
-`PluginContext` 提供独立数据目录、配置、凭据解析、事件发出、工具注册、主动通知通道注册和日志。`set_process_env(env)` 可向 shell 工具和子代理进程添加**非敏感**环境变量（重载、停用时撤销，不同插件不能设置同名变量）；`add_subagent_note(text)` 在新启动的非 generic 子代理提示词末尾追加说明；`add_shell_filter(rewrite)` 注册一个同步、无副作用的 `rewrite(command) -> command`，在 shell 工具命令获批后、执行前改写命令（出错时忽略该过滤器，原命令照常执行），两者都在重载、停用时撤销；`session_workspace(session)` 返回会话的 shell 工作目录。
+v1 的 `PluginContext` 提供以下能力（v2 的 `Context` 同样具备）：
+
+- 独立数据目录、配置（`settings`）、凭据解析（`resolve_secret`）、日志。
+- 事件发出、工具注册、主动通知渠道注册（`register_notifier`）。
+- `set_process_env(env)`：向 shell 工具和子代理进程添加**非敏感**环境变量。不同插件不能设置同名变量。
+- `add_subagent_note(text)`：在新启动的非 generic 子代理提示词末尾追加说明。
+- `add_shell_filter(rewrite)`：注册一个同步、无副作用的 `rewrite(command) -> command`，在 shell 工具命令获批后、执行前改写命令。过滤器出错时被忽略，原命令照常执行。
+- `session_workspace(session)`：返回会话的 shell 工作目录。
+
+以上环境变量、子代理说明和 shell 过滤器都会在插件重载或停用时撤销。v1 工具调用与插件重载通过锁互斥。
+
+学校适配插件可继承 `shiritaibot.plugin_api` 导出的 `OneLearnPlugin`，只需补充自己的适配进程入口；插件退出时必须在 `close()` 中取消自建任务。
 
 ## 日志
 
-`self.context.logger` 是宿主 `LogManager` 的 `Logger`，来源固定为 `插件:<id>`。它同时输出到彩色终端、滚动日志文件 `data/logs/shiritaibot.log` 和 WebUI「日志 → 运行日志」：
+`self.logger`（v1：`self.context.logger`）是宿主 `LogManager` 的 `Logger`，来源固定为 `插件:<id>`。它同时输出到彩色终端、滚动日志文件 `data/logs/shiritaibot.log` 和 WebUI「日志 → 运行日志」：
 
 ```python
-log = self.context.logger
+log = self.logger
 log.debug("仅在 --log-level debug 时显示")
 log.log("收到 3 封新邮件")             # [LOG][时间][插件:email]: 收到 3 封新邮件
 log.warning("收件失败（TimeoutError）", "INBOX")  # 额外参数是附加标签：[插件:email][INBOX]
@@ -254,6 +435,4 @@ log.error("同步出错", exc=exc)          # exc 会把堆栈写入日志文件
 
 需要更多来源时可用 `get_logger("名称")` 或 `logger.bind("标签")`；`brief(value, limit)` 把字符串、字典或列表压成一行可读文本。请写人话摘要，不要直接记录原始 JSON、凭据或完整正文。
 
-学校适配插件可继承公共 API 导出的 `OneLearnPlugin`，只补充自己的适配进程入口。插件退出时必须在 `close()` 中取消自建任务。
-
-手动热重载会先验证新入口和工具 schema，再替换旧实例；失败时保留原实例。正在执行的同插件工具通过锁与重载互斥。主程序重构不要求插件导入内部服务。
+手动热重载会先验证新入口、工具 schema 和指令冲突，再替换旧实例；失败时保留原实例。

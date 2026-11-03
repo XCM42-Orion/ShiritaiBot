@@ -1,0 +1,46 @@
+{
+  "token": {
+    "type": "string",
+    "description": "访问令牌",
+    "hint": "建议在 bot 账号下创建 Fine-grained PAT（Repository access 选 All repositories）。加密保存，模型和 shell 都拿不到。",
+    "obvious_hint": true,
+    "secret": true,
+    "default": ""
+  },
+  "commit_name": {
+    "type": "string",
+    "description": "提交者名称",
+    "hint": "注入 shell 和子代理的 GIT_AUTHOR_NAME / GIT_COMMITTER_NAME；留空则使用 token 账号的登录名。",
+    "default": ""
+  },
+  "commit_email": {
+    "type": "string",
+    "description": "提交者邮箱",
+    "hint": "留空则使用 token 账号的 noreply 邮箱（<id>+<login>@users.noreply.github.com）。",
+    "default": ""
+  },
+  "co_author": {
+    "type": "bool",
+    "description": "署名 ShiritaiBot 为共同作者",
+    "hint": "开启后，提交信息带上 Co-authored-by: ShiritaiBot <shiritaibot@shiritaibot.dev>：主 Agent shell 里的 git commit 和 pr_merge 自动追加；新启动的子代理会在提示词中被要求加上（任务明确不提交时忽略）。",
+    "default": false
+  },
+  "allowed_owners": {
+    "type": "list",
+    "description": "允许操作的账号或组织",
+    "hint": "每行一个；只能操作这些账号名下的仓库。留空则只允许 token 账号本身。",
+    "default": []
+  },
+  "proxy": {
+    "type": "string",
+    "description": "代理",
+    "hint": "访问 GitHub API 和 git 推送时使用的代理，如 http://127.0.0.1:7890 或 socks5h://127.0.0.1:1080。留空则 API 请求沿用 HTTP(S)_PROXY 环境变量，git 推送直连。",
+    "default": ""
+  },
+  "timeout": {
+    "type": "int",
+    "description": "API 超时（秒）",
+    "slider": { "min": 5, "max": 120, "step": 5 },
+    "default": 30
+  }
+}

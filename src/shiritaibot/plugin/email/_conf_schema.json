@@ -1,0 +1,57 @@
+{
+  "imap_host": { "type": "string", "description": "IMAP 服务器", "default": "" },
+  "imap_port": { "type": "int", "description": "IMAP 端口", "minimum": 1, "maximum": 65535, "default": 993 },
+  "imap_security": {
+    "type": "string",
+    "description": "IMAP 加密方式",
+    "options": ["ssl", "starttls", "none"],
+    "labels": ["SSL/TLS", "STARTTLS", "不加密（仅本机）"],
+    "default": "ssl"
+  },
+  "username": { "type": "string", "description": "邮箱账号", "default": "" },
+  "password": { "type": "string", "description": "邮箱密码或授权码", "secret": true, "default": "" },
+  "mailbox": { "type": "string", "description": "收件文件夹", "default": "INBOX" },
+  "poll": { "type": "bool", "description": "自动检查新邮件", "default": true },
+  "poll_seconds": { "type": "int", "description": "轮询间隔（秒）", "minimum": 60, "maximum": 86400, "default": 300 },
+  "max_per_poll": { "type": "int", "description": "每次最多读取邮件数", "slider": { "min": 1, "max": 200, "step": 1 }, "default": 20 },
+  "max_body_chars": { "type": "int", "description": "正文摘要字符上限", "minimum": 200, "maximum": 20000, "default": 2000 },
+  "time_filter": {
+    "type": "string",
+    "description": "收件时间过滤",
+    "hint": "按服务器收件时间判断，已处理 UID 不重复读取。",
+    "options": ["startup", "last_poll", "none", "custom"],
+    "labels": ["过滤本次启动前", "过滤上次成功轮询前", "不按时间过滤", "自定义时间"],
+    "subtitles": [
+      "插件启动或重载之前的邮件不处理",
+      "首次无记录时使用本次启动时间",
+      "首次也会读取已有邮件",
+      "使用下方的自定义过滤时间"
+    ],
+    "default": "startup"
+  },
+  "filter_before": {
+    "type": "string",
+    "description": "自定义过滤时间",
+    "hint": "仅 custom 模式必填；过滤此时间之前的邮件。请使用带时区的 ISO 8601，例如 2026-10-28T09:00:00+08:00。",
+    "format": "date-time",
+    "default": ""
+  },
+  "smtp_host": { "type": "string", "description": "SMTP 服务器（可选）", "default": "" },
+  "smtp_port": { "type": "int", "description": "SMTP 端口", "minimum": 1, "maximum": 65535, "default": 465 },
+  "smtp_security": {
+    "type": "string",
+    "description": "SMTP 加密方式",
+    "options": ["ssl", "starttls", "none"],
+    "labels": ["SSL/TLS", "STARTTLS", "不加密（仅本机）"],
+    "default": "ssl"
+  },
+  "sender": { "type": "string", "description": "发件地址", "hint": "留空则使用邮箱账号。", "default": "" },
+  "notify_to": {
+    "type": "list",
+    "description": "通知收件人",
+    "hint": "每行一个邮箱；同时填写 SMTP 服务器后启用邮件通知。",
+    "default": []
+  },
+  "subject_prefix": { "type": "string", "description": "邮件主题前缀", "default": "[ShiritaiBot]" },
+  "timeout": { "type": "int", "description": "连接超时（秒）", "minimum": 5, "maximum": 120, "default": 30 }
+}

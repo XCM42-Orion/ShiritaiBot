@@ -84,17 +84,40 @@ export interface PluginConfig extends Instance {
   settings: Record<string, unknown>;
 }
 
+export interface PluginTemplate {
+  name: string;
+  hint?: string;
+  display_item?: string;
+  hide_hint_in_list?: boolean;
+  properties: Record<string, PluginSettingSchema>;
+}
+
+/** JSON Schema plus the `x-` extensions produced from AstrBot-style `_conf_schema.json`. */
 export interface PluginSettingSchema {
   type?: string;
   title?: string;
   description?: string;
   default?: unknown;
-  enum?: string[];
+  enum?: unknown[];
   minimum?: number;
   maximum?: number;
+  pattern?: string;
   writeOnly?: boolean;
   items?: PluginSettingSchema;
   properties?: Record<string, PluginSettingSchema>;
+  required?: string[];
+  additionalProperties?: boolean | PluginSettingSchema;
+  "x-obvious-hint"?: boolean;
+  "x-invisible"?: boolean;
+  "x-special"?: string;
+  "x-labels"?: string[];
+  "x-subtitles"?: string[];
+  "x-step"?: number;
+  "x-widget"?: "textarea" | "slider" | "editor" | "dict" | "template_list";
+  "x-editor"?: { language?: string; theme?: string };
+  "x-name"?: string;
+  "x-template-schema"?: Record<string, PluginSettingSchema>;
+  "x-templates"?: Record<string, PluginTemplate>;
 }
 
 export interface PluginInfo extends Instance {
@@ -102,9 +125,17 @@ export interface PluginInfo extends Instance {
   description: string;
   status: "loaded" | "disabled" | "error";
   error: string;
+  api?: 1 | 2;
+  version?: string;
+  author?: string;
+  repo?: string;
+  short_description?: string;
+  support_platforms?: string[];
   settings_schema?: PluginSettingSchema;
   defaults?: Record<string, unknown>;
   tools?: { name: string; risk: string; safe: boolean }[];
+  commands?: { command: string; description: string; owner_only: boolean }[];
+  hooks?: { event: string; handler: string; priority: number }[];
 }
 
 export interface SkillsConfig {

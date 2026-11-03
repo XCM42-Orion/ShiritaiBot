@@ -60,7 +60,7 @@ function NumberInput({
   );
 }
 
-function Control({
+export function Control({
   spec,
   value,
   onChange,
@@ -139,6 +139,26 @@ function Control({
         value={value}
         onChange={(next) => onChange(next)}
       />
+    );
+  }
+  if (spec.kind === "slider") {
+    return (
+      <div className="slider-field">
+        <input
+          aria-label={`${spec.label}滑块`}
+          type="range"
+          min={spec.min}
+          max={spec.max}
+          step={spec.step}
+          value={typeof value === "number" ? value : (spec.min ?? 0)}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+        <NumberInput
+          spec={spec}
+          value={value}
+          onChange={(next) => onChange(next)}
+        />
+      </div>
     );
   }
   if (spec.kind === "time") {

@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 import httpx
 
-from shiritaibot.plugin_api import Plugin, PublicError, check_proxy, run_process, schema
+from shiritaibot.api import Plugin, PublicError, check_proxy, run_process, schema
 
 API = "https://api.github.com"
 GIT = "https://github.com/"
@@ -288,12 +288,9 @@ def slim_comment(c: dict) -> dict:
     }
 
 
-class Entry(Plugin):
-    async def start(self):
-        if not hasattr(self.context, "set_process_env"):
-            # Hot reload only refreshes plugin code; the host API arrived in the same change.
-            raise PublicError("宿主版本过旧：请重启 ShiritaiBot 后再启用 GitHub 插件")
-        settings = self.context.settings
+class GitHubPlugin(Plugin):
+    async def initialize(self):
+        settings = self.config
         self.token = await self.context.resolve_secret(settings.get("token", ""))
         if not self.token:
             raise PublicError("请先在插件配置中填写 GitHub 访问令牌")
@@ -478,7 +475,7 @@ class Entry(Plugin):
             timeout=300,
         )
 
-    async def close(self):
+    async def terminate(self):
         client = getattr(self, "client", None)
         if client is not None:
             await client.aclose()
@@ -522,7 +519,7 @@ class Entry(Plugin):
         return self.user
 
     async def allowed(self) -> set[str]:
-        owners = self.context.settings.get("allowed_owners") or []
+        owners = self.config.get("allowed_owners") or []
         return {o.lower() for o in owners} or {(await self.me())["login"].lower()}
 
     async def check_owner(self, owner: str) -> str:

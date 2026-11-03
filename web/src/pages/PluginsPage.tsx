@@ -13,6 +13,56 @@ const statuses = {
   error: "加载失败",
 };
 
+const platforms: Record<string, string> = { qq: "QQ", web: "WebUI" };
+
+function PluginCapabilities({ metadata }: { metadata: PluginInfo }) {
+  const commands = metadata.commands ?? [];
+  const tools = metadata.tools ?? [];
+  const hooks = metadata.hooks ?? [];
+  if (!commands.length && !tools.length && !hooks.length) return null;
+  return (
+    <div className="plugin-capabilities">
+      {commands.length > 0 && (
+        <details>
+          <summary>指令（{commands.length}）</summary>
+          {commands.map((item) => (
+            <div key={item.command} className="list-row">
+              <code>{item.command}</code>
+              <span className="muted">{item.description}</span>
+              {item.owner_only && <span className="tag">仅主人</span>}
+            </div>
+          ))}
+        </details>
+      )}
+      {tools.length > 0 && (
+        <details>
+          <summary>工具（{tools.length}）</summary>
+          {tools.map((item) => (
+            <div key={item.name} className="list-row">
+              <code>{item.name}</code>
+              <span className={"tag risk-" + item.risk}>{item.risk}</span>
+            </div>
+          ))}
+        </details>
+      )}
+      {hooks.length > 0 && (
+        <details>
+          <summary>Hook（{hooks.length}）</summary>
+          {hooks.map((item) => (
+            <div key={`${item.event}:${item.handler}`} className="list-row">
+              <code>{item.event}</code>
+              <span className="muted">{item.handler}</span>
+              {item.priority !== 0 && (
+                <span className="tag">优先级 {item.priority}</span>
+              )}
+            </div>
+          ))}
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function PluginsPage({
   client,
   config,
@@ -244,10 +294,16 @@ export function PluginsPage({
                 <span
                   className={"dot " + (item.status === "loaded" ? "on" : "")}
                 />
-                <span>
+                <span title={item.short_description || undefined}>
                   <strong>{item.name || item.id}</strong>
                   <small>
-                    {item.id} · {statuses[item.status]}
+                    {item.version
+                      ? `v${item.version.replace(/^v/, "")} · `
+                      : ""}
+                    {statuses[item.status]}
+                    {item.short_description
+                      ? ` · ${item.short_description}`
+                      : ` · ${item.id}`}
                   </small>
                 </span>
               </button>
@@ -258,7 +314,22 @@ export function PluginsPage({
               <>
                 <div className="panel-head">
                   <div>
-                    <h2>{metadata.name || plugin.id}</h2>
+                    <h2>
+                      {metadata.name || plugin.id}
+                      {metadata.version && (
+                        <span className="tag">
+                          v{metadata.version.replace(/^v/, "")}
+                        </span>
+                      )}
+                      {metadata.api === 1 && (
+                        <span
+                          className="tag beta"
+                          title="使用 plugin.toml 的旧版插件接口"
+                        >
+                          旧版 API
+                        </span>
+                      )}
+                    </h2>
                     <p className="muted">{metadata.description}</p>
                   </div>
                   <button
@@ -271,9 +342,29 @@ export function PluginsPage({
                     移除
                   </button>
                 </div>
-                <p className="muted">
+                <p className="muted plugin-meta">
                   插件标识：{plugin.id} · {statuses[metadata.status]}
+                  {metadata.author && <> · 作者：{metadata.author}</>}
+                  {!!metadata.support_platforms?.length && (
+                    <>
+                      {" "}
+                      · 平台：
+                      {metadata.support_platforms
+                        .map((item) => platforms[item] ?? item)
+                        .join("、")}
+                    </>
+                  )}
+                  {/^https?:\/\//i.test(metadata.repo ?? "") && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a href={metadata.repo} target="_blank" rel="noreferrer">
+                        仓库
+                      </a>
+                    </>
+                  )}
                 </p>
+                <PluginCapabilities metadata={metadata} />
                 {metadata.error && (
                   <p role="alert">
                     {metadata.error}

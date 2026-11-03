@@ -30,7 +30,15 @@ from pydantic import (
     model_validator,
 )
 
-from shiritaibot.plugin_api import Actor, ExternalEvent, Plugin, PublicError, brief
+from shiritaibot.api import (
+    Actor,
+    Context,
+    ExternalEvent,
+    Plugin,
+    PluginSettings,
+    PublicError,
+    brief,
+)
 
 Security = Literal["ssl", "starttls", "none"]
 
@@ -198,14 +206,14 @@ def received(mails: list[dict]) -> dict:
     return {"occurred_at": max(stamps)} if stamps else {}
 
 
-class Entry(Plugin):
-    def __init__(self, context):
-        super().__init__(context)
+class EmailPlugin(Plugin):
+    def __init__(self, context: Context, config: PluginSettings):
+        super().__init__(context, config)
         self.task = None
 
-    async def start(self):
+    async def initialize(self):
         try:
-            self.settings = EmailSettings.model_validate(self.context.settings)
+            self.settings = EmailSettings.model_validate(dict(self.config))
         except ValidationError as exc:
             # Field names only: the rejected input may contain credentials.
             fields = ", ".join(
@@ -219,7 +227,7 @@ class Entry(Plugin):
             self.context.register_notifier(self.notify)
         self.task = asyncio.create_task(self.poll()) if self.settings.poll else None
 
-    async def close(self):
+    async def terminate(self):
         if self.task is not None:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
@@ -280,13 +288,13 @@ class Entry(Plugin):
 
             await asyncio.to_thread(save)
             if mails:
-                self.context.logger.log(
+                self.logger.log(
                     f"收到 {len(mails)} 封新邮件："
                     + "、".join(brief(mail["subject"] or "（无主题）", 40) for _, mail in mails[:3])
                     + (" 等" if len(mails) > 3 else "")
                 )
             else:
-                self.context.logger.debug("收件完成，没有新邮件")
+                self.logger.debug("收件完成，没有新邮件")
             return len(mails)
 
     def cutoff(self, state: dict | None) -> datetime | None:
@@ -374,9 +382,7 @@ class Entry(Plugin):
                 await self.sync_once()
             except Exception as exc:
                 # Server replies (e.g. "[AUTHENTICATIONFAILED] ...") carry no credentials.
-                self.context.logger.warning(
-                    f"收件失败（{type(exc).__name__}：{brief(str(exc), 300)}）"
-                )
+                self.logger.warning(f"收件失败（{type(exc).__name__}：{brief(str(exc), 300)}）")
                 await self.context.emit(
                     ExternalEvent(
                         source="email",
@@ -400,9 +406,7 @@ class Entry(Plugin):
         message["Message-ID"] = make_msgid(domain=cfg.smtp_host)
         message.set_content(f"{text}\n\n-- \n来源：{source}\n")
         await asyncio.to_thread(self.deliver, message, password)
-        self.context.logger.log(
-            f"已通过邮件转发通知给 {len(cfg.notify_to)} 个收件人：{headline[:60]}"
-        )
+        self.logger.log(f"已通过邮件转发通知给 {len(cfg.notify_to)} 个收件人：{headline[:60]}")
 
     def deliver(self, message: EmailMessage, password: str) -> None:
         cfg = self.settings

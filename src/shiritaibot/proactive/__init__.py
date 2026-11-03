@@ -6,11 +6,12 @@ import asyncio
 import json
 import re
 from datetime import datetime
-from typing import Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, model_validator
 
+from shiritaibot.api.event import ProactiveOutcome
 from shiritaibot.core import Context, ExternalEvent, Model, RuntimePort, canonical, fingerprint, now
 from shiritaibot.core.logs import brief, get_logger
 from shiritaibot.memory.judge import remember_question
@@ -245,6 +246,8 @@ class ProactiveEngine:
         # Long-term memory reads each handled event afterwards (memory/extract.py).
         self.memory_sink: Callable[[dict], Awaitable[None]] | None = None
         self.channels: dict[str, list[Callable[[str, str], Awaitable[None]]]] = {}
+        # shiritaibot.plugin.core.hooks.HookBus: on_proactive_event / _judged / _done.
+        self.hooks: Any = None
         self.wake = asyncio.Event()
         self.lock = asyncio.Lock()
 
@@ -388,6 +391,29 @@ class ProactiveEngine:
             await self.store.put("event", key, row)
             await self.short_term.record(key, "logged", row["reason"])
             return
+        view = None
+        if self.hooks is not None:
+            view = await self.hooks.proactive_event(
+                self.hooks.view(key, row["event"], scheduled or requested)
+            )
+            if view.dropped:
+                event_log(key).log(f"事件被插件丢弃：{brief(view.drop_reason, 120)}")
+                row.update(
+                    status="discarded",
+                    action="drop",
+                    reason=view.drop_reason,
+                    processed_at=now().isoformat(),
+                )
+                await self.store.put("event", key, row)
+                await self.short_term.record(key, "discarded", view.drop_reason)
+                return
+            edits = {"title": view.title, "payload": view.payload, "urgency": view.urgency}
+            if any(row["event"].get(name) != value for name, value in edits.items()):
+                try:
+                    event = self.preprocess(ExternalEvent.model_validate({**row["event"], **edits}))
+                    row["event"] = event.model_dump(mode="json")
+                except ValueError:
+                    event_log(key).warning("插件修改的事件内容无效，已忽略")
         if requested:
             # The owner is waiting on this result; Main ended its turn expecting PE to deliver it.
             decision = Decision(
@@ -400,6 +426,11 @@ class ProactiveEngine:
             )
         else:
             decision = await self.judge(event)
+        if view is not None and self.hooks is not None:
+            decision = await self.hooks.proactive_judged(view, decision)
+            if requested:
+                # The owner is waiting on a delegated run: plugins cannot silence it.
+                decision = decision.model_copy(update={"importance": 4, "decision": "notify"})
         if scheduled:
             # Explicit owner instructions cannot be discarded by the classifier.
             decision = decision.model_copy(
@@ -524,6 +555,29 @@ class ProactiveEngine:
         explicit_reminder = (
             row["event"]["source"] == "routine" and row["event"]["kind"] == "routine.reminder"
         )
+        if self.hooks is not None and self.hooks.has("proactive_done"):
+            event = row["event"]
+            protected = delegated(event) or (
+                event["source"] == "routine"
+                and event["kind"] in {"routine.reminder", "routine.job"}
+            )
+            outcome = await self.hooks.proactive_done(
+                self.hooks.view(row["id"], event, protected),
+                ProactiveOutcome(
+                    notify=result.notify,
+                    message=result.message,
+                    reason=result.reason,
+                    importance=decision.importance,
+                    failed=failed,
+                    forced=must_notify or explicit_reminder,
+                ),
+            )
+            try:
+                result = LoopResult(
+                    notify=outcome.notify, message=outcome.message, reason=outcome.reason
+                )
+            except ValueError:
+                event_log(row["id"]).warning("插件修改的处理结论无效，已忽略")
         should_notify = must_notify or explicit_reminder or result.notify
         if must_notify:
             decision = decision.model_copy(update={"decision": "notify", "urgency": "critical"})

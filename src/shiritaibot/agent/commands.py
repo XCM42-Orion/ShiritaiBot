@@ -48,6 +48,10 @@ async def command(runtime, ctx, text):
                 for key, value in COMMANDS.items()
                 if private or key not in {"tasks", "memory", "approve", "deny"}
             )
+            hooks = getattr(runtime, "hooks", None)
+            plugin_lines = hooks.help_lines(ctx.owner) if hooks is not None else []
+            if plugin_lines:
+                answer += "\n\n插件指令\n" + "\n".join(plugin_lines)
         elif name in {"new", "clear"}:
             if actor:
                 actor.task.cancel()

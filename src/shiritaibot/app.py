@@ -77,6 +77,9 @@ class Application:
         self.plugins = PluginManager(
             self.home, self.config, self.registry, self.vault, self.store, self.proactive.emit
         )
+        self.plugins.llm, self.plugins.adapters = self.llm, self.adapters
+        self.plugins.hooks.send = self.adapters.enqueue
+        self.adapters.hooks = self.proactive.hooks = self.plugins.hooks
         self.subagents.env = self.plugins.child_env
         self.skills = SkillManager(self.home, self.config)
         self.mcp = McpManager(self.config, self.registry, self.vault, self.store)
@@ -93,6 +96,7 @@ class Application:
             emotion=self.emotion,
             skills=self.skills,
         )
+        self.runtime.hooks = self.plugins.hooks
         self.adapters.runtime, self.adapters.permissions = self.runtime, self.permissions
         self.permissions.notify = partial(self.adapters.notify_owner, handoff=False)
         self.proactive.runtime = self.runtime
@@ -111,6 +115,7 @@ class Application:
             asyncio.create_task(self.extractor.run()),
             asyncio.create_task(self.maintenance.run()),
         ]
+        await self.plugins.mark_ready()
         cfg = self.config.value
         log.log(
             f"启动完成：{len(self.registry.tools)} 个工具，{len(self.plugins.loaded)} 个插件，"

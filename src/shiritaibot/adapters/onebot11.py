@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from websockets.asyncio.client import connect
 
+from shiritaibot.api.event import MessageEvent
 from shiritaibot.core import (
     Actor,
     ApprovalPort,
@@ -208,6 +209,8 @@ class AdapterHub:
         self.emit: Callable[[ExternalEvent], Awaitable[str]] | None = None
         # shiritaibot.meme.MemeManager: collects group stickers, turns markers into stickers.
         self.memes: Any = None
+        # shiritaibot.plugin.core.hooks.HookBus: plugin commands, listeners and send hooks.
+        self.hooks: Any = None
 
     async def start(self) -> None:
         for cfg in self.config.value.adapters:
@@ -276,7 +279,27 @@ class AdapterHub:
                 describe(parts),
                 mentioned or keyword,
             )
+
+        def message(wake: bool) -> MessageEvent:
+            return MessageEvent(
+                session=session,
+                text=text,
+                sender_id=user,
+                sender_name=str(sender.get("card") or sender.get("nickname") or ""),
+                platform="qq",
+                adapter=cfg.id,
+                group_id=target if group else "",
+                message_id=str(event.get("message_id", "")),
+                is_owner=user == cfg.owner_id,
+                is_wake=wake,
+                segments=parts,
+                raw=event,
+            )
+
         if group and not (mentioned or keyword):
+            if self.hooks is not None:
+                # Plugin listeners also see group chatter that does not wake the bot.
+                await self.hooks.dispatch(message(False))
             return
         # Explicit controls and approvals must remain reachable while keyword gating is on.
         control = (
@@ -321,6 +344,8 @@ class AdapterHub:
                     bot.log.warning(f"审批 {match[2]} 处理失败：{exc}", where)
                     await self.enqueue(session, str(exc))
                 return
+        if self.hooks is not None and await self.hooks.dispatch(message(True)):
+            return
         for part in parts:
             data = part.get("data", {})
             if part.get("type") == "file":
@@ -392,7 +417,17 @@ class AdapterHub:
                 )
             )
 
-    async def enqueue(self, session: str, text: str) -> None:
+    async def enqueue(self, session: str, text: str, *, decorate: bool = True) -> None:
+        if decorate and self.hooks is not None:
+            decorated = await self.hooks.decorate(session, text)
+            if decorated is None:
+                return
+            text = decorated
+        await self._enqueue(session, text)
+        if self.hooks is not None:
+            self.hooks.sent(session, text)
+
+    async def _enqueue(self, session: str, text: str) -> None:
         injector = self.memes.injector if self.memes is not None else None
         if session.startswith(("web:", "background:")):
             if injector is not None:
@@ -446,8 +481,9 @@ class AdapterHub:
         target = next((a for a in self.config.value.adapters if a.enabled and a.owner_id), None)
         session = f"private:{target.id}:{target.owner_id}" if target else "web:owner"
         if not handoff:
-            # Approval prompts must be visible while the requesting turn waits for approval.
-            await self.enqueue(session, text)
+            # Approval prompts must be visible while the requesting turn waits for approval;
+            # plugins cannot rewrite or cancel them.
+            await self.enqueue(session, text, decorate=False)
         elif self.runtime is not None:
             await self.runtime.handoff(session, text, self.enqueue)
         else:

@@ -1,0 +1,8 @@
+name: email
+display_name: Email
+desc: IMAP 收件作为主动性引擎的事件源；可选 SMTP 作为通知通道
+short_desc: IMAP 收件事件源 + SMTP 通知
+version: 1.0.0
+author: ShiritaiBot
+repo: https://github.com/XCM42-Orion/ShiritaiBot
+shiritaibot_version: ">=0.2"

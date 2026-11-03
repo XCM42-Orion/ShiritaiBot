@@ -17,7 +17,8 @@ export type FieldKind =
   | "time"
   | "json"
   | "multiselect"
-  | "textarea";
+  | "textarea"
+  | "slider";
 
 export interface FieldSpec {
   key: string;

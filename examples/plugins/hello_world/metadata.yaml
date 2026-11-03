@@ -1,0 +1,9 @@
+name: hello_world
+display_name: Hello World
+desc: 插件 API v2 示例：指令、消息监听、LLM 工具、Agent 与主动性引擎 hook、KV 存储
+short_desc: 插件 API v2 示例
+version: 1.0.0
+author: ShiritaiBot
+repo: https://github.com/XCM42-Orion/ShiritaiBot
+support_platforms: [qq, web]
+shiritaibot_version: ">=0.2"
