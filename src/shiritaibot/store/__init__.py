@@ -161,6 +161,14 @@ class Store:
             (session, session, GROUP_MESSAGES_KEPT),
         )
 
+    async def group_sender_name(self, session: str, sender: str) -> str:
+        rows = await self.query(
+            "SELECT name FROM group_messages WHERE session=? AND sender=? "
+            "ORDER BY seq DESC LIMIT 1",
+            (session, sender),
+        )
+        return rows[0]["name"] if rows else ""
+
     async def group_messages(
         self,
         session: str,

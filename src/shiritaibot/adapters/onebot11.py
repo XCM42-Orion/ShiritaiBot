@@ -6,6 +6,7 @@ import html
 import json
 import random
 import re
+from time import monotonic
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -98,6 +99,7 @@ class OneBot:
         self.self_id = config.self_id
         self.events: asyncio.Queue = asyncio.Queue(maxsize=256)
         self.log = get_logger(config.id)
+        self._friends: tuple[float, frozenset[str]] = (0.0, frozenset())
 
     async def call(self, action: str, params: dict) -> Any:
         if not self.ws:
@@ -114,6 +116,21 @@ class OneBot:
             return result.get("data") or {}
         finally:
             self.pending.pop(key, None)
+
+    async def friend_ids(self) -> frozenset[str]:
+        """协议端好友列表，缓存 300 秒；拉取失败时沿用旧缓存。"""
+        ts, ids = self._friends
+        if monotonic() - ts >= 300:
+            try:
+                data = await self.call("get_friend_list", {})
+                ids = frozenset(str(row.get("user_id")) for row in data or () if row.get("user_id"))
+                self._friends = (monotonic(), ids)
+            except Exception as exc:
+                self.log.warning("获取好友列表失败，沿用缓存判断", exc=exc)
+        return ids
+
+    def invalidate_friends(self) -> None:
+        self._friends = (0.0, frozenset())
 
     async def consume(self) -> None:
         while True:
@@ -246,8 +263,13 @@ class AdapterHub:
         if group and target not in cfg.groups:
             bot.log.debug(f"忽略未启用群 {target} 的消息", speaker)
             return
-        if not group and user != cfg.owner_id and user not in cfg.friends:
-            bot.log.debug("忽略非好友名单用户的私聊", speaker)
+        if (
+            not group
+            and user != cfg.owner_id
+            and user not in cfg.friends
+            and user not in await bot.friend_ids()
+        ):
+            bot.log.debug("忽略非好友私聊（不在协议端好友列表和 friends 白名单中）", speaker)
             return
         session = f"{'group' if group else 'private'}:{cfg.id}:{target}"
         parts = segments(event.get("message", []))

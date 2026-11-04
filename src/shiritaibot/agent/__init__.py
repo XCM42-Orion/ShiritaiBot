@@ -526,6 +526,16 @@ class AgentRuntime:
             f"开始处理（{ROUTE_NAMES.get(route, route)}，候选模型 "
             f"{brief(cfg.routes.get(route) or ['未配置'], 60)}）：{brief(text, 80)}"
         )
+        # The ambient block only annotates group history, so the triggering message
+        # itself must carry the speaker's identity for the model to know who is talking.
+        name, prefix = "", ""
+        if ctx.group and not ctx.background and cfg.group_context.identify_sender:
+            if ctx.owner:
+                name = cfg.owner_name
+            else:
+                name = await self.store.group_sender_name(ctx.session, ctx.actor)
+            prefix = f"[发言人 {name or ctx.actor}({ctx.actor})] "
+            text = prefix + text
         body = {
             "status": "running",
             "actor": ctx.actor,
@@ -575,7 +585,7 @@ class AgentRuntime:
                         blocks.append(recent_lines(await self.short_term.recent(limit=5), zone))
                 user = {
                     "role": "user",
-                    "_speaker": cfg.owner_name if ctx.owner else ctx.actor,
+                    "_speaker": cfg.owner_name if ctx.owner else name or ctx.actor,
                     "_original_content": text,
                     "content": text
                     + f"\n<context local_time='{local_clock(zone)}' timezone='{cfg.proactive.timezone}'>\n"
@@ -612,9 +622,9 @@ class AgentRuntime:
                         steering = actor.steering.popleft()
                         item = {
                             "role": "user",
-                            "content": "[用户在你工作时追加] " + steering,
+                            "content": prefix + "[用户在你工作时追加] " + steering,
                             "_original_content": steering,
-                            "_speaker": cfg.owner_name if ctx.owner else ctx.actor,
+                            "_speaker": cfg.owner_name if ctx.owner else name or ctx.actor,
                         }
                         await self.store.append(ctx.session, ctx.turn, item)
                         history.append(item)

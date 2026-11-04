@@ -379,6 +379,9 @@ class GroupContextConfig(Model):
     inject_messages: int = Field(default=20, ge=0, le=200)
     inject_chars: int = Field(default=4000, ge=200, le=100000)
     query_tool: bool = True
+    # Prepend the speaker's identity to the triggering group message even when history
+    # injection is off; without it the model cannot tell which member is talking now.
+    identify_sender: bool = True
 
 
 ToolPermission = Literal["deny", "manual", "auto", "allow"]

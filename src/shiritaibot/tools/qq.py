@@ -350,7 +350,10 @@ def qq_tools(app) -> list[Tool]:
         ]
 
     async def friend_delete(ctx, args):
-        await bot_for(ctx, args).call("delete_friend", {"user_id": args["user_id"]})
+        bot = bot_for(ctx, args)
+        await bot.call("delete_friend", {"user_id": args["user_id"]})
+        if hasattr(bot, "invalidate_friends"):
+            bot.invalidate_friends()
         return {"deleted": True}
 
     async def request_list(ctx, args):
@@ -379,6 +382,8 @@ def qq_tools(app) -> list[Tool]:
                     "set_friend_add_request",
                     {"flag": row["flag"], "approve": approve, "remark": args.get("remark", "")},
                 )
+                if approve and hasattr(bot, "invalidate_friends"):
+                    bot.invalidate_friends()
             else:
                 await bot.call(
                     "set_group_add_request",

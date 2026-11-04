@@ -83,6 +83,42 @@ async def test_recent_group_chat_is_injected_but_not_archived(app):
     assert all("group_context" not in str(m.get("content")) for m in archived)
 
 
+async def test_triggering_message_carries_speaker_identity(app):
+    app.config.value.group_context.enabled = True
+    llm = CaptureLLM()
+    app.runtime.llm = llm
+    receive = make_receiver(app)
+    await receive("我先说", user=4, name="小明")
+    await receive("到你了吧", mention=True)
+    await eventually(lambda: app.store.list("outbox"))
+    messages, _ = llm.calls[0]
+    content = messages[-1]["content"]
+    # The latest user turn is tagged with who sent it, after the ambient block.
+    assert "\n[发言人 昵称3(3)] 到你了吧\n<context" in content
+    assert content.count("到你了吧") == 1
+
+
+async def test_speaker_identity_respects_owner_and_config(app):
+    app.config.value.group_context.enabled = True
+    llm = CaptureLLM()
+    app.runtime.llm = llm
+    receive = make_receiver(app)
+    await receive("主人来了", user=1, name="群里的主人", mention=True)
+    await eventually(lambda: app.store.list("outbox"))
+    messages, _ = llm.calls[0]
+    content = messages[-1]["content"]
+    assert "\n[发言人 主人(1)] 主人来了\n<context" in content
+
+    llm.calls.clear()
+    app.config.value.group_context.identify_sender = False
+    await receive("不开身份", user=4, name="小明")
+    await receive("关掉了", mention=True)
+    async with asyncio.timeout(3):
+        while not llm.calls:
+            await asyncio.sleep(0.01)
+    assert "\n关掉了\n<context" in llm.calls[0][0][-1]["content"]
+
+
 async def test_injection_respects_message_and_character_budgets(app):
     settings = app.config.value.group_context
     settings.enabled, settings.inject_messages, settings.inject_chars = True, 2, 200
