@@ -18,12 +18,13 @@ from typing import Any, Awaitable, Callable, Coroutine
 
 import httpx
 
+from shiritaibot import __version__ as BOT_VERSION
 from shiritaibot.core.logs import get_logger
 
 log = get_logger("MCP")
 
 PROTOCOL_VERSION = "2025-06-18"
-CLIENT_INFO = {"name": "ShiritaiBot", "version": "0.2.0"}
+CLIENT_INFO = {"name": "ShiritaiBot", "version": BOT_VERSION}
 MAX_LINE = 16 * 1024 * 1024
 
 
