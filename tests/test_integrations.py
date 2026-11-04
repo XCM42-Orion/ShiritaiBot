@@ -69,7 +69,8 @@ async def test_two_onebot_instances_route_and_reply_without_crossing_sessions(ap
         async def finished():
             return len(delivered) == 2
 
-        await eventually(finished)
+        # 1.5s debounce window + first jieba load + 0.7s spacing between the two sends.
+        await eventually(finished, timeout=10)
         assert (await app.store.history("private:a:1"))[-1]["content"] == "reply:hello"
         assert (await app.store.history("private:b:1"))[-1]["content"] == "reply:hello"
         assert all(row["user_id"] == 1 for row in delivered)

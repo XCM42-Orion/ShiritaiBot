@@ -18,11 +18,19 @@ def tool_names(specs):
     return [spec["function"]["name"] for spec in specs]
 
 
-async def eventually(check):
-    async with asyncio.timeout(3):
+async def eventually(check, timeout: float = 3):  # noqa: ASYNC109 -- callers may widen the bound
+    async with asyncio.timeout(timeout):
         while not (result := await check()):  # noqa: ASYNC110 -- bounded polling of persisted state
             await asyncio.sleep(0.01)
         return result
+
+
+async def test_eventually_stops_at_an_explicit_timeout():
+    async def never():
+        return False
+
+    with pytest.raises(TimeoutError):
+        await eventually(never, timeout=0.05)
 
 
 @pytest.mark.parametrize(
