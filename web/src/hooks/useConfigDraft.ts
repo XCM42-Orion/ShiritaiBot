@@ -26,12 +26,14 @@ export function useConfigDraft(client: ApiClient | null) {
   );
   const discard = useCallback(() => setDraft(null), []);
   const save = useCallback(async () => {
-    if (!client || !config) return;
-    await client.saveConfig(config);
+    if (!client || !config) return null;
+    const result = await client.saveConfig(config);
     // Refresh the server copy before dropping the draft so the form never
     // flashes the previous values for one frame.
     await queryClient.invalidateQueries({ queryKey: ["config"] });
+    await queryClient.invalidateQueries({ queryKey: ["diagnostics"] });
     setDraft(null);
+    return result;
   }, [client, config, queryClient]);
 
   return {

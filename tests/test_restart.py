@@ -53,6 +53,7 @@ def test_cli_reexecutes_original_command_only_after_shutdown(tmp_path, monkeypat
         events.append("exec")
 
     monkeypatch.setattr(cli.uvicorn, "Server", Server)
+    monkeypatch.setattr(cli, "_port_in_use", lambda port: False)
     monkeypatch.setattr(cli.os, "execv", reexec)
     monkeypatch.setattr(
         cli.sys, "orig_argv", ["python", "-m", "shiritaibot.cli", "run", "--home", str(tmp_path)]
@@ -60,3 +61,14 @@ def test_cli_reexecutes_original_command_only_after_shutdown(tmp_path, monkeypat
     result = CliRunner().invoke(cli.cli, ["run", "--home", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert events == ["closed", "exec"]
+
+
+def test_cli_reports_port_conflict_without_starting(tmp_path, monkeypatch):
+    def fail_server(config):
+        raise AssertionError("server must not start when the port is busy")
+
+    monkeypatch.setattr(cli.uvicorn, "Server", fail_server)
+    monkeypatch.setattr(cli, "_port_in_use", lambda port: True)
+    result = CliRunner().invoke(cli.cli, ["run", "--home", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "已被占用" in result.output

@@ -235,7 +235,15 @@ def create_app(
     @api.put("/api/config", dependencies=protected)
     async def save_config(body: Settings):
         await runtime.reconfigure(body)
-        return {"ok": True, "version": runtime.config.version}
+        return {
+            "ok": True,
+            "version": runtime.config.version,
+            "warnings": await runtime.diagnostics(),
+        }
+
+    @api.get("/api/diagnostics", dependencies=protected)
+    async def diagnostics():
+        return {"warnings": await runtime.diagnostics()}
 
     @api.get("/api/config/schema", dependencies=protected)
     async def config_schema():
@@ -282,6 +290,7 @@ def create_app(
     @api.put("/api/secrets/{name}", dependencies=protected)
     async def secret_set(name: str, body: SecretInput):
         await runtime.vault.set(name, body.value)
+        await runtime.refresh_secret_list()
         await register_builtin(runtime)
         return {"ok": True}
 
@@ -698,8 +707,13 @@ def create_app(
     dist = Path(__file__).resolve().parents[3] / "web" / "dist"
     if dist.is_dir():
 
+        # Unauthenticated visits render the sign-in card, so these are the same page.
         @api.get("/token", include_in_schema=False)
         async def login():
+            return FileResponse(dist / "index.html")
+
+        @api.get("/login", include_in_schema=False)
+        async def sign_in_page():
             return FileResponse(dist / "index.html")
 
         api.mount("/", StaticFiles(directory=dist, html=True), name="webui")

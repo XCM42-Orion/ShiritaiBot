@@ -390,8 +390,15 @@ class Updater:
         if not uv:
             raise PublicError("找不到 uv，无法安装 Python 依赖")
         # --inexact keeps pip and packages that plugins installed into the environment.
+        # --no-install-project skips rewriting the project and its console script: on Windows
+        # the running shiritaibot.exe is locked, so reinstalling it fails (WinError 32) and can
+        # uninstall the package mid-update. The existing editable install already points at
+        # this source tree, so new code loads on restart.
         try:
-            await self.command([uv, "sync", "--frozen", "--no-dev", "--inexact"], self.app_dir)
+            await self.command(
+                [uv, "sync", "--frozen", "--no-dev", "--inexact", "--no-install-project"],
+                self.app_dir,
+            )
         except Exception:
             if not quiet:
                 raise

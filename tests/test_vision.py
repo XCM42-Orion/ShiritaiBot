@@ -67,7 +67,7 @@ def test_images_are_estimated_by_count_not_base64_length():
 
 def test_vision_route_requires_image_models():
     providers = [ProviderConfig(id="p", api_key="")]
-    with pytest.raises(ValidationError, match="vision route"):
+    with pytest.raises(ValidationError, match="vision 路由"):
         Settings(
             providers=providers,
             models=[ModelConfig(id="t", provider="p", model="t")],

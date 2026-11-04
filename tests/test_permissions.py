@@ -275,6 +275,43 @@ async def test_auto_review_is_independent_strict_and_audited(app, response, appr
         await app.permissions.resolve(row["id"], True)
 
 
+async def test_identical_auto_approved_calls_reuse_the_verdict(app):
+    from shiritaibot.core import Reply
+
+    calls = []
+
+    class Reviewer:
+        async def decide(self, *args, **kwargs):
+            return None
+
+        async def complete(self, route, system, messages, tools, settings, **kwargs):
+            calls.append(messages)
+            return Reply(text='{"allow":true,"reason":"符合用户请求"}')
+
+    async def handler(ctx, args):
+        return {"ok": True}
+
+    app.permissions.llm = Reviewer()
+    app.config.value.policy.owner_default.tools["reviewed_action"] = "auto"
+    app.registry.add(
+        Tool(
+            "reviewed_action",
+            "执行操作",
+            schema({"value": {"type": "string"}}, ["value"]),
+            handler,
+            risk="dangerous",
+        )
+    )
+    await app.store.append(OWNER.session, "test", {"role": "user", "content": "请执行指定操作"})
+    first = json.loads(await app.registry.execute(OWNER, "reviewed_action", {"value": "same"}))
+    second = json.loads(await app.registry.execute(OWNER, "reviewed_action", {"value": "same"}))
+    assert first["ok"] and second["ok"]
+    assert len(calls) == 1
+    rows = await app.store.list("approval")
+    assert [row["status"] for row in rows] == ["approved", "approved"]
+    assert "复用" in rows[-1]["reason"] or "复用" in rows[0]["reason"]
+
+
 async def test_auto_approval_cancellation_and_revocation_do_not_execute(app):
     from shiritaibot.core import Reply
 
@@ -362,3 +399,32 @@ async def test_all_manual_requires_approval_even_for_safe_tools(app):
     assert not task.done()
     await app.permissions.resolve(rows[0]["id"], True)
     assert "local_time" in json.loads(await task)
+
+
+async def test_credential_file_reads_need_human_approval_even_on_auto(app):
+    reviewed = []
+
+    class Reviewer:
+        async def decide(self, *args, **kwargs):
+            return None
+
+        async def complete(self, *args, **kwargs):
+            reviewed.append(args)
+            raise TimeoutError
+
+    app.permissions.llm = Reviewer()
+    app.config.value.policy.owner_default.tools["shell"] = "auto"
+
+    async def newer():
+        rows = await app.store.list("approval")
+        return [row for row in rows if row["status"] == "pending"] or None
+
+    task = asyncio.create_task(
+        app.registry.execute(OWNER, "shell", {"command": "cat data/config.toml"})
+    )
+    row = (await eventually(newer))[0]
+    assert row["reviewer"] == "human"
+    assert not reviewed
+    await app.permissions.resolve(row["id"], False)
+    result = json.loads(await task)
+    assert "拒绝" in result["error"]

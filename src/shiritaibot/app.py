@@ -29,6 +29,19 @@ from shiritaibot.tools.builtin import register_builtin
 
 log = get_logger("ShiritaiBot")
 
+ROUTE_LABELS = {
+    "chat": "聊天（chat）路由",
+    "agent": "Agent（agent）路由",
+    "agent_chat": "Agent 聊天（agent_chat）路由",
+    "router": "判定（router）路由",
+    "light": "轻量（light）路由",
+    "memory": "记忆（memory）路由",
+    "approval": "审批（approval）路由",
+    "embedding": "向量（embedding）路由",
+    "vision": "视觉（vision）路由",
+    "meme": "表情（meme）路由",
+}
+
 
 class Application:
     def __init__(self, home: Path):
@@ -50,6 +63,7 @@ class Application:
             await self.config.save(protected)
         self.permissions = Permissions(self.config, self.store)
         self.registry = ToolRegistry(self.permissions, self.store)
+        await self.refresh_secret_list()
         self.llm = ProviderManager(self.config, self.vault, self.store)
         self.permissions.llm = self.llm
         self.memory = MemoryManager(self.store, self.config, self.llm)
@@ -132,13 +146,78 @@ class Application:
         else:
             await self.adapters.enqueue(session, text)
 
+    async def diagnostics(self) -> list[str]:
+        """Warnings about configuration that would silently fail at runtime."""
+        settings = self.config.value
+        warnings: list[str] = []
+
+        async def resolves(ref: str) -> bool:
+            try:
+                return bool(await self.vault.resolve(ref))
+            except Exception:
+                return False
+
+        provider_ok: dict[str, bool] = {}
+        for provider in settings.providers:
+            provider_ok[provider.id] = provider.enabled and await resolves(provider.api_key)
+            if provider.enabled and not provider_ok[provider.id]:
+                warnings.append(f"提供商「{provider.id}」没有可用的 API Key")
+        models = {model.id: model for model in settings.models}
+        for route, refs in settings.routes.items():
+            if route == "test":
+                continue
+            label = ROUTE_LABELS.get(route, route)
+            if route == "embedding" and not any(m.kind == "embedding" for m in models.values()):
+                continue
+            if not refs:
+                warnings.append(f"{label}没有配置模型，相关功能会直接报错")
+                continue
+            usable = [
+                model
+                for model in refs
+                if (cfg_model := models.get(model)) is not None
+                and cfg_model.enabled
+                and provider_ok.get(cfg_model.provider, False)
+            ]
+            if not usable:
+                warnings.append(f"{label}的模型都不可用：检查模型是否启用、提供商 Key 是否填好")
+        for provider_id, count in self.llm.failing().items():
+            warnings.append(
+                f"提供商「{provider_id}」最近 15 分钟调用失败 {count} 次，请检查 Key 和网络/代理"
+            )
+        search = settings.web_search
+        if search.enabled:
+            provider = getattr(search, search.provider, None)
+            if provider is None or not await resolves(provider.api_key):
+                warnings.append(
+                    f"搜索服务「{search.provider}」没有可用密钥，web_search 工具不会注册"
+                )
+        return warnings
+
+    async def refresh_secret_list(self) -> None:
+        """Cache decrypted credentials so tool output can be scrubbed of them."""
+        values = []
+        for row in await self.store.list("secret"):
+            try:
+                value = self.vault.cipher.decrypt(row["cipher"].encode()).decode()
+            except Exception:
+                continue
+            if len(value) >= 6:
+                values.append(value)
+        self.registry.secrets = tuple(values)
+
     async def reconfigure(self, settings: Settings) -> None:
         async with self.configure_lock:
             log.log("配置已更新，正在重载协议端、内置工具与插件")
+            previous = self.config.value
             settings = await self.vault.protect_settings(settings, await self.plugins.schemas())
             await self.config.save(settings)
-            await self.adapters.close()
-            await self.adapters.start()
+            await self.refresh_secret_list()
+            if settings.adapters != previous.adapters:
+                await self.adapters.close()
+                await self.adapters.start()
+            else:
+                log.log("协议端配置未变化，保持现有连接")
             await register_builtin(self)
             await self.plugins.reload_all()
             await self.mcp.reload()

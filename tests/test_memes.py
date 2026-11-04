@@ -88,7 +88,7 @@ def test_meme_route_needs_image_text_models_but_accepts_decision_models():
         ProviderConfig(id="p", api_key=""),
         ProviderConfig(id="jev", protocol="systemone", api_key=""),
     ]
-    with pytest.raises(ValidationError, match="meme route"):
+    with pytest.raises(ValidationError, match="meme 路由"):
         Settings(
             providers=providers,
             models=[ModelConfig(id="t", provider="p", model="t")],
@@ -194,6 +194,27 @@ async def test_markers_split_replies_into_text_and_sticker_messages(app):
     segments = await app.adapters.outgoing(rows[1])
     assert segments[0]["type"] == "image" and segments[0]["data"]["sub_type"] == 1
     assert base64.b64decode(segments[0]["data"]["file"].removeprefix("base64://")) == png()
+
+
+async def test_marker_tolerates_repeated_me_tag_from_chat_model(app):
+    setup(app)
+    happy = await app.memes.core.add(png(), "happy", "大笑的猫", "manual")
+    pieces = app.memes.injector.split("好耶<mememe>happy</mememe>")
+    assert [isinstance(p, dict) for p in pieces] == [False, True]
+    assert pieces[0] == "好耶" and pieces[1]["id"] == happy["id"]
+
+
+async def test_marker_tolerates_mismatched_repeated_tags(app):
+    setup(app)
+    happy = await app.memes.core.add(png(), "happy", "大笑的猫", "manual")
+    assert app.memes.injector.split("<meme>happy</mememe>")[0]["id"] == happy["id"]
+    assert app.memes.injector.split("<mememe>happy</meme>")[0]["id"] == happy["id"]
+
+
+async def test_stray_marker_tags_never_reach_the_chat(app):
+    setup(app)
+    await app.memes.core.add(png(), "happy", "大笑的猫", "manual")
+    assert app.memes.injector.split("好<mememe>happy") == ["好happy"]
 
 
 async def test_marker_limits_and_disabled_feature(app):

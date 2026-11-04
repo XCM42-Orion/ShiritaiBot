@@ -6,9 +6,12 @@ import html
 import json
 import random
 import re
+import time
+from collections import deque
 from time import monotonic
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from websockets.asyncio.client import connect
 
@@ -26,6 +29,7 @@ from shiritaibot.core import (
     uid,
 )
 from shiritaibot.core.logs import brief, get_logger
+from shiritaibot.core.text import clean_outbound
 from shiritaibot.meme.inject import MemeInjector
 
 
@@ -100,6 +104,10 @@ class OneBot:
         self.events: asyncio.Queue = asyncio.Queue(maxsize=256)
         self.log = get_logger(config.id)
         self._friends: tuple[float, frozenset[str]] = (0.0, frozenset())
+        # Auto-start bookkeeping: when the failure streak began and the next allowed attempt.
+        self.failed_since: float | None = None
+        self.next_auto_start = 0.0
+        self.auto_process: asyncio.subprocess.Process | None = None
 
     async def call(self, action: str, params: dict) -> Any:
         if not self.ws:
@@ -155,6 +163,7 @@ class OneBot:
             return
         self.self_id = actual
         self.status = "connected"
+        self.failed_since = None
         self.log.log(f"已连接 OneBot，登录账号 {result.get('nickname') or actual}（{actual}）")
 
     async def run(self) -> None:
@@ -206,6 +215,7 @@ class OneBot:
                 await self.store.activity(
                     "adapter.disconnected", f"{self.config.id}: {type(exc).__name__}"
                 )
+                await self.try_auto_start()
             finally:
                 self.ws, self.status = None, "disconnected"
                 for future in self.pending.values():
@@ -213,6 +223,36 @@ class OneBot:
                         future.set_exception(PublicError("OneBot 连接断开"))
             await asyncio.sleep(delay + random.random())
             delay = min(60, delay * 2)
+
+    async def try_auto_start(self) -> None:
+        """Launch the backend command once the endpoint has been unreachable long enough."""
+        command = self.config.auto_start
+        if not command:
+            return
+        clock = time.monotonic()
+        if self.failed_since is None:
+            self.failed_since = clock
+        if clock - self.failed_since < self.config.auto_start_after:
+            return
+        # At most one launch per five minutes: startup tools may take a while themselves.
+        if clock < self.next_auto_start:
+            return
+        self.next_auto_start = clock + 300
+        self.log.log(f"协议端已连续不可达，尝试自动启动：{command[0]}")
+        try:
+            self.auto_process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await self.store.activity("adapter.autostart", f"{self.config.id}: {command[0]}")
+        except Exception as exc:
+            # Usually a missing path or a launcher that needs elevation and cannot ask for it.
+            self.log.warning(f"自动启动失败（{type(exc).__name__}）：{exc}")
+            await self.store.activity(
+                "adapter.autostart_failed", f"{self.config.id}: {type(exc).__name__}"
+            )
 
 
 class AdapterHub:
@@ -228,6 +268,9 @@ class AdapterHub:
         self.memes: Any = None
         # shiritaibot.plugin.core.hooks.HookBus: plugin commands, listeners and send hooks.
         self.hooks: Any = None
+        # Passive participation: last interject per session and a one-hour history.
+        self.interject_at: dict[str, float] = {}
+        self.interject_log: dict[str, deque[float]] = {}
 
     async def start(self) -> None:
         for cfg in self.config.value.adapters:
@@ -322,6 +365,7 @@ class AdapterHub:
             if self.hooks is not None:
                 # Plugin listeners also see group chatter that does not wake the bot.
                 await self.hooks.dispatch(message(False))
+            await self.maybe_interject(bot, session, user, speaker, describe(parts))
             return
         # Explicit controls and approvals must remain reachable while keyword gating is on.
         control = (
@@ -394,6 +438,56 @@ class AdapterHub:
                 text,
             )
 
+    async def maybe_interject(
+        self, bot: OneBot, session: str, user: str, speaker: str, text: str
+    ) -> None:
+        """Occasionally let the Bot read untriggered group chatter and chime in."""
+        # Imported lazily: proactive -> memory -> agent would cycle at module load.
+        from shiritaibot.proactive import quiet_hours
+
+        settings = self.config.value
+        group = settings.group_context
+        if not group.enabled or not group.interject or not text or self.runtime is None:
+            return
+        busy = getattr(self.runtime, "busy", None)
+        if busy is not None and busy(session):
+            return
+        proactive = settings.proactive
+        try:
+            local = now().astimezone(ZoneInfo(proactive.timezone))
+        except Exception:
+            local = now().astimezone()
+        if quiet_hours(proactive.quiet_start, proactive.quiet_end, local):
+            return
+        clock = asyncio.get_running_loop().time()
+        if clock - self.interject_at.get(session, float("-inf")) < group.interject_cooldown:
+            return
+        recent = self.interject_log.setdefault(session, deque())
+        while recent and clock - recent[0] > 3600:
+            recent.popleft()
+        if len(recent) >= group.interject_max_per_hour:
+            return
+        if random.random() >= group.interject_probability:
+            return
+        self.interject_at[session] = clock
+        recent.append(clock)
+        prompt = (
+            "[群聊观察] 群里刚有人发言，这条没有 @ 你。\n"
+            f"最新一条来自 {speaker}：{brief(text, 300)}\n"
+            "能顺着话题自然接一句就写要发到群里的内容，否则只输出 <pass>。"
+        )
+        bot.log.debug(f"群聊观察：可能插话（{speaker}）")
+        asyncio.create_task(self._interject(session, user, prompt))
+
+    async def _interject(self, session: str, user: str, prompt: str) -> None:
+        try:
+            assert self.runtime is not None
+            await self.runtime.submit(
+                Context(session, user, "chat", group=True, interject=True), prompt
+            )
+        except Exception as exc:
+            get_logger("群聊").debug(f"插话失败（{type(exc).__name__}）")
+
     async def request(self, bot: OneBot, event: dict) -> None:
         kind, flag = event.get("request_type"), str(event.get("flag", ""))
         if kind not in {"friend", "group"} or not flag:
@@ -456,6 +550,7 @@ class AdapterHub:
                 text = injector.plain(text)
             await self.store.put("reply", uid(), {"text": text, "at": now().isoformat()}, session)
             return
+        text = clean_outbound(text)
         # <meme> markers become their own sticker messages, splitting the text around them.
         pieces = injector.split(text) if injector is not None else [text]
         expires = now().timestamp() + 86400

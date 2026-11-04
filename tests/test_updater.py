@@ -196,7 +196,7 @@ async def test_update_swaps_source_keeps_venv_and_plugins_then_restarts(tmp_path
     assert marker["kind"] == "release" and marker["ref"] == "v1.1.0" and marker["sha"] == SHA
     assert updater.current()["ref"] == "v1.1.0"
     sync = [argv for argv, cwd in ran if "sync" in argv]
-    assert sync == [["uv", "sync", "--frozen", "--no-dev", "--inexact"]]
+    assert sync == [["uv", "sync", "--frozen", "--no-dev", "--inexact", "--no-install-project"]]
     assert [cwd for argv, cwd in ran if "sync" in argv] == [app]
 
 

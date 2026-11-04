@@ -384,7 +384,7 @@ def test_route_rules_for_embedding_and_decision_models():
     for routes in [{"agent": ["vec"]}, {"embedding": ["text"]}, {"agent": ["jev"]}]:
         with pytest.raises(ValueError):
             Settings(providers=providers, models=models, routes=routes)
-    with pytest.raises(ValueError, match="OpenAI-compatible"):
+    with pytest.raises(ValueError, match="向量模型"):
         Settings(
             providers=providers,
             models=[{"id": "v", "provider": "an", "model": "e", "kind": "embedding"}],

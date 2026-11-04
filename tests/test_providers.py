@@ -204,9 +204,9 @@ def test_decision_models_are_limited_to_decision_routes():
     providers = [ProviderConfig(id="ts", protocol="systemone", base_url="https://jev.test/v1")]
     models = [ModelConfig(id="jev", provider="ts", model="jev-latest")]
     Settings(providers=providers, models=models, routes={"router": ["jev"], "light": ["jev"]})
-    with pytest.raises(ValueError, match="decision models"):
+    with pytest.raises(ValueError, match="判定类模型"):
         Settings(providers=providers, models=models, routes={"agent": ["jev"]})
-    with pytest.raises(ValueError, match="must generate text"):
+    with pytest.raises(ValueError, match="压缩模型必须能生成文本"):
         Settings(
             providers=providers,
             models=models,
@@ -239,7 +239,7 @@ def test_legacy_approval_model_becomes_the_approval_route():
     )
     assert both.routes["approval"] == ["m2", "m1"]
     assert Settings.model_validate(old.model_dump()).routes["approval"] == ["m1"]
-    with pytest.raises(ValueError, match="unknown model"):
+    with pytest.raises(ValueError, match="不存在的模型"):
         Settings(providers=providers, models=models, policy={"approval_model": "missing"})
 
 

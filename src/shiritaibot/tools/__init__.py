@@ -8,6 +8,7 @@ from jsonschema.exceptions import ValidationError
 
 from shiritaibot.core import Context, PublicError, Tool, canonical, uid
 from shiritaibot.core.logs import describe_session, get_logger
+from shiritaibot.core.text import redact_secrets
 
 log = get_logger("工具")
 
@@ -16,6 +17,8 @@ class ToolRegistry:
     def __init__(self, permissions, store):
         self.permissions, self.store = permissions, store
         self.tools: dict[str, Tool] = {}
+        # Credential values resolved from the vault; tool output is scrubbed of them.
+        self.secrets: tuple[str, ...] = ()
 
     def add(self, tool: Tool) -> None:
         self.validate(tool)
@@ -49,7 +52,7 @@ class ToolRegistry:
             await self.permissions.check(ctx, tool, args)
             async with asyncio.timeout(tool.timeout):
                 value = await tool.handler(ctx, args)
-            result = canonical(value)
+            result = redact_secrets(canonical(value), self.secrets)
             if len(result) > 16000:
                 key = uid()
                 await self.store.put("artifact", key, {"content": result}, ctx.session)

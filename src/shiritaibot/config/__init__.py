@@ -120,6 +120,18 @@ class AdapterConfig(Instance):
     groups: list[str] = Field(default_factory=list)
     friends: list[str] = Field(default_factory=list)
     ignore_users: list[str] = Field(default_factory=list)
+    # Relaunch the protocol backend (e.g. NapCat) when it stays unreachable because the
+    # process itself disappeared. One argv element per entry; empty disables it.
+    auto_start: list[str] = Field(default_factory=list)
+    auto_start_after: int = Field(default=60, ge=5, le=3600)
+
+    @field_validator("auto_start")
+    @classmethod
+    def auto_start_valid(cls, value: list[str]) -> list[str]:
+        value = [item.strip() for item in value if item.strip()]
+        if any(len(item) > 1000 for item in value):
+            raise ValueError("auto_start 的每个参数不能超过 1000 个字符")
+        return value
 
 
 CLAUDE_TOOL = re.compile(r"^[A-Za-z][\w.-]*(\(.*\))?$")
@@ -256,9 +268,11 @@ class McpServerConfig(Instance):
         if self.transport == "http" and self.enabled:
             url = urlsplit(self.url)
             if url.scheme not in {"http", "https"} or not url.hostname or "@" in self.url:
-                raise ValueError("MCP URL must be http(s) without embedded credentials")
+                raise ValueError(
+                    f"MCP 服务「{self.id}」的 URL 必须是 http:// 或 https://，且不能内嵌账号密码"
+                )
         if self.transport == "stdio" and self.enabled and not self.command:
-            raise ValueError("stdio MCP servers need a command")
+            raise ValueError(f"stdio 类型的 MCP 服务「{self.id}」需要填写启动命令")
         return self
 
 
@@ -382,6 +396,11 @@ class GroupContextConfig(Model):
     # Prepend the speaker's identity to the triggering group message even when history
     # injection is off; without it the model cannot tell which member is talking now.
     identify_sender: bool = True
+    # Passive participation: sometimes chime in on chatter that never addressed the Bot.
+    interject: bool = False
+    interject_probability: float = Field(default=0.02, ge=0, le=1)
+    interject_cooldown: int = Field(default=900, ge=60, le=86400)
+    interject_max_per_hour: int = Field(default=4, ge=1, le=60)
 
 
 ToolPermission = Literal["deny", "manual", "auto", "allow"]
@@ -640,13 +659,15 @@ class Settings(Model):
             self.mcp_servers,
         ]:
             if len({x.id for x in items}) != len(items):
-                raise ValueError("duplicate instance id")
+                raise ValueError("存在重复的实例 ID，请检查提供商、模型、协议端、插件、人设和 MCP")
         providers = {p.id for p in self.providers}
         models = {m.id for m in self.models}
-        if any(m.provider not in providers for m in self.models):
-            raise ValueError("model references unknown provider")
-        if any(m not in models for route in self.routes.values() for m in route):
-            raise ValueError("route references unknown model")
+        missing = [m.id for m in self.models if m.provider not in providers]
+        if missing:
+            raise ValueError(f"模型 {'、'.join(missing)} 引用了不存在的提供商")
+        lost = sorted({m for route in self.routes.values() for m in route if m not in models})
+        if lost:
+            raise ValueError(f"路由引用了不存在的模型：{'、'.join(lost)}")
         decision = {
             m.id
             for m in self.models
@@ -660,8 +681,7 @@ class Settings(Model):
             for m in route
         ):
             raise ValueError(
-                "decision models can only be used in the router, light, memory, approval "
-                "and meme routes"
+                "判定类模型（systemone，如 jev）只能放在 router、light、memory、approval 和 meme 路由"
             )
         embedding = {m.id for m in self.models if m.kind == "embedding"}
         if any(
@@ -670,46 +690,51 @@ class Settings(Model):
             if key != "test"
             for m in route
         ):
-            raise ValueError("embedding models can only be used in the embedding route, alone")
+            raise ValueError("向量模型只能单独放在 embedding 路由，其他路由不能引用它")
         if any(
             p.id == m.provider and p.protocol not in EMBEDDING_PROTOCOLS
             for m in self.models
             if m.kind == "embedding"
             for p in self.providers
         ):
-            raise ValueError("embedding models need an OpenAI-compatible or Gemini provider")
+            raise ValueError("向量模型需要 OpenAI 兼容或 Gemini 协议的提供商")
         if any(m.id in self.routes["vision"] and "image" not in m.modalities for m in self.models):
-            raise ValueError("vision route models must accept image input")
+            raise ValueError("vision 路由里的模型必须支持图像输入（modalities 含 image）")
         if any(
             m.id in self.routes["meme"] and m.id not in decision and "image" not in m.modalities
             for m in self.models
         ):
-            raise ValueError("meme route text models must accept image input")
+            raise ValueError("meme 路由中的文本模型必须支持图像输入（modalities 含 image）")
         if self.context.compression_model in decision | embedding:
-            raise ValueError("compression models must generate text")
+            raise ValueError("上下文压缩模型必须能生成文本，不能用判定模型或向量模型")
         if self.default_persona and not any(
             p.id == self.default_persona and p.enabled for p in self.personas
         ):
-            raise ValueError("default_persona references unknown or disabled persona")
+            raise ValueError("默认人设引用了不存在或未启用的人设")
         if self.context.compression_model and not any(
             m.id == self.context.compression_model
             and m.enabled
             and any(p.id == m.provider and p.enabled for p in self.providers)
             for m in self.models
         ):
-            raise ValueError("compression_model references unknown or disabled model/provider")
+            raise ValueError("上下文压缩模型引用了不存在或未启用的模型/提供商")
         if self.private_require_keyword and not self.wake_keywords:
             raise ValueError("private keyword activation requires at least one wake keyword")
         for a in self.adapters:
             if not a.url.startswith(("ws://", "wss://")) or "@" in a.url or "?" in a.url:
-                raise ValueError("OneBot URL must be ws(s) without embedded credentials")
+                raise ValueError(
+                    f"协议端「{a.id}」的地址必须是 ws:// 或 wss://，且不能内嵌账号密码或查询参数"
+                )
         for p in self.providers:
             if (
                 not p.base_url.startswith(("http://", "https://"))
                 or "@" in p.base_url
                 or "?" in p.base_url
             ):
-                raise ValueError("provider URL must be http(s) without embedded credentials")
+                raise ValueError(
+                    f"提供商「{p.id}」的接口地址（base_url）必须是 http:// 或 https://，"
+                    "且不能内嵌账号密码或查询参数"
+                )
         for plugin in self.plugins:
             for key in ("password", "api_key", "token", "access_token"):
                 ref = plugin.settings.get(key, "")

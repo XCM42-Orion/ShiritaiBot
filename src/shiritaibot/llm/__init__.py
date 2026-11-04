@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import time
+from collections import defaultdict, deque
 from copy import deepcopy
 from typing import Any
 
@@ -347,6 +348,26 @@ class ProviderManager:
         self.config, self.vault, self.store = config, vault, store
         self.client = httpx.AsyncClient(follow_redirects=False, timeout=120)
         self.semaphore = asyncio.Semaphore(config.value.concurrency)
+        # Recent call failures per provider, so the WebUI can warn before extraction
+        # quietly backs off for half an hour with no visible sign.
+        self.failures: dict[str, deque[float]] = defaultdict(deque)
+
+    def record_failure(self, provider_id: str) -> None:
+        now_ = time.monotonic()
+        stamps = self.failures[provider_id]
+        stamps.append(now_)
+        while stamps and now_ - stamps[0] > 900:
+            stamps.popleft()
+
+    def failing(self, threshold: int = 3) -> dict[str, int]:
+        now_ = time.monotonic()
+        result = {}
+        for provider_id, stamps in self.failures.items():
+            while stamps and now_ - stamps[0] > 900:
+                stamps.popleft()
+            if len(stamps) >= threshold:
+                result[provider_id] = len(stamps)
+        return result
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -546,6 +567,7 @@ class ProviderManager:
                     route,
                 )
                 await self.store.activity("provider.failed", failure(provider.id, exc))
+                self.record_failure(provider.id)
         if context_skipped:
             raise PublicError(
                 "候选模型调用失败，部分模型的估算上下文超过上限，请减少输入或调整模型上下文配置"
@@ -626,6 +648,7 @@ class ProviderManager:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
             log.warning(f"Embedding 模型 {model.id} 调用失败（{failure(provider.id, exc)}）", route)
             await self.store.activity("provider.failed", failure(provider.id, exc))
+            self.record_failure(provider.id)
             raise PublicError("Embedding 调用失败，请检查 Provider 地址、凭据与模型名称") from None
         await self.store.put(
             "usage",
@@ -678,4 +701,5 @@ class ProviderManager:
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
                 log.warning(f"决策模型 {model.id} 调用失败（{failure(provider.id, exc)}）", route)
                 await self.store.activity("provider.failed", failure(provider.id, exc))
+                self.record_failure(provider.id)
         return None

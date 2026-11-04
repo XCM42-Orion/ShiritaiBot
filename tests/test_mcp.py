@@ -75,7 +75,8 @@ async def test_stdio_server_tools_register_call_and_reload(app):
     stored = app.config.value.mcp_servers[0].env["MCP_TEST_TOKEN"]
     assert stored.startswith("secret:")
     token = json.loads(await app.registry.execute(OWNER, "mcp_fake_env_read", {}))
-    assert token == {"content": "s3cret", "structured": {"token": "s3cret"}}
+    # Credential values never reach the model, even when a tool echoes them back.
+    assert token == {"content": "[已脱敏]", "structured": {"token": "[已脱敏]"}}
 
     # A crashed server is restarted on the next call.
     server = app.mcp.servers["fake"]

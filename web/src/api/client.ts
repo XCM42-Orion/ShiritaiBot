@@ -1,6 +1,7 @@
 import type {
   CommandInfo,
   ConfigSaveResult,
+  DiagnosticsResult,
   DiscoveredModel,
   Health,
   HistoryMessage,
@@ -69,6 +70,7 @@ export interface ApiClient {
   config(): Promise<Settings>;
   tools(session?: string): Promise<ToolCatalog>;
   saveConfig(settings: Settings): Promise<ConfigSaveResult>;
+  diagnostics(): Promise<DiagnosticsResult>;
   records<K extends RecordKind>(kind: K): Promise<RecordMap[K][]>;
   recordsPage<K extends RecordKind>(
     kind: K,
@@ -219,6 +221,7 @@ export function createClient(getToken: () => string): ApiClient {
       request<ToolCatalog>("/tools?session=" + encodeURIComponent(session)),
     saveConfig: (settings) =>
       request<ConfigSaveResult>("/config", "PUT", settings),
+    diagnostics: () => request<DiagnosticsResult>("/diagnostics"),
     records: <K extends RecordKind>(kind: K) =>
       request<RecordMap[K][]>("/records/" + kind),
     recordsPage: <K extends RecordKind>(

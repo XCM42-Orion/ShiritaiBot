@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections import Counter, deque
 from copy import deepcopy
@@ -47,6 +48,10 @@ def tool_outcome(output: str) -> tuple[bool, str]:
         return True, brief(output, 100)
     if isinstance(value, dict) and set(value) == {"error"}:
         return False, brief(value["error"], 160)
+    if isinstance(value, dict) and isinstance(value.get("ok"), bool):
+        if not value["ok"]:
+            reason = value.get("message") or value.get("error") or value.get("status") or "业务失败"
+            return False, brief(reason, 160)
     if isinstance(value, dict) and value.get("truncated") and value.get("artifact"):
         return (
             True,
@@ -134,6 +139,13 @@ def _plain(message: dict) -> str:
     return content.split("\n<context")[0].strip() if isinstance(content, str) else ""
 
 
+_PASS = re.compile(r"^[\s\"“”'‘’]*(?:<pass>|</pass>|/pass|pass)[\s.。!！\"“”'‘’]*$", re.I)
+
+
+def _is_pass(text: str) -> bool:
+    return bool(_PASS.match(text.strip()))
+
+
 def _is_loop_result(text: str) -> bool:
     try:
         parse_loop_result(text)
@@ -158,8 +170,8 @@ def _report(arguments: str | dict) -> tuple[LoopResult | None, str]:
 class SessionActor:
     def __init__(self, runtime, session: str):
         self.runtime, self.session = runtime, session
-        self.queue: asyncio.Queue = asyncio.Queue(maxsize=5)
-        self.steering: deque[str] = deque(maxlen=10)
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=20)
+        self.steering: deque[str] = deque()
         self.buffered: list[tuple[Context, str]] = []
         self.ready: deque[list[tuple[Context, str]]] = deque()
         self.first_buffered: float | None = None
@@ -194,9 +206,6 @@ class SessionActor:
             and ctx.actor == self.context.actor
             and ctx.mode == "agent"
         ):
-            if len(self.steering) == self.steering.maxlen:
-                loop_logger(ctx).warning("插话队列已满，拒绝新的插话")
-                raise PublicError("插话队列已满")
             self.steering.append(text)
             loop_logger(ctx).log(f"任务进行中，插话已转交模型：{brief(text, 80)}")
             return "steering"
@@ -204,6 +213,7 @@ class SessionActor:
         if (
             self.current is None
             and not ctx.background
+            and not ctx.interject
             and not ctx.session.startswith("web:")
             and self.queue.empty()
             and policy.debounce_enabled
@@ -307,9 +317,8 @@ class SessionActor:
                 if self.steering:
                     followup = "\n".join(self.steering)
                     self.steering.clear()
-                    if not self.queue.full():
-                        self.queue.put_nowait((ctx, followup))
-                        self.wake.set()
+                    await self.queue.put((ctx, followup))
+                    self.wake.set()
         finally:
             if self.current:
                 self.current.cancel()
@@ -357,18 +366,20 @@ class AgentRuntime:
 
     async def _submit(self, ctx: Context, text: str) -> str:
         ctx = self.registry.permissions.context(ctx)
-        await self.store.put(
-            "session",
-            ctx.session,
-            {
-                "mode": ctx.mode,
-                "actor": ctx.actor,
-                "owner": ctx.owner,
-                "group": ctx.group,
-                "background": ctx.background,
-                "tool_policy": ctx.tool_policy,
-            },
-        )
+        if not ctx.interject:
+            # An interject turn observes; it must not rewrite the session's mode/profile.
+            await self.store.put(
+                "session",
+                ctx.session,
+                {
+                    "mode": ctx.mode,
+                    "actor": ctx.actor,
+                    "owner": ctx.owner,
+                    "group": ctx.group,
+                    "background": ctx.background,
+                    "tool_policy": ctx.tool_policy,
+                },
+            )
         if text.strip().startswith("/"):
             loop_logger(ctx).log(f"{'主人' if ctx.owner else ctx.actor} 执行指令 {brief(text, 80)}")
             return await command(self, ctx, text)
@@ -382,6 +393,14 @@ class AgentRuntime:
 
             actor.task.add_done_callback(cleanup)
         return await self.actors[ctx.session].submit(ctx, text)
+
+    def busy(self, session: str) -> bool:
+        actor = self.actors.get(session)
+        if actor is None:
+            return False
+        if actor.current is not None and not actor.current.done():
+            return True
+        return bool(actor.buffered or not actor.queue.empty())
 
     async def close(self) -> None:
         for actor in self.actors.values():
@@ -504,6 +523,9 @@ class AgentRuntime:
 
     async def _turn(self, actor: SessionActor, ctx: Context, text: str) -> None:
         ctx = replace(self.registry.permissions.context(ctx), turn=uid())
+        if ctx.interject:
+            # A passing remark is one cheap chat turn: no tools, no policy upgrade.
+            ctx = replace(ctx, mode="chat", allowed_tools=())
         cfg = self.config.value.model_copy(deep=True)
         selected_persona = await self.store.get("session_persona", ctx.session)
         system = cfg.system_prompt(
@@ -513,8 +535,16 @@ class AgentRuntime:
         if not ctx.background and ctx.session.startswith(("private:", "group:")):
             # Only QQ sends stickers; the block is config-only, so it stays cache-stable.
             system += meme_prompt(cfg)
+        if ctx.interject:
+            system += (
+                "\n\n<interject>\n"
+                "这一轮你只是在看群聊：没有人 @ 你，你可以自然地插一句话，也可以什么也不说。\n"
+                "想接话就直接写要发到群里的内容，简短、口语化，顺着当前话题，不要复述或总结前文。\n"
+                "不想接话、或者不确定是否合适时，只输出 <pass>，不要输出任何其他内容。\n"
+                "</interject>"
+            )
         emotion_block = await self.emotion.context(ctx, cfg) if self.emotion else ""
-        if self.emotion:
+        if self.emotion and not ctx.interject:
             await self.emotion.observe(ctx, text)
         route = await self.route(ctx, cfg, text)
         selected = await self.store.get("session_model", ctx.session)
@@ -593,8 +623,10 @@ class AgentRuntime:
                     + "\n</context>",
                 }
                 # Persist the original input even if context compression fails.
-                await self.store.append(ctx.session, ctx.turn, user)
-                tools = self.registry.specs(ctx)
+                # Interject turns carry a synthetic observation, not something anyone said.
+                if not ctx.interject:
+                    await self.store.append(ctx.session, ctx.turn, user)
+                tools = [] if ctx.interject else self.registry.specs(ctx)
                 # Proactive turns report their conclusion through an internal tool.
                 proactive = ctx.background and ctx.session.startswith(PREPARE_SESSION)
                 if proactive:
@@ -649,6 +681,10 @@ class AgentRuntime:
                         await hooks.call("llm_response", info, response)
                         if isinstance(response.text, str):
                             reply.text = response.text
+                    if ctx.interject and not reply.calls and _is_pass(reply.text):
+                        log.log("群聊观察后决定不插话")
+                        body["status"] = "completed"
+                        return
                     message = {
                         "role": "assistant",
                         "content": reply.text,
@@ -668,7 +704,7 @@ class AgentRuntime:
                             history.append(item)
                             continue
                         if not proactive:
-                            log.log(f"回复：{brief(reply.text, 200) or '（空）'}")
+                            log.log(f"回复：{brief(reply.text, 1000) or '（空）'}")
                         final = reply.text or "模型没有返回可显示的内容。"
                         await self.deliver(ctx.session, final)
                         body["status"] = "completed"
@@ -676,7 +712,7 @@ class AgentRuntime:
                     # Main-loop text is visible before tools run; proactive turns
                     # deliver only their final structured notification decision.
                     if not ctx.background and reply.text.strip():
-                        log.log(f"回复：{brief(reply.text, 200)}")
+                        log.log(f"回复：{brief(reply.text, 1000)}")
                         await self.deliver(ctx.session, reply.text)
                     report = None
                     for call in reply.calls:
@@ -738,7 +774,11 @@ class AgentRuntime:
                         return
                     body["steps"] = step + 1
                     await self.store.put("turn", ctx.turn, body, ctx.session)
-                raise PublicError("已达到本轮步数限制")
+                raise PublicError(
+                    f"已达到本轮步数限制（{body['steps']} 步）：已完成前面的步骤，"
+                    "但任务还需要更多操作。可以让我接着做、把范围缩小后重试，"
+                    "或在设置 → 策略里提高 max_steps。"
+                )
         except asyncio.CancelledError:
             body["status"] = "cancelled"
             log.log(f"本轮已取消（{body['steps']} 步，用时 {time.monotonic() - started:.1f}s）")
@@ -766,7 +806,7 @@ class AgentRuntime:
                 )
             body["finished"] = now().isoformat()
             await self.store.put("turn", ctx.turn, body, ctx.session)
-            if self.short_term:
+            if self.short_term and not ctx.interject:
                 await self.short_term.enqueue(ctx, body["status"])
                 body["summary_enqueued"] = True
                 await self.store.put("turn", ctx.turn, body, ctx.session)

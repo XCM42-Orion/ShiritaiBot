@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from test_permissions import eventually
 
 from shiritaibot.adapters.onebot11 import OneBot
+from shiritaibot.agent import SessionActor
 from shiritaibot.config import AdapterConfig, GroupContextConfig
 from shiritaibot.core import Context, Reply
 
@@ -201,3 +202,88 @@ def test_group_context_config_bounds():
         GroupContextConfig(inject_messages=-1)
     with pytest.raises(ValidationError):
         GroupContextConfig(inject_chars=10)
+
+
+class InterjectLLM:
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.calls = []
+
+    async def complete(self, route, system, messages, tools, settings, **kwargs):
+        self.calls.append({"route": route, "system": system, "messages": list(messages), "tools": tools})
+        return Reply(text=self.replies.pop(0) if self.replies else "收到")
+
+
+def interject_bot(app):
+    cfg = AdapterConfig(id="qq", owner_id="1", self_id="100", groups=["9"])
+    return OneBot(cfg, app.vault, app.store, app.adapters.receive)
+
+
+def enable_interject(app, probability=1.0, cooldown=900):
+    group = app.config.value.group_context
+    group.enabled = True
+    group.interject = True
+    group.interject_probability = probability
+    group.interject_cooldown = cooldown
+    group.interject_max_per_hour = 4
+
+
+async def test_interject_pass_is_silent_and_not_archived(app):
+    enable_interject(app)
+    llm = InterjectLLM("<pass>")
+    app.runtime.llm = llm
+    await app.adapters.maybe_interject(interject_bot(app), SESSION, "4", "小明(4)", "今天吃什么")
+    async def done():
+        return llm.calls and not app.runtime.busy(SESSION)
+
+    await eventually(done)
+    assert await app.store.list("outbox") == []
+    assert await app.store.history(SESSION) == []
+    system, messages, tools = llm.calls[0]["system"], llm.calls[0]["messages"], llm.calls[0]["tools"]
+    assert "<pass>" in system and "<interject>" in system
+    assert tools == [] and "今天吃什么" in messages[-1]["content"]
+    assert all("群聊观察" not in str(m.get("content")) for m in messages[:-1])
+
+
+async def test_interject_reply_is_sent_and_cooldown_applies(app):
+    enable_interject(app)
+    llm = InterjectLLM("我也想吃了", "不该有第二次")
+    app.runtime.llm = llm
+    bot = interject_bot(app)
+    await app.adapters.maybe_interject(bot, SESSION, "4", "小明(4)", "今天吃什么")
+    await eventually(lambda: app.store.list("outbox"))
+    outbox = await app.store.list("outbox")
+    assert [row["text"] for row in outbox] == ["我也想吃了"]
+    await app.adapters.maybe_interject(bot, SESSION, "5", "小红(5)", "火锅吧")
+    await asyncio.sleep(0.05)
+    assert len(llm.calls) == 1
+
+
+async def test_interject_probability_zero_and_quiet_hours_block(app, monkeypatch):
+    enable_interject(app, probability=0.0)
+    llm = InterjectLLM("不该说话")
+    app.runtime.llm = llm
+    bot = interject_bot(app)
+    await app.adapters.maybe_interject(bot, SESSION, "4", "小明(4)", "今天吃什么")
+    assert llm.calls == []
+    enable_interject(app)
+    monkeypatch.setattr("shiritaibot.proactive.quiet_hours", lambda start, end, local: True)
+    await app.adapters.maybe_interject(bot, SESSION, "4", "小明(4)", "今天吃什么")
+    await asyncio.sleep(0.05)
+    assert llm.calls == []
+
+
+async def test_interject_skips_busy_sessions(app):
+    enable_interject(app)
+    llm = InterjectLLM("不该说话")
+    app.runtime.llm = llm
+    actor = SessionActor(app.runtime, SESSION)
+    actor.current = asyncio.create_task(asyncio.sleep(1))
+    app.runtime.actors[SESSION] = actor
+    try:
+        assert app.runtime.busy(SESSION)
+        await app.adapters.maybe_interject(interject_bot(app), SESSION, "4", "小明(4)", "今天吃什么")
+        assert llm.calls == []
+    finally:
+        actor.current.cancel()
+        actor.task.cancel()

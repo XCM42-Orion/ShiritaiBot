@@ -58,7 +58,7 @@ export const PROVIDER_FIELDS: FieldSpec[] = [
       "gemini",
       "systemone",
     ],
-    help: "systemone 用于 TypeSafe Jev 等判断模型：只做分类不生成文本，仅能用于工作/对话分流、主动事件分诊和记忆路由。",
+    help: "systemone 用于 TypeSafe Jev 等判断模型：只做分类不生成文本，仅能用于工作/对话分流、主动事件分诊和记忆路由。填法：名称 typesafe，协议选 systemone，Base URL 填 https://api.typesafe.ai/v1，Key 填 TypeSafe 的 key；模型名填 jev-1.14.0，再把它放进 router / light / memory / approval 路由。若所在网络访问不了 TypeSafe，给这个提供商配代理（如 http://127.0.0.1:7890）。",
   },
   {
     key: "base_url",
@@ -133,6 +133,7 @@ export const MODEL_FIELDS: FieldSpec[] = [
     kind: "number",
     min: 64,
     max: 128000,
+    help: "单次回复最多生成多少 token。聊天模型常见 4096～8192；填太大会截断长回复，太小会写不完，建议先用 4096。",
   },
   {
     key: "enabled",
@@ -146,7 +147,7 @@ export const MODEL_FIELDS: FieldSpec[] = [
     kind: "number",
     min: 0,
     max: 10000000,
-    help: "包括输入与输出，须大于最大输出。0 表示未指定；按字符估算 token，超出时尝试下一候选模型。",
+    help: "包括输入与输出，须大于最大输出。0 表示未指定（推荐）；按字符估算 token，超出时尝试下一候选模型。DeepSeek 等长上下文模型可填 64000，普通模型填 128000 也行，填 0 最省心。",
   },
   {
     key: "modalities",
@@ -241,6 +242,20 @@ export const ADAPTER_FIELDS: FieldSpec[] = [
     label: "忽略的账号",
     kind: "list",
     help: "每行一个 QQ 号，优先级高于白名单。",
+  },
+  {
+    key: "auto_start",
+    label: "自动启动协议端",
+    kind: "list",
+    help: "协议端进程消失、连接持续失败时尝试拉起它。每行一个参数，例如 C:\\Apps\\NapCat\\Shell\\launcher.bat。留空则关闭；如果启动器需要管理员权限，可能弹出 UAC 或在无人值守时失败（日志会记录）。",
+  },
+  {
+    key: "auto_start_after",
+    label: "连续失败多少秒后启动",
+    kind: "number",
+    min: 5,
+    max: 3600,
+    help: "避免协议端只是短暂重连时就误启动。两次自动启动至少间隔 5 分钟。",
   },
 ];
 
@@ -688,6 +703,37 @@ export const GROUP_CONTEXT_FIELDS: FieldSpec[] = [
     kind: "boolean",
     help: "允许 Bot 按关键词查询或向前翻阅本群记录，并在提示词中提醒其按需查询。仍受工具权限控制。",
   },
+  {
+    key: "interject",
+    label: "允许被动参与（水群）",
+    kind: "boolean",
+    help: "未 @ Bot 的群消息按概率触发一次只读观察，喜欢就自己接一句，不合适就不说话。不占工具权限、不会写入会话历史。",
+  },
+  {
+    key: "interject_probability",
+    label: "每条群消息的插话概率",
+    kind: "number",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    help: "0 表示不插话，1 表示每条都可能观察。建议保持很低，例如 0.02。",
+  },
+  {
+    key: "interject_cooldown",
+    label: "插话冷却（秒）",
+    kind: "number",
+    min: 60,
+    max: 86400,
+    help: "同一群两次观察之间的最短间隔。",
+  },
+  {
+    key: "interject_max_per_hour",
+    label: "每群每小时上限",
+    kind: "number",
+    min: 1,
+    max: 60,
+    help: "同一群一小时内最多观察并可能发言的次数。",
+  },
 ];
 
 export const VISION_FIELDS: FieldSpec[] = [
@@ -932,6 +978,8 @@ export function createAdapter(rows: AdapterConfig[]): AdapterConfig {
     groups: [],
     friends: [],
     ignore_users: [],
+    auto_start: [],
+    auto_start_after: 60,
   };
 }
 

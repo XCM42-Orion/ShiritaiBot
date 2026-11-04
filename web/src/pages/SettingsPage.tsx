@@ -1,3 +1,6 @@
+import { useQueries } from "@tanstack/react-query";
+import type { ApiClient } from "../api/client";
+import type { Settings } from "../api/types";
 import { Field, FieldForm } from "../components/FieldForm";
 import { InstanceCollection } from "../components/InstanceCollection";
 import {
@@ -16,7 +19,47 @@ import {
 } from "../config/schema";
 import type { ConfigPageProps } from "./common";
 
-export function SettingsPage({ config, setConfig }: ConfigPageProps) {
+function GroupTools({ client, config }: { client: ApiClient; config: Settings }) {
+  const groups = config.adapters
+    .filter((adapter) => adapter.enabled)
+    .flatMap((adapter) =>
+      adapter.groups.map((group) => ({
+        adapter: adapter.id,
+        group,
+        session: `group:${adapter.id}:${group}`,
+      })),
+    );
+  const results = useQueries({
+    queries: groups.map((item) => ({
+      queryKey: ["tools", item.session],
+      queryFn: () => client.tools(item.session),
+      staleTime: 30000,
+    })),
+  });
+  if (!groups.length) {
+    return <p className="muted">还没有启用任何群聊。</p>;
+  }
+  return (
+    <ul className="muted">
+      {groups.map((item, index) => {
+        const catalog = results[index]?.data;
+        const available = (catalog?.tools ?? [])
+          .filter((tool) => tool.decision !== "deny")
+          .map((tool) => tool.name);
+        return (
+          <li key={item.session}>
+            <strong>
+              {item.adapter} · {item.group}
+            </strong>
+            ：{catalog ? available.join("、") || "无可用工具" : "读取中…"}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export function SettingsPage({ client, config, setConfig }: ConfigPageProps) {
   return (
     <>
       <section className="panel">
@@ -31,6 +74,24 @@ export function SettingsPage({ config, setConfig }: ConfigPageProps) {
             />
           ))}
         </div>
+      </section>
+      <section className="panel">
+        <h2>三个令牌分别是什么</h2>
+        <ul className="muted">
+          <li>
+            <strong>管理令牌</strong>：登录这个 WebUI 用。存在 data/web.token，
+            也可以用命令 <code>shiritaibot token</code> 查看。未登录时打开首页就是登录页
+            （也可以直接访问 /login）。
+          </li>
+          <li>
+            <strong>适配器访问令牌</strong>：Bot 连接 OneBot 协议端时带的密码，在「适配器」页填写；
+            要和 NapCat 里配置的访问令牌一致。没设访问令牌就留空。
+          </li>
+          <li>
+            <strong>NapCat WebUI 令牌</strong>：只用于打开 NapCat 自己的管理页面
+            （默认 http://127.0.0.1:6099 ），和上面两个无关。
+          </li>
+        </ul>
       </section>
       <section className="panel">
         <h2>网页搜索</h2>
@@ -233,6 +294,11 @@ export function SettingsPage({ config, setConfig }: ConfigPageProps) {
           fields={GROUP_CONTEXT_FIELDS}
           onChange={(group_context) => setConfig({ ...config, group_context })}
         />
+        <h3>当前群可用的工具</h3>
+        <p className="muted">
+          按已保存的权限策略计算；保存配置后会更新。群聊默认只能用基础对话工具。
+        </p>
+        <GroupTools client={client} config={config} />
       </section>
       <section className="panel">
         <h2>主动性与打扰策略</h2>

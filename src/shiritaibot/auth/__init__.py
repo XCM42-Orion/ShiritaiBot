@@ -5,6 +5,7 @@ import fnmatch
 import json
 import os
 import re
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
 log = get_logger("审批")
 # Environment variable names that hold credentials and get stored in the Vault.
 SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH", re.I)
+SENSITIVE_FILE = re.compile(
+    r"config\.toml|master\.key|web\.token|\.credentials|state\.sqlite3|profiles[\\/]", re.I
+)
 
 
 class Review(Model):
@@ -132,6 +136,9 @@ class Permissions:
         self.notify: Callable[[str], Awaitable[None]] | None = None
         self.llm: ProviderManager | None = None
         self.policy_lock = asyncio.Lock()
+        # Identical auto-approved calls within a minute reuse the verdict instead of
+        # paying for a second full review round-trip.
+        self.review_cache: dict[str, tuple[float, str]] = {}
 
     def session_policy(self, ctx: Context) -> SessionPolicy:
         policy = self.config.value.policy
@@ -206,29 +213,60 @@ class Permissions:
             "expires": now().timestamp() + self.config.value.policy.approval_timeout,
         }
         await self.store.put("approval", key, body, ctx.session)
+        signature = body["hash"]
+        clock = time.monotonic()
+        cached = self.review_cache.get(signature)
         try:
             if self.llm is None:
                 raise PublicError("自动审批模型不可用")
-            cfg = self.config.value.model_copy(deep=True)
-            cfg.routes["approval"] = cfg.routes.get("approval") or cfg.routes.get("light", [])
-            history = await self.store.history(ctx.session, limit=30, include_commands=False)
-            request = {
-                "session": ctx.session,
-                "background": ctx.background,
-                "tool": tool.name,
-                "description": tool.description,
-                "risk": tool.risk,
-                "arguments": args,
-                "conversation": [
-                    {"role": m["role"], "content": m.get("_original_content", m.get("content", ""))}
-                    for m in history
-                ],
-            }
-            async with asyncio.timeout(cfg.policy.approval_timeout):
-                review = await self.decision_review(request, cfg)
-                if review is None:
-                    review = await self.text_review(request, cfg)
-            body.update(status="approved" if review.allow else "denied", reason=review.reason)
+            if cached is not None and cached[0] > clock:
+                body.update(
+                    status="approved", reason=f"复用一分钟内相同调用的批准结论：{cached[1]}"
+                )
+            else:
+                cfg = self.config.value.model_copy(deep=True)
+                cfg.routes["approval"] = cfg.routes.get("approval") or cfg.routes.get("light", [])
+                # The conversation is context, not evidence: a dozen recent lines is enough
+                # and keeps the fallback round-trip short.
+                history = await self.store.history(ctx.session, limit=12, include_commands=False)
+                request = {
+                    "session": ctx.session,
+                    "background": ctx.background,
+                    "tool": tool.name,
+                    "description": tool.description,
+                    "risk": tool.risk,
+                    "arguments": args,
+                    "conversation": [
+                        {
+                            "role": m["role"],
+                            "content": brief(
+                                str(m.get("_original_content") or m.get("content") or ""), 1200
+                            ),
+                        }
+                        for m in history
+                    ],
+                }
+                started = time.monotonic()
+                async with asyncio.timeout(cfg.policy.approval_timeout):
+                    review = await self.decision_review(request, cfg)
+                    if review is None:
+                        review = await self.text_review(request, cfg)
+                body.update(
+                    status="approved" if review.allow else "denied",
+                    reason=review.reason,
+                    elapsed=round(time.monotonic() - started, 2),
+                )
+                # Only memoize while the call still falls under auto review; a policy
+                # change during the round-trip invalidates this verdict.
+                if review.allow and self.decision(ctx, tool) == "auto":
+                    self.review_cache[signature] = (
+                        time.monotonic() + 60,
+                        brief(review.reason, 120),
+                    )
+                    if len(self.review_cache) > 200:
+                        self.review_cache = {
+                            k: v for k, v in self.review_cache.items() if v[0] > time.monotonic()
+                        }
         except asyncio.CancelledError:
             body.update(status="cancelled", reason="审批已取消")
             await self.store.put("approval", key, body, ctx.session)
@@ -238,9 +276,10 @@ class Permissions:
         except Exception:
             body.update(status="denied", reason="自动审批失败、超时或返回格式无效，未执行")
         await self.store.put("approval", key, body, ctx.session)
+        elapsed = f"，耗时 {body['elapsed']}s" if "elapsed" in body else ""
         (log.log if body["status"] == "approved" else log.warning)(
             f"模型自动审批{'通过' if body['status'] == 'approved' else '拒绝'} "
-            f"{tool.name}（{brief(args, 80)}）：{brief(body['reason'], 120)}",
+            f"{tool.name}（{brief(args, 80)}）：{brief(body['reason'], 120)}{elapsed}",
             describe_session(ctx.session),
         )
         if body["status"] != "approved":
@@ -314,6 +353,13 @@ class Permissions:
             raise PublicError("工具被权限策略拒绝")
         if decision == "allow":
             return
+        # Credential-bearing files are never auto-approved, however the shell policy is set:
+        # an auto reviewer that reads config.toml keeps leaking keys into the conversation.
+        if decision == "auto" and tool.name == "shell" and SENSITIVE_FILE.search(
+            str(args.get("command", ""))
+        ):
+            log.log("命令涉及含密钥的文件，改为人工审批", describe_session(ctx.session))
+            decision = "manual"
         if decision == "auto":
             await self.auto_review(ctx, tool, args)
             if self.decision(ctx, tool) not in {"auto", "allow"}:

@@ -265,12 +265,17 @@ class MemoryManager:
             (ctx.session, ctx.turn),
         )
         found = None
+        samples: list[str] = []
         for item in rows:
             message = json.loads(item["data"])
             if message.get("role") not in {"user", "tool"}:
                 continue
             content = message.get("_original_content", message.get("content", ""))
-            if not isinstance(content, str) or target not in normalize(content):
+            if not isinstance(content, str):
+                continue
+            if len(samples) < 3 and content.strip():
+                samples.append(brief(content, 40))
+            if target not in normalize(content):
                 continue
             if message["role"] == "user" and ctx.owner and not ctx.background:
                 return "owner", f"owner:{ctx.turn}"
@@ -279,8 +284,10 @@ class MemoryManager:
             found = found or ("derived", f"{kind}:{ctx.turn}")
         if found:
             return found
+        hint = f"本轮可用的原文片段：{' / '.join(samples)}。" if samples else ""
         raise PublicError(
-            "evidence 必须原样摘自本轮主人的消息或工具结果；你自己说的话和推断不能作为证据"
+            "evidence 必须原样摘自本轮主人的消息或工具结果（不能改写、不能跨轮次），"
+            "你自己说的话和推断不能作为证据。" + hint
         )
 
     async def owner_words(self, ctx: Context, quote: str) -> str:

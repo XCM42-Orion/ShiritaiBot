@@ -362,6 +362,14 @@ export function Dashboard({ client }: { client: ApiClient }) {
     queryKey: ["config"],
     queryFn: () => client.config(),
   });
+  const diagnostics = useQuery({
+    queryKey: ["diagnostics"],
+    queryFn: () => client.diagnostics(),
+    staleTime: 60000,
+    refetchInterval: 60000,
+    retry: false,
+  });
+  const warnings = diagnostics.data?.warnings ?? [];
   const configured = (config.data?.models ?? []).map((model) => model.id);
 
   return (
@@ -387,6 +395,18 @@ export function Dashboard({ client }: { client: ApiClient }) {
       </div>
       {query.error && (
         <QueryErrorNotice message={`读取统计失败：${query.error.message}`} />
+      )}
+      {warnings.length > 0 && (
+        <section className="panel" role="alert">
+          <div className="panel-head">
+            <h3>配置需要检查</h3>
+          </div>
+          <ul className="muted">
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </section>
       )}
       {data && data.totals && data.buckets ? (
         <>

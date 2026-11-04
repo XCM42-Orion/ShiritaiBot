@@ -1,5 +1,6 @@
 import logging
 import os
+import socket
 import sys
 from copy import copy, deepcopy
 from pathlib import Path
@@ -35,6 +36,15 @@ class LoginLinkFormatter(DefaultFormatter):
         return super().formatMessage(record)
 
 
+def _port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return True
+    return False
+
+
 @cli.command()
 def run(
     home: Path = Path("data"),
@@ -59,6 +69,16 @@ def run(
         restart_requested = True
         server.should_exit = True
 
+    if _port_in_use(port):
+        typer.echo(
+            f"端口 {port} 已被占用，可能已经有一个 ShiritaiBot 实例在运行。\n"
+            f"· 打开 http://127.0.0.1:{port} 查看是否就是它；\n"
+            "· 需要停掉旧实例时，关闭运行它的窗口或结束对应的 python/shiritaibot 进程；\n"
+            f"· 或换端口启动：shiritaibot run --port {port + 1}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     config = uvicorn.Config(
         create_app(
             home,
@@ -73,7 +93,17 @@ def run(
         log_config=log_config,
     )
     server = uvicorn.Server(config)
-    server.run()
+    try:
+        server.run()
+    except SystemExit:
+        if _port_in_use(port):
+            typer.echo(
+                f"端口 {port} 已被占用，可能已经有一个 ShiritaiBot 实例在运行。"
+                f"请先关闭旧实例，或换端口启动：shiritaibot run --port {port + 1}",
+                err=True,
+            )
+            raise typer.Exit(1) from None
+        raise
     if restart_requested:
         # Re-enter Python only after Uvicorn has closed connections and the
         # application lifespan has flushed data and stopped its workers.

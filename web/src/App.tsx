@@ -56,7 +56,7 @@ function ConsoleApp() {
     linkToken ? null : sessionStorage.getItem(TOKEN_KEY),
   );
   const [page, navigate] = useHashRoute();
-  const { succeed, fail, dismiss } = useNotice();
+  const { succeed, fail, warn, dismiss } = useNotice();
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -220,8 +220,13 @@ function ConsoleApp() {
   async function save() {
     setSaving(true);
     try {
-      await draft.save();
-      succeed("配置已保存并应用");
+      const result = await draft.save();
+      const warnings = result?.warnings ?? [];
+      if (warnings.length) {
+        warn("配置已保存，但有以下问题：" + warnings.join("；"));
+      } else {
+        succeed("配置已保存并应用");
+      }
       await queryClient.invalidateQueries({ queryKey: ["health"] });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));

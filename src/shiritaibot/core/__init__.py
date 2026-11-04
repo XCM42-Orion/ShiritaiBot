@@ -69,6 +69,8 @@ class Context:
     allowed_tools: tuple[str, ...] | None = None
     # Proactive loops carry a creation-time snapshot, independent of Main sessions.
     tool_policy: dict[str, Any] | None = None
+    # Group chatter the Bot may answer or pass on; a pass is not delivered.
+    interject: bool = False
 
 
 @dataclass(slots=True)

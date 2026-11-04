@@ -62,6 +62,8 @@ export interface AdapterConfig extends Instance {
   groups: string[];
   friends: string[];
   ignore_users: string[];
+  auto_start: string[];
+  auto_start_after: number;
 }
 
 export interface SubagentConfig extends Instance {
@@ -321,6 +323,10 @@ export interface GroupContextConfig {
   inject_messages: number;
   inject_chars: number;
   query_tool: boolean;
+  interject: boolean;
+  interject_probability: number;
+  interject_cooldown: number;
+  interject_max_per_hour: number;
 }
 
 export type ToolPermission = "deny" | "manual" | "auto" | "allow";
@@ -692,6 +698,11 @@ export interface RoutineDraft {
 export interface ConfigSaveResult {
   ok: boolean;
   version: number;
+  warnings?: string[];
+}
+
+export interface DiagnosticsResult {
+  warnings: string[];
 }
 
 export interface RecordMap {
