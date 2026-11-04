@@ -9,6 +9,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "./api/client";
 import type { ApiClient } from "./api/client";
 import { AppShell } from "./components/AppShell";
+import { ChatWorkspace } from "./components/ChatWorkspace";
 import { LoginView } from "./components/LoginView";
 import { SaveBar } from "./components/SaveBar";
 import { UpdateDialog } from "./components/UpdateDialog";
@@ -37,6 +38,7 @@ import { SubagentsPage } from "./pages/SubagentsPage";
 import type { Action } from "./pages/common";
 
 const TOKEN_KEY = "shiritaibot-token";
+const MODE_KEY = "shiritaibot-mode";
 
 export function App() {
   return (
@@ -62,7 +64,22 @@ function ConsoleApp() {
   const [restarting, setRestarting] = useState(false);
   const [restartInstance, setRestartInstance] = useState<string | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
+  const [mode, setMode] = useState<"console" | "chat">(() =>
+    localStorage.getItem(MODE_KEY) === "chat" ? "chat" : "console",
+  );
+  const [session, setSession] = useState("web:owner");
+  const [drafts, setDrafts] = useState<string[]>([]);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    localStorage.setItem(MODE_KEY, mode);
+  }, [mode]);
+
+  const startConversation = useCallback(() => {
+    const id = "web:" + Date.now();
+    setDrafts((previous) => [...previous, id]);
+    setSession(id);
+  }, []);
 
   const authenticate = useCallback(
     (next: string) => {
@@ -264,6 +281,24 @@ function ConsoleApp() {
     );
   }
 
+  if (mode === "chat") {
+    return (
+      <ChatWorkspace
+        client={client}
+        act={act}
+        assistantName={draft.config?.assistant_name ?? "ShiritaiBot"}
+        session={session}
+        onSelectSession={setSession}
+        onCreateSession={startConversation}
+        draftSessions={drafts}
+        onOpenSettings={() => {
+          setMode("console");
+          navigate("settings");
+        }}
+      />
+    );
+  }
+
   function content(api: ApiClient) {
     if (!draft.config) {
       return draft.loading ? <p className="muted">正在读取配置…</p> : null;
@@ -325,6 +360,7 @@ function ConsoleApp() {
       pendingApprovals={pending}
       online={health.isSuccess && !restarting}
       version={"v" + (health.data?.version ?? "0.2.0")}
+      onOpenChat={() => setMode("chat")}
       onRestart={() => void restart()}
       restarting={restarting}
       restartDisabled={

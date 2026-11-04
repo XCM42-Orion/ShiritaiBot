@@ -17,25 +17,27 @@
   --text-label: #475569;
 
   /* Pink and blue accents */
-  --accent: #2563eb;
-  --accent-strong: #1d4ed8;
+  --accent: #4d6bfe;
+  --accent-strong: #3b5bfd;
   --accent-ink: #ffffff;
-  --accent-soft: #eaf2ff;
+  --accent-soft: #eef2ff;
+  --bubble-user: #f1f3f7;
+  --sidebar-active: #eef2ff;
   --pink: #be185d;
   --pink-soft: #fff0f7;
   --pink-border: #f5c8df;
   --border: #e2e8f2;
   --border-strong: #c5d2e5;
-  --focus: #3b82f6;
-  --focus-ring: rgba(59, 130, 246, 0.16);
-  --danger: #b91c1c;
+  --focus: #4d6bfe;
+  --focus-ring: rgba(77, 107, 254, 0.18);
+  --danger: #dc2626;
   --danger-border: #fca5a5;
   --danger-bg: #fff1f2;
   --error-solid: #b91c1c;
   --warning-solid: #facc15;
   --warning-ink: #422006;
-  --success: #15803d;
-  --success-solid: #15803d;
+  --success: #16a34a;
+  --success-solid: #16a34a;
   --shadow: 0 8px 28px rgba(44, 75, 130, 0.1);
 
   /* Charts */

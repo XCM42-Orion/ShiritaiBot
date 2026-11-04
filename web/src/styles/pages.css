@@ -143,32 +143,58 @@
 }
 
 .message {
-  margin: 12px 0;
-  padding: 10px 16px;
-  background: var(--pink-soft);
-  border-left: 2px solid var(--pink-border);
-  border-radius: 0 6px 6px 0;
+  margin: 14px 0;
+  max-width: 100%;
+}
+
+.message small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
 }
 
 .message.user {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  margin-left: auto;
+  max-width: 80%;
+  padding: 10px 14px;
+  background: var(--bubble-user);
+  border-radius: 12px;
 }
 
-.message.tool {
-  background: var(--bg-raised);
-  border-color: var(--border-strong);
-}
-
-.message.delivered {
-  border-color: var(--pink);
-}
-
-.message p {
-  margin: 7px 0 0;
-  font-size: 13px;
+.message.user p {
+  margin: 0;
+  font-size: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.message.assistant {
+  background: transparent;
+  padding: 0;
+}
+
+.message.assistant .assistant-body p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message.assistant .assistant-body > * + * {
+  margin-top: 8px;
+}
+
+.message.failed-turn {
+  border-left: 3px solid var(--danger);
+  padding-left: 12px;
+}
+
+.turn-failed {
+  color: var(--danger);
+  font-size: 11px;
+  margin-right: 6px;
 }
 
 .loop-step + .loop-step {
@@ -250,28 +276,148 @@
   overflow-wrap: anywhere;
 }
 
-.message small {
-  font-size: 10px;
-  color: var(--muted);
-}
-
 .composer {
   position: sticky;
   bottom: 16px;
   display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 14px 14px 10px;
   background: var(--panel);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: 14px;
 }
 
 .composer textarea {
-  flex: 1;
+  flex: none;
+  width: 100%;
+  min-height: 88px;
+  max-height: 240px;
+  padding: 4px 2px;
   border: 0;
   background: transparent;
+  line-height: 1.6;
   resize: none;
+  overflow-y: auto;
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-select {
+  position: relative;
+}
+
+.composer-chip {
+  min-height: 26px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.composer-chip:hover:not(:disabled),
+.composer-chip[aria-expanded="true"] {
+  background: var(--bg-raised);
+  border: 0;
+  color: var(--text-strong);
+}
+
+.composer-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 300px;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.composer-popover button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.composer-popover button[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.composer-popover strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.composer-popover small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.composer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composer-queue li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 4px 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg-raised);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.composer-queue span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-menu button[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .command-menu {

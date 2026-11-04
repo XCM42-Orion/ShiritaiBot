@@ -30,140 +30,12 @@ import { NoticeProvider, useNotice } from "../src/hooks/useNotice";
 import { FieldForm } from "../src/components/FieldForm";
 import { PAGES, pageFromHash } from "../src/navigation";
 import { App } from "../src/App";
+import { baseConfig } from "./fixtures";
 
 afterEach(() => {
   cleanup();
   localStorage.removeItem("shiritaibot.cost-currency");
 });
-
-function baseConfig(): Settings {
-  return {
-    providers: [
-      {
-        id: "main",
-        enabled: true,
-        protocol: "chat_completions",
-        base_url: "https://api.example/v1",
-        api_key: "secret:saved",
-        timeout: 120,
-        max_retries: 2,
-        proxy: "",
-      },
-    ],
-    models: [],
-    routes: { agent: [], chat: [], light: [] },
-    agent_split: false,
-    adapters: [],
-    subagents: [],
-    plugins: [],
-    skills: { enabled: true, inject: true, disabled: [] },
-    mcp_servers: [],
-    policy: {
-      denied_tools: [],
-      scope_tools: {},
-      approval_timeout: 600,
-      approval_allow_threshold: 0.8,
-      approval_deny_threshold: 0.9,
-      approval_on_deny: "fallback",
-      approval_on_unsure: "fallback",
-      owner_default: { mode: "agent", preset: "safe_manual", tools: {} },
-      private_default: { mode: "chat", preset: "safe_manual", tools: {} },
-      group_default: { mode: "chat", preset: "safe_manual", tools: {} },
-      proactive_default: { preset: "safe_manual", tools: {} },
-      sessions: {},
-      shell_command: ["bash", "--noprofile", "--norc", "-c"],
-      max_steps: 25,
-      max_turn_seconds: 1200,
-      max_context_chars: 100000,
-    },
-    proactive: {
-      enabled: false,
-      timezone: "Asia/Shanghai",
-      quiet_start: "23:30",
-      quiet_end: "08:00",
-      throttle_seconds: 600,
-    },
-    web_search: {
-      enabled: true,
-      provider: "tavily",
-      max_results: 5,
-      timeout: 30,
-      tavily: {
-        api_key: "env:TAVILY_API_KEY",
-        search_depth: "basic",
-        topic: "general",
-      },
-      serpapi: { api_key: "env:SERPAPI_API_KEY", hl: "zh-cn", gl: "cn" },
-      deepseek: {
-        api_key: "env:DEEPSEEK_API_KEY",
-        need_content: false,
-        localization: "",
-      },
-    },
-    concurrency: 4,
-    persona: "test",
-    personas: [],
-    default_persona: "",
-    assistant_name: "ShiritaiBot",
-    owner_name: "主人",
-    wake_keywords: [],
-    wake_keyword_mode: "contains",
-    private_require_keyword: false,
-    context: {
-      strategy: "discard",
-      max_turns: 50,
-      compression_model: "",
-      keep_recent_turns: 10,
-    },
-    group_context: {
-      enabled: false,
-      inject_messages: 20,
-      inject_chars: 4000,
-      query_tool: true,
-    },
-    memory: {
-      inject: true,
-      inject_chars: 1500,
-      extract: true,
-      extract_messages: 20,
-      extract_idle_minutes: 10,
-    },
-    vision: { caption: true, max_images: 4 },
-    meme: {
-      enabled: false,
-      capacity: 300,
-      categories: [
-        { name: "happy", description: "开心" },
-        { name: "sad", description: "难过" },
-      ],
-      collect: true,
-      collect_rate: 0.3,
-      stickers_only: true,
-      persona_check: true,
-      fit_threshold: 0.6,
-      inject: true,
-      max_per_reply: 2,
-    },
-    knowledge: {
-      enabled: true,
-      chat: false,
-      chunk_chars: 600,
-      chunk_overlap: 80,
-      max_file_mb: 50,
-    },
-    emotion: {
-      enabled: false,
-      sensitivity: 0.5,
-      tone: 0.5,
-      initiative: 0.3,
-      persistence: 0.5,
-      developer: false,
-      judge_weight: 0.6,
-      rules_weight: 0.25,
-      sentiment_weight: 0.15,
-    },
-  };
-}
 
 function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
   const stub = () => vi.fn().mockResolvedValue(undefined);
@@ -1260,7 +1132,7 @@ it("renders an Agent Loop as text and collapsible tool calls", async () => {
   expect(await screen.findByText("我先看看")).toBeTruthy();
   expect(screen.getByText("找到一封")).toBeTruthy();
   expect(screen.getByText("查邮件")).toBeTruthy();
-  expect(screen.getByText("mail_search")).toBeTruthy();
+  expect(screen.getAllByText("mail_search").length).toBeGreaterThan(0);
   expect(screen.getByText("汇丰")).toBeTruthy();
   expect(screen.getByText("完成")).toBeTruthy();
   expect(screen.queryByText(/tool_call_id/)).toBeNull();

@@ -629,6 +629,17 @@ export interface SessionRecord {
   background?: boolean;
 }
 
+export interface TurnRecord {
+  id: string;
+  scope?: string;
+  status: string;
+  started?: string;
+  finished?: string;
+  steps?: number;
+  route?: string;
+  actor?: string;
+}
+
 export interface ToolCall {
   id: string;
   type?: string;
@@ -713,6 +724,7 @@ export interface RecordMap {
   subagent_run: SubagentRunRecord;
   reply: ReplyRecord;
   session: SessionRecord;
+  turn: TurnRecord;
 }
 
 export type RecordKind = keyof RecordMap;

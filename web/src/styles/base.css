@@ -76,19 +76,27 @@ button {
   align-items: center;
   justify-content: center;
   gap: 7px;
+  min-height: 34px;
   padding: 8px 13px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   background: var(--button-bg);
   color: var(--text);
   cursor: pointer;
   transition:
-    background 0.15s ease,
-    border-color 0.15s ease;
+    background 120ms,
+    border-color 120ms,
+    color 120ms;
 }
 
 button:hover:not(:disabled) {
-  background: var(--button-hover);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button:active:not(:disabled) {
+  filter: brightness(0.94);
 }
 
 button:disabled {
@@ -105,12 +113,39 @@ button:disabled {
 
 .primary:hover:not(:disabled) {
   background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--accent-ink);
+}
+
+.primary:disabled {
+  opacity: 0.4;
+}
+
+.icon-button {
+  min-width: 34px;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--text-label);
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .danger {
   background: var(--danger-bg);
   border-color: var(--danger-border);
   color: var(--danger);
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+  filter: brightness(0.96);
 }
 
 input,
@@ -121,16 +156,33 @@ select {
   background: var(--input-bg);
   color: var(--text-strong);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 9px 11px;
   outline: none;
+  transition:
+    border-color 120ms,
+    box-shadow 120ms;
+}
+
+input:hover,
+textarea:hover,
+select:hover {
+  border-color: var(--border-strong);
 }
 
 input:focus,
 textarea:focus,
 select:focus {
   border-color: var(--focus);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 textarea {

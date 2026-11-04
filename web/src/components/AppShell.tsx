@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
-import { ChevronRight, CloudDownload, RotateCw } from "lucide-react";
+import {
+  ChevronRight,
+  CloudDownload,
+  MessageSquare,
+  RotateCw,
+} from "lucide-react";
 import { PAGES, pageMeta } from "../navigation";
 import type { PageId } from "../navigation";
 
@@ -10,6 +15,7 @@ export function AppShell({
   online,
   version,
   onLogout,
+  onOpenChat,
   onRestart,
   restarting,
   restartDisabled,
@@ -24,6 +30,7 @@ export function AppShell({
   online: boolean;
   version: string;
   onLogout: () => void;
+  onOpenChat: () => void;
   onRestart: () => void;
   restarting: boolean;
   restartDisabled: boolean;
@@ -104,6 +111,14 @@ export function AppShell({
           </div>
           <div>
             <span className="local-badge">仅本机</span>
+            <button
+              type="button"
+              className="chat-mode-button"
+              onClick={onOpenChat}
+            >
+              <MessageSquare size={14} aria-hidden="true" />
+              对话模式
+            </button>
             <button
               type="button"
               className="update-button"
