@@ -764,6 +764,11 @@ export interface ReleaseListing {
   page: number;
 }
 
+export interface UpdateInspect {
+  files: { path: string; kind: "modified" | "removed" }[];
+  patch: string | null;
+}
+
 export interface CommitPreview {
   sha: string;
   message: string;

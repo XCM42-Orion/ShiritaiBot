@@ -218,6 +218,38 @@ async def test_failed_dependency_sync_restores_previous_source(tmp_path, monkeyp
     assert len([a for a, _ in ran if "sync" in a]) == 2  # failed sync, then re-sync old lock
 
 
+async def test_inspect_reports_local_changes_and_writes_patch(tmp_path):
+    app = installed(tmp_path)
+    updater = Updater(app, restart=Mock(), transport=github([release("v1.1.0")]))
+    result = await updater.inspect("release", "v1.1.0")
+    files = {row["path"]: row["kind"] for row in result["files"]}
+    assert files["src/shiritaibot/cli.py"] == "modified"
+    assert files["src/shiritaibot/plugin/github/main.py"] == "modified"
+    assert files["src/shiritaibot/plugin/feishu/main.py"] == "removed"
+    assert files["obsolete.txt"] == "removed"
+    assert ".venv/marker" not in files
+    patch = updater.root / result["patch"]
+    assert patch.is_file() and patch.parent == updater.root / "data/patches"
+    assert patch.name.startswith("local-") and patch.suffix == ".patch"
+    text = patch.read_text(encoding="utf-8")
+    assert "+++ local/src/shiritaibot/cli.py" in text
+    assert "+old" in text
+    assert "+++ local/obsolete.txt" in text
+
+
+async def test_apply_reuses_the_inspected_download(tmp_path, monkeypatch):
+    monkeypatch.setenv("UV", "uv")
+    app = installed(tmp_path)
+    calls = []
+    updater = Updater(app, restart=Mock(), transport=github([release("v1.1.0")], calls))
+    fake_commands(updater)
+    await updater.inspect("release", "v1.1.0")
+    await updater.apply("release", "v1.1.0")
+    await updater.task
+    assert updater.state["phase"] == "restarting", updater.status()
+    assert len([c for c in calls if "codeload.github.com" in c]) == 1
+
+
 async def test_incomplete_archive_is_rejected_before_touching_app(tmp_path):
     app = installed(tmp_path)
     tarball = archive({"README.md": "nothing"})
@@ -243,6 +275,9 @@ def test_update_endpoints(tmp_path):
         assert client.get("/api/update/preview").json()["commit"]["sha"] == HEAD
         bad = client.post("/api/update/apply", json={"kind": "branch", "ref": "main"})
         assert bad.status_code == 422
+        inspected = client.post("/api/update/inspect", json={"kind": "release", "ref": "v1.0.0"})
+        assert inspected.status_code == 200
+        assert inspected.json()["files"][0]["path"]
 
 
 def test_default_updater_is_unavailable_outside_installer(tmp_path):
@@ -272,5 +307,7 @@ async def test_concurrent_update_is_rejected(tmp_path, monkeypatch):
     await updater.apply("commit", HEAD)
     with pytest.raises(PublicError, match="已有更新"):
         await updater.apply("commit", HEAD)
+    with pytest.raises(PublicError, match="已有更新"):
+        await updater.inspect("commit", HEAD)
     gate.set()
     await updater.task

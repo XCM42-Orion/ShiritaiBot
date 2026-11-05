@@ -33,6 +33,7 @@ import type {
   Paginated,
   CommitPreview,
   ReleaseListing,
+  UpdateInspect,
   UpdateStatus,
 } from "./types";
 
@@ -66,6 +67,10 @@ export interface ApiClient {
     refresh?: boolean,
   ): Promise<ReleaseListing>;
   updatePreview(refresh?: boolean): Promise<{ commit: CommitPreview | null }>;
+  inspectUpdate(
+    kind: "release" | "commit",
+    ref: string,
+  ): Promise<UpdateInspect>;
   applyUpdate(kind: "release" | "commit", ref: string): Promise<UpdateStatus>;
   config(): Promise<Settings>;
   tools(session?: string): Promise<ToolCatalog>;
@@ -214,6 +219,8 @@ export function createClient(getToken: () => string): ApiClient {
       request<{ commit: CommitPreview | null }>(
         "/update/preview?refresh=" + String(refresh),
       ),
+    inspectUpdate: (kind, ref) =>
+      request<UpdateInspect>("/update/inspect", "POST", { kind, ref }),
     applyUpdate: (kind, ref) =>
       request<UpdateStatus>("/update/apply", "POST", { kind, ref }),
     config: () => request<Settings>("/config"),

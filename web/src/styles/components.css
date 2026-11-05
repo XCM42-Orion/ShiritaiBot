@@ -1080,9 +1080,46 @@
   animation: update-rise 0.2s ease both;
 }
 
-.update-confirm > span {
+.update-confirm > span,
+.update-confirm > [role="alert"],
+.update-local {
   flex: 1;
   min-width: 200px;
+}
+
+.update-confirm > [role="alert"] {
+  margin: 0;
+  color: var(--danger);
+}
+
+.update-local {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-local-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.update-local-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.update-local-files code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .update-confirm .actions {

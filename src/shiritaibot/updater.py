@@ -10,6 +10,8 @@ Any failure before the restart moves the previous source back.
 from __future__ import annotations
 
 import asyncio
+import difflib
+import hashlib
 import json
 import os
 import re
@@ -41,6 +43,9 @@ MAX_RELEASE_PAGES = 10
 REQUIRED = ("src/shiritaibot/cli.py", "pyproject.toml", "uv.lock", "web/package-lock.json")
 # Entries of the deployed tree that survive an update untouched.
 KEEP = {".venv"}
+# Not part of a release, or generated locally: never reported as local edits.
+SKIP_DIRS = {".git", "__pycache__", "node_modules", ".pytest_cache", ".ruff_cache", ".mypy_cache"}
+SKIP_PATHS = {".venv", "web/dist"}
 PLUGIN_DIR = Path("src/shiritaibot/plugin")
 TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -75,6 +80,9 @@ class Updater:
         self.transport = transport
         self.cache: dict[str, tuple[float, Any]] = {}
         self.task: asyncio.Task | None = None
+        # Source downloaded by inspect(), reused by the following apply().
+        self.staged: dict | None = None
+        self.inspecting = False
         self.output: deque[str] = deque(maxlen=60)
         self.state: dict = {"phase": "idle", "message": "", "target": None}
 
@@ -224,42 +232,80 @@ class Updater:
 
     # ----- deployment ------------------------------------------------------------------------
 
-    async def apply(self, kind: str, ref: str) -> dict:
-        if reason := self.unavailable():
-            raise PublicError(reason)
-        if self.task and not self.task.done():
-            raise PublicError("已有更新正在进行")
+    async def archive(self, kind: str, ref: str) -> str:
         if kind == "release":
             if not TAG.match(ref) or ref not in {r["tag"] for r in await self.all_releases()}:
                 raise PublicError("找不到该版本，请刷新版本列表")
-            archive = ARCHIVE + "refs/tags/" + ref
-        elif kind == "commit":
+            return ARCHIVE + "refs/tags/" + ref
+        if kind == "commit":
             if not SHA.match(ref):
                 raise PublicError("提交编号无效")
-            archive = ARCHIVE + ref
-        else:
-            raise PublicError("未知的更新类型")
+            return ARCHIVE + ref
+        raise PublicError("未知的更新类型")
+
+    async def apply(self, kind: str, ref: str) -> dict:
+        if reason := self.unavailable():
+            raise PublicError(reason)
+        if self.inspecting or (self.task and not self.task.done()):
+            raise PublicError("已有更新正在进行")
+        archive = await self.archive(kind, ref)
+        staged, self.staged = self.staged, None
+        if staged and (staged["kind"], staged["ref"]) != (kind, ref):
+            await asyncio.to_thread(shutil.rmtree, staged["stage"], True)
+            staged = None
         self.output.clear()
         self.state = {
             "phase": "downloading",
             "message": "正在下载源码",
             "target": {"kind": kind, "ref": ref},
         }
-        self.task = asyncio.create_task(self.run(kind, ref, archive))
+        self.task = asyncio.create_task(self.run(kind, ref, archive, staged))
         return self.status()
+
+    async def inspect(self, kind: str, ref: str) -> dict:
+        """Download the target source and report the local edits an update would erase."""
+        if reason := self.unavailable():
+            raise PublicError(reason)
+        if self.inspecting or (self.task and not self.task.done()):
+            raise PublicError("已有更新正在进行")
+        archive = await self.archive(kind, ref)
+        self.inspecting, self.staged = True, None
+        stage = self.work / ("stage-" + secrets.token_hex(4))
+        try:
+            await asyncio.to_thread(self.work.mkdir, exist_ok=True)
+            await asyncio.to_thread(self.cleanup_stages)
+            source, sha = await self.download(archive, stage)
+            changes = await asyncio.to_thread(self.compare, source)
+            patch = await asyncio.to_thread(self.save_patch, source, changes)
+            self.staged = {
+                "kind": kind,
+                "ref": ref,
+                "stage": stage,
+                "source": source,
+                "sha": sha,
+            }
+            return {"files": changes, "patch": patch, "sha": sha}
+        except BaseException:
+            await asyncio.to_thread(shutil.rmtree, stage, True)
+            raise
+        finally:
+            self.inspecting = False
 
     def step(self, phase: str, message: str) -> None:
         self.state = {**self.state, "phase": phase, "message": message}
         self.output.append(f"» {message}")
         log.log(message)
 
-    async def run(self, kind: str, ref: str, archive: str) -> None:
-        stage = self.work / ("stage-" + secrets.token_hex(4))
+    async def run(self, kind: str, ref: str, archive: str, staged: dict | None = None) -> None:
+        stage = staged["stage"] if staged else self.work / ("stage-" + secrets.token_hex(4))
         try:
             await asyncio.to_thread(self.work.mkdir, exist_ok=True)
-            await asyncio.to_thread(self.cleanup_stages)
-            self.step("downloading", f"正在下载 {ref[:12] if kind == 'commit' else ref}")
-            source, sha = await self.download(archive, stage)
+            if staged:
+                source, sha = staged["source"], staged["sha"]
+            else:
+                await asyncio.to_thread(self.cleanup_stages)
+                self.step("downloading", f"正在下载 {ref[:12] if kind == 'commit' else ref}")
+                source, sha = await self.download(archive, stage)
             self.step("building", "正在安装 WebUI 依赖")
             await self.command(self.npm("--prefix", "web", "ci", "--no-audit", "--no-fund"), source)
             self.step("building", "正在构建 WebUI")
@@ -335,6 +381,81 @@ class Updater:
         if not all((source / name).is_file() for name in REQUIRED):
             raise PublicError("下载的源码不完整")
         return source, sha if SHA.match(sha) else ""
+
+    def snapshot(self, root: Path) -> dict[str, Path]:
+        files: dict[str, Path] = {}
+        for base, dirs, names in os.walk(root):
+            here = Path(base)
+            dirs[:] = sorted(
+                name
+                for name in dirs
+                if name not in SKIP_DIRS
+                and (here / name).relative_to(root).as_posix() not in SKIP_PATHS
+            )
+            for name in names:
+                if name == MARKER:
+                    continue
+                path = here / name
+                files[path.relative_to(root).as_posix()] = path
+        return files
+
+    def compare(self, source: Path) -> list[dict]:
+        """Local files the release would overwrite (modified) or drop (removed)."""
+        local, remote = self.snapshot(self.app_dir), self.snapshot(source)
+        rows = []
+        for rel, path in local.items():
+            other = remote.get(rel)
+            if other is None:
+                rows.append({"path": rel, "kind": "removed"})
+            elif self.digest(path) != self.digest(other):
+                rows.append({"path": rel, "kind": "modified"})
+        return sorted(rows, key=lambda row: row["path"])
+
+    @staticmethod
+    def digest(path: Path) -> str:
+        hasher = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1 << 16), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    @staticmethod
+    def text(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def save_patch(self, source: Path, changes: list[dict]) -> str | None:
+        """Keep the local edits an update would erase, as a unified diff under data/patches."""
+        if not changes:
+            return None
+        folder = self.root / "data" / "patches"
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / ("local-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".patch")
+        chunks: list[str] = []
+        for row in changes:
+            rel = row["path"]
+            before_path = None if row["kind"] == "removed" else source / rel
+            before = "" if before_path is None else self.text(before_path)
+            after = self.text(self.app_dir / rel)
+            if after is None or (before_path is not None and before is None):
+                old = "/dev/null" if before_path is None else f"release/{rel}"
+                chunks.append(f"Binary files {old} and local/{rel} differ\n")
+                continue
+            chunks.extend(
+                difflib.unified_diff(
+                    before.splitlines(keepends=True),
+                    after.splitlines(keepends=True),
+                    fromfile="/dev/null" if before_path is None else f"release/{rel}",
+                    tofile=f"local/{rel}",
+                )
+            )
+            if chunks and not chunks[-1].endswith("\n"):
+                chunks.append("\n")
+        target.write_text("".join(chunks), encoding="utf-8")
+        log.log(f"已保存本地修改补丁：{target}")
+        return target.relative_to(self.root).as_posix()
 
     def swap(self, source: Path, backup: Path) -> None:
         """Move current entries into backup, then the new source into place."""

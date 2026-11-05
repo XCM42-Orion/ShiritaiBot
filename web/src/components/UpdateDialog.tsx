@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import type { ApiClient } from "../api/client";
-import type { UpdatePhase } from "../api/types";
+import type { UpdateInspect, UpdatePhase } from "../api/types";
 import { Markdown } from "./Markdown";
 import { Pagination } from "./Pagination";
 import {
@@ -57,6 +57,9 @@ export function UpdateDialog({
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+  const [inspection, setInspection] = useState<UpdateInspect | null>(null);
+  const [inspectError, setInspectError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -128,6 +131,8 @@ export function UpdateDialog({
     else if (items[0]) setSelected({ kind: "release", tag: items[0].tag });
     else setSelected(null);
     setConfirming(false);
+    setInspection(null);
+    setInspectError(null);
   }, [items, commit, selected, page, showCommit, preview.isPending]);
 
   function close() {
@@ -150,6 +155,21 @@ export function UpdateDialog({
       // Query errors are shown inline after invalidation.
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function beginConfirm() {
+    if (!target) return;
+    setConfirming(true);
+    setInspection(null);
+    setInspectError(null);
+    setInspecting(true);
+    try {
+      setInspection(await client.inspectUpdate(target.kind, target.ref));
+    } catch (error) {
+      setInspectError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setInspecting(false);
     }
   }
 
@@ -487,27 +507,91 @@ export function UpdateDialog({
                 )}
                 {confirming && target ? (
                   <div className="update-confirm">
-                    <span>
-                      将下载 <code>{target.label}</code>
-                      ，重新构建并重启服务。期间机器人会短暂离线。
-                    </span>
-                    <div className="actions">
-                      <button
-                        type="button"
-                        className="primary"
-                        onClick={() => void apply()}
-                        disabled={starting}
-                      >
-                        确认切换
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirming(false)}
-                        disabled={starting}
-                      >
-                        取消
-                      </button>
-                    </div>
+                    {inspecting ? (
+                      <span>
+                        正在下载 <code>{target.label}</code>
+                        ，比对本地修改…
+                      </span>
+                    ) : inspectError ? (
+                      <>
+                        <p role="alert">{inspectError}</p>
+                        <span>
+                          未能比对本地修改，已停止。可以重试，或取消本次更新。
+                        </span>
+                        <div className="actions">
+                          <button
+                            type="button"
+                            className="primary"
+                            onClick={() => void beginConfirm()}
+                          >
+                            重试比对
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirming(false)}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {inspection && inspection.files.length > 0 ? (
+                          <div className="update-local">
+                            <strong>
+                              目标版本会覆盖或删除以下 {inspection.files.length}{" "}
+                              个本地改过的文件：
+                            </strong>
+                            <ul className="update-local-files">
+                              {inspection.files.map((file) => (
+                                <li key={file.path}>
+                                  <code>{file.path}</code>
+                                  <span className="tag">
+                                    {file.kind === "modified"
+                                      ? "被覆盖"
+                                      : "被删除"}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                            {inspection.patch ? (
+                              <small className="muted">
+                                已保存本地修改补丁：
+                                <code>{inspection.patch}</code>
+                              </small>
+                            ) : (
+                              <small className="muted">
+                                未能保存补丁，这些修改无法自动恢复。
+                              </small>
+                            )}
+                          </div>
+                        ) : (
+                          <span>
+                            将下载 <code>{target.label}</code>
+                            ，重新构建并重启服务。期间机器人会短暂离线。
+                          </span>
+                        )}
+                        <div className="actions">
+                          <button
+                            type="button"
+                            className="primary"
+                            onClick={() => void apply()}
+                            disabled={starting}
+                          >
+                            {inspection && inspection.files.length > 0
+                              ? "仍然更新"
+                              : "确认切换"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirming(false)}
+                            disabled={starting}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <button
@@ -516,7 +600,7 @@ export function UpdateDialog({
                     disabled={
                       !target || selectedIsCurrent || Boolean(applyBlocked)
                     }
-                    onClick={() => setConfirming(true)}
+                    onClick={() => void beginConfirm()}
                   >
                     {selectedIsCurrent
                       ? "已是当前版本"

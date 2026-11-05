@@ -223,6 +223,10 @@ def create_app(
     async def update_preview(refresh: bool = False):
         return {"commit": await updater.preview(refresh)}
 
+    @api.post("/api/update/inspect", dependencies=protected)
+    async def update_inspect(body: UpdateInput):
+        return await updater.inspect(body.kind, body.ref)
+
     @api.post("/api/update/apply", dependencies=protected, status_code=202)
     async def update_apply(body: UpdateInput):
         web_log.log(f"收到管理后台更新请求：{body.kind} {body.ref}")
@@ -706,7 +710,6 @@ def create_app(
 
     dist = Path(__file__).resolve().parents[3] / "web" / "dist"
     if dist.is_dir():
-
         # Unauthenticated visits render the sign-in card, so these are the same page.
         @api.get("/token", include_in_schema=False)
         async def login():

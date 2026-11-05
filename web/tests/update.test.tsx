@@ -45,7 +45,12 @@ const RELEASES = [
   },
 ];
 
-function setup() {
+function setup(
+  inspection: {
+    files: { path: string; kind: "modified" | "removed" }[];
+    patch: string | null;
+  } = { files: [], patch: null },
+) {
   let instance = "before";
   let phase = "idle";
   let current = {
@@ -108,6 +113,7 @@ function setup() {
           ],
         },
       };
+    if (parsed.pathname === "/api/update/inspect") body = inspection;
     if (parsed.pathname === "/api/update/apply") {
       applied.push(JSON.parse(String(options?.body)));
       phase = "building";
@@ -218,7 +224,9 @@ it("confirms, tracks progress, waits for restart and reports completion", async 
   fireEvent.click(
     within(dialog).getByRole("button", { name: "切换到 v1.2.0" }),
   );
-  fireEvent.click(within(dialog).getByRole("button", { name: "确认切换" }));
+  fireEvent.click(
+    await within(dialog).findByRole("button", { name: "确认切换" }),
+  );
   await within(dialog).findByText("构建 WebUI");
   expect(backend.applied).toEqual([{ kind: "release", ref: "v1.2.0" }]);
   expect(
@@ -230,6 +238,34 @@ it("confirms, tracks progress, waits for restart and reports completion", async 
   await backend.set({ phase: "idle", instance: "after", ref: "v1.2.0" });
   expect(await within(dialog).findByText("更新完成")).toBeTruthy();
   expect(within(dialog).getByText("当前版本 v1.2.0")).toBeTruthy();
+});
+
+it("warns about local edits before overwriting them", async () => {
+  const backend = setup({
+    files: [
+      { path: "src/shiritaibot/adapters/onebot11.py", kind: "modified" },
+      { path: "local-notes.txt", kind: "removed" },
+    ],
+    patch: "data/patches/local-20261105-120000.patch",
+  });
+  fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
+  const dialog = await screen.findByRole("dialog", { name: "检查更新" });
+  fireEvent.click(await within(dialog).findByText("v1.2.0"));
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "切换到 v1.2.0" }),
+  );
+  expect(await within(dialog).findByText(/本地改过的文件/)).toBeTruthy();
+  expect(
+    within(dialog).getByText("src/shiritaibot/adapters/onebot11.py"),
+  ).toBeTruthy();
+  expect(within(dialog).getByText("local-notes.txt")).toBeTruthy();
+  expect(
+    within(dialog).getByText("data/patches/local-20261105-120000.patch"),
+  ).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "仍然更新" }));
+  await waitFor(() =>
+    expect(backend.applied).toEqual([{ kind: "release", ref: "v1.2.0" }]),
+  );
 });
 
 it("shows a failed update and returns to the version list", async () => {
